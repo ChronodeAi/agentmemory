@@ -223,6 +223,60 @@ describe("viewer session rendering", () => {
     expect(getElement("view-dashboard").innerHTML).toContain("Unknown session");
   });
 
+  it("uses explicit global scope for aggregate dashboard data", async () => {
+    const { sandbox } = loadViewerSandbox();
+    const requests: string[] = [];
+    sandbox.fetch = async (url: string) => {
+      requests.push(url);
+      return { ok: true, json: async () => ({}) };
+    };
+
+    await sandbox.loadDashboard();
+
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/sessions?scope=global",
+    );
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/lessons?scope=global",
+    );
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/crystals?scope=global",
+    );
+    expect(requests).not.toContain(
+      "http://localhost:3113/agentmemory/sessions",
+    );
+  });
+
+  it("falls back to nested health and reports failed health as unavailable", () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    const dashboard = {
+      loaded: true,
+      sessions: [],
+      memories: [],
+      graphStats: null,
+      recentAudit: [],
+      lessons: [],
+      crystals: [],
+    };
+
+    sandbox.state.dashboard = {
+      ...dashboard,
+      health: {
+        health: { status: "degraded", connectionState: "connected" },
+      },
+    };
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("degraded");
+    expect(getElement("view-dashboard").innerHTML).toContain("connected");
+
+    sandbox.state.dashboard = { ...dashboard, health: null };
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("unavailable");
+    expect(getElement("view-dashboard").innerHTML).not.toContain(
+      "health-dot \"></span> unknown",
+    );
+  });
+
   it("does not throw when timeline and sessions tabs receive sessions missing ids", () => {
     const { sandbox, getElement } = loadViewerSandbox();
     const sessions = [{ status: "active", observationCount: 1, startedAt: "2026-05-13T12:00:00Z" }];

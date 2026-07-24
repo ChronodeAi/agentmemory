@@ -3428,9 +3428,22 @@ export function registerApiTriggers(
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const params = req.query_params || {};
-    const project = asNonEmptyString(params.project);
-    if (!project) {
-      return { status_code: 400, body: { error: "project is required" } };
+    let projectScope: ReturnType<typeof requireProjectReadScope>;
+    try {
+      projectScope = requireProjectReadScope(
+        {
+          project: params.project,
+          scope: params.scope,
+        },
+        "api::crystal-list",
+      );
+    } catch (error) {
+      return {
+        status_code: 400,
+        body: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
     }
     const limit = parseOptionalPositiveInt(params.limit);
     if (limit === null) {
@@ -3439,7 +3452,16 @@ export function registerApiTriggers(
         body: { error: "invalid numeric parameter: limit" },
       };
     }
-    const result = await sdk.trigger({ function_id: "mem::crystal-list", payload: { project, sessionId: params.sessionId, limit } });
+    const result = await sdk.trigger({
+      function_id: "mem::crystal-list",
+      payload: {
+        ...(projectScope.kind === "global"
+          ? { scope: "global" }
+          : { project: projectScope.project }),
+        sessionId: params.sessionId,
+        limit,
+      },
+    });
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::crystal-list", config: { api_path: "/agentmemory/crystals", http_method: "GET" } });
