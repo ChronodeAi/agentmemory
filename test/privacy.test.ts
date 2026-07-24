@@ -98,6 +98,21 @@ describe("stripPrivateData", () => {
     );
   });
 
+  it("preserves valid JSON while redacting a credential value", () => {
+    const input = JSON.stringify({
+      tool_name: "Edit",
+      tool_output:
+        "Verified result; token=sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456",
+    });
+    const output = stripPrivateData(input);
+
+    expect(() => JSON.parse(output)).not.toThrow();
+    expect(JSON.parse(output)).toEqual({
+      tool_name: "Edit",
+      tool_output: "Verified result; [REDACTED_SECRET]",
+    });
+  });
+
   it("works correctly on consecutive calls (no regex statefulness)", () => {
     const input = "sk-ABCDEFGHIJKLMNOPQRSTUVWXYZabc";
     expect(stripPrivateData(input)).toBe("[REDACTED_SECRET]");

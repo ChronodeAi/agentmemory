@@ -1,3 +1,7 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+
 const DEFAULT_URL = "http://localhost:3111";
 const DEFAULT_HEALTH_PROBE_TIMEOUT_MS = 2_000;
 const CALL_TIMEOUT_MS = 15_000;
@@ -45,12 +49,75 @@ export function resolveEnvOrEmpty(name: string): string {
   return raw;
 }
 
+function resolveEnvValue(value: string | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  const placeholder = trimmed.match(
+    /^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-(.*))?\}$/,
+  );
+  return placeholder ? (placeholder[1]?.trim() ?? "") : trimmed;
+}
+
+function userEnv(): Record<string, string> {
+  const path = join(homedir(), ".agentmemory", ".env");
+  if (!existsSync(path)) return {};
+  const vars: Record<string, string> = {};
+  try {
+    for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq < 1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      const quote = value[0] === "'" || value[0] === '"' ? value[0] : "";
+      if (quote) {
+        const close = value.indexOf(quote, 1);
+        value = close >= 0 ? value.slice(1, close) : value.slice(1);
+      } else {
+        const comment = value.indexOf(" #");
+        if (comment >= 0) value = value.slice(0, comment).trim();
+      }
+      vars[key] = value;
+    }
+  } catch {
+    return {};
+  }
+  return vars;
+}
+
+function configuredEnvValue(
+  name: string,
+  fileEnv: Record<string, string>,
+): string {
+  const raw = Object.prototype.hasOwnProperty.call(process.env, name)
+    ? process.env[name]
+    : fileEnv[name];
+  return resolveEnvValue(raw);
+}
+
+function agentmemorySecret(): string {
+  const fileEnv = userEnv();
+  const direct = configuredEnvValue("AGENTMEMORY_SECRET", fileEnv);
+  if (direct) return direct;
+  const secretFile = configuredEnvValue("AGENTMEMORY_SECRET_FILE", fileEnv);
+  if (!secretFile) return "";
+  const path = secretFile.startsWith("~/")
+    ? join(homedir(), secretFile.slice(2))
+    : secretFile;
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
 function baseUrl(): string {
   return (resolveEnvOrEmpty("AGENTMEMORY_URL") || DEFAULT_URL).replace(/\/+$/, "");
 }
 
 function authHeader(): Record<string, string> {
-  const secret = resolveEnvOrEmpty("AGENTMEMORY_SECRET");
+  const secret = agentmemorySecret();
   return secret ? { authorization: `Bearer ${secret}` } : {};
 }
 

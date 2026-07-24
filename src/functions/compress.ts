@@ -22,6 +22,7 @@ import { scoreCompression } from "../eval/quality.js";
 import { compressWithRetry } from "../eval/self-correct.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
+import { modelProcessingForSession } from "./model-processing.js";
 
 const VALID_TYPES = new Set<string>([
   "file_read",
@@ -77,6 +78,10 @@ export function registerCompressFunction(
       raw: RawObservation;
     }) => {
       const startMs = Date.now();
+      const processing = await modelProcessingForSession(kv, data.sessionId);
+      if (!processing.allowed) {
+        return { success: false, error: processing.error };
+      }
 
       let imageDescription: string | undefined;
       const hasImage = data.raw.modality === "image" || data.raw.modality === "mixed";

@@ -22,6 +22,13 @@ function mockSdk() {
   };
 }
 
+function mockKV() {
+  return {
+    get: async () => null,
+    list: async () => [],
+  };
+}
+
 describe("QueryExpansion", () => {
   it("imports without errors", async () => {
     const mod = await import("../src/functions/query-expansion.js");
@@ -78,10 +85,11 @@ describe("QueryExpansion", () => {
     };
 
     const sdk = mockSdk();
-    registerQueryExpansionFunction(sdk as never, provider);
+    registerQueryExpansionFunction(sdk as never, mockKV() as never, provider);
 
     const result = (await sdk.trigger("mem::expand-query", {
       query: "What changed in auth?",
+      scope: "global",
     })) as { success: boolean; expansion: any };
 
     expect(result.success).toBe(true);
@@ -103,10 +111,11 @@ describe("QueryExpansion", () => {
     };
 
     const sdk = mockSdk();
-    registerQueryExpansionFunction(sdk as never, provider);
+    registerQueryExpansionFunction(sdk as never, mockKV() as never, provider);
 
     const result = (await sdk.trigger("mem::expand-query", {
       query: "test query",
+      scope: "global",
     })) as { success: boolean; expansion: any };
 
     expect(result.success).toBe(true);
@@ -139,11 +148,12 @@ describe("QueryExpansion", () => {
     };
 
     const sdk = mockSdk();
-    registerQueryExpansionFunction(sdk as never, provider);
+    registerQueryExpansionFunction(sdk as never, mockKV() as never, provider);
 
     const result = (await sdk.trigger("mem::expand-query", {
       query: "test",
       maxReformulations: 3,
+      scope: "global",
     })) as { success: boolean; expansion: any };
 
     expect(result.expansion.reformulations.length).toBe(3);

@@ -321,6 +321,16 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
         const bin = effects.findIiiBinary();
         if (!bin) return { ok: true, detail: "iii not on PATH (handled elsewhere)" };
         const localBin = effects.localBinIiiPath();
+        const privateVersion = effects.iiiBinaryVersion(localBin);
+        if (privateVersion) {
+          return {
+            ok: true,
+            detail:
+              bin === localBin
+                ? undefined
+                : `using private iii v${privateVersion} at ${localBin}`,
+          };
+        }
         return {
           ok: bin === localBin,
           detail: bin === localBin ? undefined : `iii at: ${bin}`,

@@ -2,6 +2,7 @@
 
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
+import { resolveProject } from "./_project.js";
 
 const exec = promisify(execFile);
 
@@ -48,14 +49,39 @@ async function main() {
   if (!data || typeof data !== "object") data = {};
   if (isSdkChildContext(data)) return;
 
+  const toolName =
+    typeof data.tool_name === "string"
+      ? data.tool_name
+      : typeof data.toolName === "string"
+        ? data.toolName
+        : "";
+  const rawToolInput = data.tool_input ?? data.toolArgs;
+  const toolInput =
+    typeof rawToolInput === "string"
+      ? rawToolInput
+      : rawToolInput && typeof rawToolInput === "object"
+        ? JSON.stringify(rawToolInput)
+        : "";
+  const directGitHook =
+    !input.trim() ||
+    process.env["AGENTMEMORY_GIT_HOOK"] === "1" ||
+    Boolean(process.env["AGENTMEMORY_COMMIT_SHA"]);
+  const successfulCommitTool =
+    /(?:bash|shell|exec|command)/i.test(toolName) &&
+    /(?:^|[;&|]\s*|\s)git(?:\s+-C\s+\S+)?\s+commit(?:\s|$)/i.test(toolInput) &&
+    data.error === undefined &&
+    data.errorMessage === undefined;
+  if (!directGitHook && !successfulCommitTool) return;
+
   const cwd =
     (data.cwd as string) ||
     process.env["AGENTMEMORY_CWD"] ||
     process.cwd();
   const sessionId =
-    (data.session_id as string) ||
+    ((data.session_id || data.sessionId) as string) ||
     process.env["AGENTMEMORY_SESSION_ID"] ||
     undefined;
+  const project = resolveProject(cwd);
 
   const sha =
     process.env["AGENTMEMORY_COMMIT_SHA"] ||
@@ -75,6 +101,7 @@ async function main() {
 
   const body = {
     sessionId,
+    project,
     sha,
     branch: branch || undefined,
     repo: repo || undefined,

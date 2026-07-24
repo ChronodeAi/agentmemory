@@ -17,12 +17,21 @@ export class DedupMap {
     this.cleanupTimer.unref();
   }
 
-  computeHash(sessionId: string, toolName: string, toolInput: unknown): string {
+  computeHash(
+    sessionId: string,
+    toolName: string,
+    toolInput: unknown,
+    toolOutput?: unknown,
+  ): string {
     const input =
       typeof toolInput === "string"
         ? toolInput.slice(0, 500)
         : JSON.stringify(toolInput ?? "").slice(0, 500);
-    const raw = `${sessionId}:${toolName}:${input}`;
+    const output =
+      typeof toolOutput === "string"
+        ? toolOutput.slice(0, 500)
+        : JSON.stringify(toolOutput ?? "").slice(0, 500);
+    const raw = `${sessionId}:${toolName}:${input}:${output}`;
     return createHash("sha256").update(raw).digest("hex");
   }
 

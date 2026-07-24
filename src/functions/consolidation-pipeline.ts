@@ -3,6 +3,7 @@ import type {
   SemanticMemory,
   ProceduralMemory,
   SessionSummary,
+  Session,
   Memory,
   MemoryProvider,
 } from "../types.js";
@@ -15,8 +16,16 @@ import {
   buildProceduralExtractionPrompt,
 } from "../prompts/consolidation.js";
 import { recordAudit } from "./audit.js";
-import { getConsolidationDecayDays, isConsolidationEnabled } from "../config.js";
+import {
+  getConsolidationDecayDays,
+  getEnvVar,
+  isConsolidationEnabled,
+} from "../config.js";
 import { logger } from "../logger.js";
+import {
+  recordMatchesProject,
+  requireProjectReadScope,
+} from "../project-scope.js";
 
 function applyDecay(
   items: Array<{
@@ -48,17 +57,52 @@ export function registerConsolidationPipelineFunction(
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::consolidate-pipeline", 
-    async (data?: { tier?: string; force?: boolean; project?: string }) => {
+    async (data?: {
+      tier?: string;
+      force?: boolean;
+      project?: string;
+      scope?: "project" | "global";
+    }) => {
+      const projectScope = requireProjectReadScope(
+        data,
+        "mem::consolidate-pipeline",
+      );
+      const project =
+        projectScope.kind === "project" ? projectScope.project : undefined;
       if (!data?.force && !isConsolidationEnabled()) {
         return { success: false, skipped: true, reason: "Consolidation disabled: set CONSOLIDATION_ENABLED=true or configure an LLM provider (ANTHROPIC_API_KEY / OPENAI_API_KEY / OPENROUTER_API_KEY / GEMINI_API_KEY / GOOGLE_API_KEY / MINIMAX_API_KEY / OPENAI_BASE_URL / AGENTMEMORY_PROVIDER=agent-sdk)" };
+      }
+      if (getEnvVar("AGENTMEMORY_LOCAL_PROCESSING") !== "true") {
+        const scopedSessions = (await kv.list<Session>(KV.sessions)).filter(
+          (session) => recordMatchesProject(session.project, projectScope),
+        );
+        if (
+          scopedSessions.some(
+            (session) =>
+              session.privacy === "strict" ||
+              session.externalProcessing === false,
+          )
+        ) {
+          return {
+            success: false,
+            error:
+              "external_processing_disabled_for_strict_project; configure a local provider and AGENTMEMORY_LOCAL_PROCESSING=true",
+          };
+        }
       }
       const tier = data?.tier || "all";
       const decayDays = getConsolidationDecayDays();
       const results: Record<string, unknown> = {};
 
       if (tier === "all" || tier === "semantic") {
-        const summaries = await kv.list<SessionSummary>(KV.summaries);
-        const existingSemantic = await kv.list<SemanticMemory>(KV.semantic);
+        const summaries = (await kv.list<SessionSummary>(KV.summaries)).filter(
+          (summary) => recordMatchesProject(summary.project, projectScope),
+        );
+        const existingSemantic = (
+          await kv.list<SemanticMemory>(KV.semantic)
+        ).filter((memory) =>
+          recordMatchesProject(memory.project, projectScope),
+        );
 
         if (summaries.length >= 5) {
           const recentSummaries = summaries
@@ -105,6 +149,7 @@ export function registerConsolidationPipelineFunction(
               } else {
                 const sem: SemanticMemory = {
                   id: generateId("sem"),
+                  project,
                   fact,
                   confidence,
                   sourceSessionIds: recentSummaries.map((s) => s.sessionId),
@@ -137,7 +182,8 @@ export function registerConsolidationPipelineFunction(
         try {
           const reflectResult = await sdk.trigger({ function_id: "mem::reflect", payload: {
             maxClusters: 10,
-            project: data?.project,
+            project,
+            scope: projectScope.kind,
           } });
           results.reflect = reflectResult;
         } catch (err) {
@@ -148,7 +194,9 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "procedural") {
-        const memories = await kv.list<Memory>(KV.memories);
+        const memories = (await kv.list<Memory>(KV.memories)).filter(
+          (memory) => recordMatchesProject(memory.project, projectScope),
+        );
         const patterns = memories
           .filter((m) => m.isLatest && m.type === "pattern")
           .map((m) => ({
@@ -171,8 +219,10 @@ export function registerConsolidationPipelineFunction(
             let match;
             let newProcs = 0;
             const now = new Date().toISOString();
-            const existingProcs = await kv.list<ProceduralMemory>(
-              KV.procedural,
+            const existingProcs = (
+              await kv.list<ProceduralMemory>(KV.procedural)
+            ).filter((memory) =>
+              recordMatchesProject(memory.project, projectScope),
             );
 
             while ((match = procRegex.exec(response)) !== null) {
@@ -198,6 +248,7 @@ export function registerConsolidationPipelineFunction(
               } else {
                 const proc: ProceduralMemory = {
                   id: generateId("proc"),
+                  project,
                   name,
                   steps,
                   triggerCondition: trigger,
@@ -229,13 +280,19 @@ export function registerConsolidationPipelineFunction(
       }
 
       if (tier === "all" || tier === "decay") {
-        const semantic = await kv.list<SemanticMemory>(KV.semantic);
+        const semantic = (await kv.list<SemanticMemory>(KV.semantic)).filter(
+          (memory) => recordMatchesProject(memory.project, projectScope),
+        );
         applyDecay(semantic, decayDays);
         for (const s of semantic) {
           await kv.set(KV.semantic, s.id, s);
         }
 
-        const procedural = await kv.list<ProceduralMemory>(KV.procedural);
+        const procedural = (
+          await kv.list<ProceduralMemory>(KV.procedural)
+        ).filter((memory) =>
+          recordMatchesProject(memory.project, projectScope),
+        );
         applyDecay(procedural, decayDays);
         for (const p of procedural) {
           await kv.set(KV.procedural, p.id, p);
@@ -260,10 +317,17 @@ export function registerConsolidationPipelineFunction(
 
       await recordAudit(kv, "consolidate", "mem::consolidate-pipeline", [], {
         tier,
+        project,
+        scope: projectScope.kind,
         results,
       });
 
-      logger.info("Consolidation pipeline complete", { tier, results });
+      logger.info("Consolidation pipeline complete", {
+        tier,
+        project,
+        scope: projectScope.kind,
+        results,
+      });
       return { success: true, results };
     },
   );

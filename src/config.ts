@@ -47,7 +47,24 @@ function loadEnvFile(): Record<string, string> {
 }
 
 function hasRealValue(v: string | undefined): v is string {
-  return typeof v === "string" && v.trim().length > 0;
+  return (
+    typeof v === "string" &&
+    v.trim().length > 0 &&
+    !/^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-[^}]*)?\}$/.test(v.trim())
+  );
+}
+
+function resolveEnvValue(value: string | undefined): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  const placeholder = trimmed.match(
+    /^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-(.*))?\}$/,
+  );
+  if (placeholder) {
+    const fallback = placeholder[1]?.trim();
+    return fallback || undefined;
+  }
+  return trimmed || undefined;
 }
 
 function detectProvider(env: Record<string, string>): ProviderConfig {
@@ -192,7 +209,23 @@ function getMergedEnv(
 }
 
 export function getEnvVar(key: string): string | undefined {
-  return getMergedEnv()[key];
+  const env = getMergedEnv();
+  const value = resolveEnvValue(env[key]);
+  if (key === "AGENTMEMORY_SECRET" && !hasRealValue(value)) {
+    const secretFile = resolveEnvValue(env["AGENTMEMORY_SECRET_FILE"]);
+    if (hasRealValue(secretFile)) {
+      try {
+        const path = secretFile.startsWith("~/")
+          ? join(homedir(), secretFile.slice(2))
+          : secretFile;
+        const secret = readFileSync(path, "utf8").trim();
+        if (secret) return secret;
+      } catch {
+        return undefined;
+      }
+    }
+  }
+  return value;
 }
 
 export function isDropStaleIndexEnabled(): boolean {

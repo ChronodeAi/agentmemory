@@ -31,9 +31,23 @@ type ClaudeConfig = {
 function entryMatches(entry: unknown): boolean {
   if (!entry || typeof entry !== "object") return false;
   const e = entry as Record<string, unknown>;
-  if (e["command"] !== "npx") return false;
+  const command = typeof e["command"] === "string" ? e["command"] : "";
   const args = Array.isArray(e["args"]) ? (e["args"] as string[]) : [];
-  return args.includes("@agentmemory/mcp");
+  if (
+    command === "npx" &&
+    args.some(
+      (arg) =>
+        arg === "@agentmemory/mcp" ||
+        arg === "@agentmemory/agentmemory",
+    )
+  ) {
+    return true;
+  }
+  const normalized = command.replace(/\\/g, "/").toLowerCase();
+  return (
+    /(?:^|\/)agentmemory(?:\.exe)?$/.test(normalized) ||
+    args.some((arg) => /(?:^|\/)standalone\.mjs$/.test(arg.replace(/\\/g, "/")))
+  );
 }
 
 export const adapter: ConnectAdapter = {

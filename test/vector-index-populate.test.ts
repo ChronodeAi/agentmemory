@@ -43,7 +43,15 @@ function mockSdk() {
     trigger: async (input: { function_id: string; payload: unknown }) => {
       const fn = functions.get(input.function_id);
       if (!fn) throw new Error(`unknown fn ${input.function_id}`);
-      return fn(input.payload);
+      const payload =
+        input.function_id === "mem::remember" &&
+        input.payload &&
+        typeof input.payload === "object" &&
+        !("project" in input.payload) &&
+        !("scope" in input.payload)
+          ? { scope: "global", ...input.payload }
+          : input.payload;
+      return fn(payload);
     },
   };
 }

@@ -12,11 +12,9 @@
 // `logger.*`. Nothing else changes.
 //
 // Output goes to stderr as `[agentmemory] <level> <msg> <json-fields>`.
-// The iii-engine's `iii-exec` worker runs the agentmemory binary as a
-// child process and forwards stderr into `docker logs
-// agentmemory-iii-engine-1`, so these lines end up next to the engine's
-// own output without needing any OTEL wiring. If we later want
-// structured OTEL logs, this file is the only thing that changes.
+// The CLI-managed worker inherits stderr from its launcher, so these lines
+// remain adjacent to engine output without additional OTEL wiring. If we
+// later want structured OTEL logs, this file is the only thing that changes.
 //
 // See rohitg00/agentmemory#143 follow-up — the #116 migration updated
 // test mocks but left the real `getContext()` imports in place, which

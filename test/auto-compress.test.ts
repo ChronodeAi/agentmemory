@@ -146,6 +146,34 @@ describe("mem::observe auto-compress gate (#138)", () => {
     expect(compressCalls).toHaveLength(1);
   });
 
+  it("strict privacy stays synthetic and reports the actual compression path", async () => {
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const { logger } = await import("../src/logger.js");
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    await sdk.trigger(
+      "mem::observe",
+      validPayload({
+        project: "github.com/example/private-project",
+        cwd: "/tmp/private-project",
+        privacy: "strict",
+        externalProcessing: false,
+      }),
+    );
+
+    const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
+    expect(compressCalls).toHaveLength(0);
+    expect(logger.info).toHaveBeenCalledWith(
+      "Observation captured",
+      expect.objectContaining({ compress: "synthetic" }),
+    );
+  });
+
   it("AGENTMEMORY_AUTO_COMPRESS=false explicitly: does NOT fire mem::compress", async () => {
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
     const { registerObserveFunction } = await import(

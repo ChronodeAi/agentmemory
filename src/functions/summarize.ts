@@ -260,6 +260,56 @@ export function registerSummarizeFunction(
         return { success: false, error: "no_observations" };
       }
 
+      if (
+        session.privacy === "strict" ||
+        session.externalProcessing === false
+      ) {
+        const ranked = compressed
+          .slice()
+          .sort((a, b) => b.importance - a.importance)
+          .slice(0, 12);
+        const files = Array.from(
+          new Set(ranked.flatMap((observation) => observation.files ?? [])),
+        );
+        const concepts = Array.from(
+          new Set(ranked.flatMap((observation) => observation.concepts ?? [])),
+        );
+        const summary: SessionSummary = {
+          sessionId,
+          project: session.project,
+          createdAt: new Date().toISOString(),
+          title:
+            session.firstPrompt?.slice(0, 120) ??
+            ranked[0]?.title ??
+            `Session ${sessionId.slice(0, 8)}`,
+          narrative: ranked
+            .map(
+              (observation) =>
+                `${observation.title}: ${observation.narrative}`,
+            )
+            .join("\n")
+            .slice(0, 8000),
+          keyDecisions: ranked
+            .filter((observation) => observation.type === "decision")
+            .map((observation) => observation.title)
+            .slice(0, 20),
+          filesModified: files.slice(0, 100),
+          concepts: concepts.slice(0, 100),
+          observationCount: compressed.length,
+        };
+        await kv.set(KV.summaries, sessionId, summary);
+        await safeAudit(kv, "compress", "mem::summarize", [sessionId], {
+          mode: "local",
+          observationCount: compressed.length,
+        });
+        return {
+          success: true,
+          summary,
+          qualityScore: 0,
+          mode: "local",
+        };
+      }
+
       if (provider.name === "noop") {
         logger.info("Summarize skipped — no LLM provider configured", {
           sessionId,

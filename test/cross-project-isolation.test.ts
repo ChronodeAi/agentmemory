@@ -230,12 +230,12 @@ describe("cross-project isolation — end-to-end", () => {
     expect(webEnrich.context).not.toContain("express-jwt");
   });
 
-  it("unscoped (legacy) bug memory is visible to both projects", async () => {
+  it("explicitly global memory is not injected implicitly into either project", async () => {
     await sdk.trigger("mem::remember", {
       content: "generic auth middleware always validates content-type header",
       type: "bug",
       files: ["src/middleware/auth.ts"],
-      // no project — legacy / unscoped
+      scope: "global",
     });
 
     const apiResult = await sdk.trigger("mem::enrich", {
@@ -250,8 +250,8 @@ describe("cross-project isolation — end-to-end", () => {
       project: "web",
     }) as { context: string };
 
-    expect(apiResult.context).toContain("generic auth middleware");
-    expect(webResult.context).toContain("generic auth middleware");
+    expect(apiResult.context).not.toContain("generic auth middleware");
+    expect(webResult.context).not.toContain("generic auth middleware");
   });
 
   it("memories from different projects do not supersede each other via Jaccard dedup", async () => {

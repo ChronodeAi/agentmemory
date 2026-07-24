@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveProject } from "./_project.js";
 
 // Inlined — see src/hooks/sdk-guard.ts for canonical version. Kept local
 // per-hook so tsdown does not emit a shared hashed chunk that would churn
@@ -39,18 +40,19 @@ async function main() {
   }
 
   const sessionId = ((data.session_id || data.sessionId) as string) || "unknown";
+  const project = resolveProject(data.cwd as string | undefined);
 
   fetch(`${REST_URL}/agentmemory/summarize`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, project }),
     signal: AbortSignal.timeout(120000),
   }).catch(() => {});
 
   fetch(`${REST_URL}/agentmemory/session/end`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, project }),
     signal: AbortSignal.timeout(5000),
   }).catch(() => {});
 

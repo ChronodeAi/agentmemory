@@ -56,7 +56,15 @@ function mockSdk(kv: ReturnType<typeof mockKV>) {
         if (id === "mem::lesson-recall") return { success: true, lessons: [] };
         throw new Error(`No function: ${id}`);
       }
-      const result = await fn(payload);
+      const scopedPayload =
+        id === "mem::smart-search" &&
+        payload &&
+        typeof payload === "object" &&
+        !("project" in payload) &&
+        !("scope" in payload)
+          ? { scope: "global", ...payload }
+          : payload;
+      const result = await fn(scopedPayload);
       // smart-search now runs followup detection off the critical
       // response path; drain it before returning so test assertions
       // see consistent state.

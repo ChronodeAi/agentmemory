@@ -1,5 +1,10 @@
 import { TriggerAction, type ISdk } from "iii-sdk";
-import type { RawObservation, HookPayload } from "../types.js";
+import type {
+  CompressedObservation,
+  FactLedgerEntry,
+  RawObservation,
+  HookPayload,
+} from "../types.js";
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { stripPrivateData } from "./privacy.js";
@@ -72,6 +77,7 @@ export function registerObserveFunction(
           payload.sessionId,
           toolName,
           d["tool_input"],
+          d["tool_output"] ?? d["error"],
         );
         if (dedupMap.isDuplicate(dedupHash)) {
           return { deduplicated: true, sessionId: payload.sessionId };
@@ -126,7 +132,66 @@ export function registerObserveFunction(
 
       return withKeyedLock(`obs:${payload.sessionId}`, async () => {
         if (maxObservationsPerSession && maxObservationsPerSession > 0) {
-          const existing = await kv.list(KV.observations(payload.sessionId));
+          let existing = await kv.list<CompressedObservation>(
+            KV.observations(payload.sessionId),
+          );
+          if (
+            maxObservationsPerSession >= 100 &&
+            existing.length >= maxObservationsPerSession - 1
+          ) {
+            await sdk
+              .trigger({
+                function_id: "mem::summarize",
+                payload: { sessionId: payload.sessionId },
+              })
+              .catch(() => null);
+            const compactCount = Math.max(
+              1,
+              Math.floor(maxObservationsPerSession / 5),
+            );
+            const oldest = existing
+              .slice()
+              .sort((a, b) =>
+                (a.timestamp ?? "").localeCompare(b.timestamp ?? ""),
+              )
+              .slice(0, compactCount);
+            const compactedAt = new Date().toISOString();
+            for (const observation of oldest) {
+              const ledger: FactLedgerEntry = {
+                observationId: observation.id,
+                sessionId: payload.sessionId,
+                timestamp: observation.timestamp,
+                type: observation.type,
+                title: observation.title,
+                facts: Array.isArray(observation.facts)
+                  ? observation.facts
+                  : [],
+                files: Array.isArray(observation.files)
+                  ? observation.files
+                  : [],
+                compactedAt,
+              };
+              await kv.set(
+                KV.factLedger(payload.sessionId),
+                observation.id,
+                ledger,
+              );
+              await kv.delete(
+                KV.observations(payload.sessionId),
+                observation.id,
+              );
+              getSearchIndex().remove(observation.id);
+            }
+            existing = existing.filter(
+              (observation) =>
+                !oldest.some((archived) => archived.id === observation.id),
+            );
+            logger.info("Session observations compacted", {
+              sessionId: payload.sessionId,
+              archived: oldest.length,
+              remaining: existing.length,
+            });
+          }
           if (existing.length >= maxObservationsPerSession) {
             return {
               success: false,
@@ -143,6 +208,8 @@ export function registerObserveFunction(
           agentId?: string;
           observationCount?: number;
           firstPrompt?: string;
+          childAgentIds?: string[];
+          externalProcessing?: boolean;
         }>(KV.sessions, payload.sessionId);
         const inheritedAgentId = existingSession
           ? existingSession.agentId
@@ -166,6 +233,7 @@ export function registerObserveFunction(
               function_id: "mem::vision-embed",
               payload: {
                 imageRef: filePath,
+                project: payload.project,
                 sessionId: payload.sessionId,
                 observationId: obsId,
               },
@@ -245,6 +313,28 @@ export function registerObserveFunction(
               });
             }
           }
+          if (
+            payload.hookType === "subagent_start" &&
+            sanitizedRaw &&
+            typeof sanitizedRaw === "object"
+          ) {
+            const agentId = (
+              sanitizedRaw as Record<string, unknown>
+            )["agent_id"];
+            if (typeof agentId === "string" && agentId.trim()) {
+              updates.push({
+                type: "set",
+                path: "childAgentIds",
+                value: Array.from(
+                  new Set([
+                    ...((session as { childAgentIds?: string[] })
+                      .childAgentIds ?? []),
+                    agentId.trim(),
+                  ]),
+                ),
+              });
+            }
+          }
           await kv.update(KV.sessions, payload.sessionId, updates);
         } else if (
           typeof payload.project === "string" &&
@@ -274,6 +364,13 @@ export function registerObserveFunction(
             status: "active",
             observationCount: 1,
             ...(inheritedAgentId ? { agentId: inheritedAgentId } : {}),
+            ...(payload.privacy ? { privacy: payload.privacy } : {}),
+            ...(payload.captureProfile
+              ? { captureProfile: payload.captureProfile }
+              : {}),
+            ...(payload.externalProcessing !== undefined
+              ? { externalProcessing: payload.externalProcessing }
+              : {}),
             ...(trimmedPrompt && trimmedPrompt.length > 0
               ? { firstPrompt: trimmedPrompt }
               : {}),
@@ -284,7 +381,14 @@ export function registerObserveFunction(
         // Default path: build a zero-LLM synthetic compression so recall
         // and BM25 search still work without burning the user's Claude
         // token allocation on every tool invocation.
-        if (isAutoCompressEnabled()) {
+        const shouldAutoCompress =
+          isAutoCompressEnabled() &&
+          existingSession?.externalProcessing !== false &&
+          existingSession?.privacy !== "strict" &&
+          payload.externalProcessing !== false &&
+          payload.privacy !== "strict";
+
+        if (shouldAutoCompress) {
           await sdk.trigger({
             function_id: "mem::compress",
             payload: {
@@ -307,6 +411,13 @@ export function registerObserveFunction(
             synthetic.sessionId,
             synthetic.title + " " + (synthetic.narrative || ""),
             { kind: "synthetic", logId: synthetic.id },
+            {
+              externalProcessing:
+                existingSession?.externalProcessing !== false &&
+                existingSession?.privacy !== "strict" &&
+                payload.externalProcessing !== false &&
+                payload.privacy !== "strict",
+            },
           );
           await sdk.trigger({
             function_id: "stream::set",
@@ -336,7 +447,7 @@ export function registerObserveFunction(
           obsId,
           sessionId: payload.sessionId,
           hook: payload.hookType,
-          compress: isAutoCompressEnabled() ? "llm" : "synthetic",
+          compress: shouldAutoCompress ? "llm" : "synthetic",
         });
         return { observationId: obsId };
       });

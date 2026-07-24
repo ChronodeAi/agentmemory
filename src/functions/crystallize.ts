@@ -2,6 +2,7 @@ import type { ISdk } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
 import { KV, generateId } from "../state/schema.js";
 import type { Action, ActionEdge, Crystal, MemoryProvider } from "../types.js";
+import { modelProcessingForProject } from "./model-processing.js";
 
 interface CrystalDigest {
   narrative: string;
@@ -51,6 +52,24 @@ export function registerCrystallizeFunction(
         (e) => idSet.has(e.sourceActionId) || idSet.has(e.targetActionId),
       );
 
+      const actionProjects = new Set(
+        actions.map((action) => action.project).filter((project): project is string => Boolean(project)),
+      );
+      if (actionProjects.size !== 1) {
+        return {
+          success: false,
+          error: "actions must share one explicit project scope",
+        };
+      }
+      const project = [...actionProjects][0];
+      if (data.project && data.project !== project) {
+        return { success: false, error: "project scope does not match actions" };
+      }
+      const processing = await modelProcessingForProject(kv, project);
+      if (!processing.allowed) {
+        return { success: false, error: processing.error };
+      }
+
       const prompt = buildChainText(actions, relevantEdges);
 
       try {
@@ -65,7 +84,7 @@ export function registerCrystallizeFunction(
           lessons: digest.lessons,
           sourceActionIds: data.actionIds,
           sessionId: data.sessionId,
-          project: data.project,
+          project,
           createdAt: new Date().toISOString(),
         };
 
@@ -80,7 +99,7 @@ export function registerCrystallizeFunction(
                   content: lesson,
                   context: crystal.narrative,
                   confidence: 0.6,
-                  project: data.project,
+                  project,
                   tags: [],
                   source: "crystal",
                   sourceIds: [crystal.id],
@@ -110,7 +129,14 @@ export function registerCrystallizeFunction(
       project?: string;
       sessionId?: string;
       limit?: number;
+      scope?: "global";
     }) => {
+      if (!data.project && data.scope !== "global") {
+        return {
+          success: false,
+          error: "project scope is required unless scope=global",
+        };
+      }
       const limit = data.limit ?? 20;
       let crystals = await kv.list<Crystal>(KV.crystals);
 
@@ -131,13 +157,26 @@ export function registerCrystallizeFunction(
   );
 
   sdk.registerFunction("mem::crystal-get", 
-    async (data: { crystalId: string }) => {
+    async (data: {
+      crystalId: string;
+      project?: string;
+      scope?: "global";
+    }) => {
       if (!data.crystalId) {
         return { success: false, error: "crystalId is required" };
       }
 
       const crystal = await kv.get<Crystal>(KV.crystals, data.crystalId);
       if (!crystal) {
+        return { success: false, error: "crystal not found" };
+      }
+      if (!data.project && data.scope !== "global") {
+        return {
+          success: false,
+          error: "project scope is required unless scope=global",
+        };
+      }
+      if (data.project && crystal.project !== data.project) {
         return { success: false, error: "crystal not found" };
       }
 
@@ -150,7 +189,14 @@ export function registerCrystallizeFunction(
       olderThanDays?: number;
       project?: string;
       dryRun?: boolean;
+      scope?: "global";
     }) => {
+      if (!data.project && data.scope !== "global") {
+        return {
+          success: false,
+          error: "project scope is required unless scope=global",
+        };
+      }
       const olderThanDays = data.olderThanDays ?? 7;
       const dryRun = data.dryRun ?? false;
       const cutoff = Date.now() - olderThanDays * 24 * 60 * 60 * 1000;

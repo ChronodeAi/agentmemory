@@ -50,6 +50,8 @@ import { registerEvictFunction } from "./functions/evict.js";
 import { registerRelationsFunction } from "./functions/relations.js";
 import { registerTimelineFunction } from "./functions/timeline.js";
 import { registerSmartSearchFunction } from "./functions/smart-search.js";
+import { registerCodingMemoryFunctions } from "./functions/coding-memory.js";
+import { registerPromotionFunctions } from "./functions/promotions.js";
 import { registerRecentSearchesSweepFunction } from "./functions/recent-searches-sweep.js";
 import { registerProfileFunction } from "./functions/profile.js";
 import { registerAutoForgetFunction } from "./functions/auto-forget.js";
@@ -103,12 +105,10 @@ import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 
-// #640 + #474: the worker process (this file) is spawned by iii-exec
-// inside the engine. When `agentmemory stop` kills only the engine pid,
-// this worker can survive (detached spawn, signal not propagated, or a
-// wrapper script keeps it running) and reconnects to the next engine as
-// a duplicate worker. Write the worker pid alongside iii.pid so
-// `agentmemory stop` can reap us too.
+// The CLI imports this worker after iii is ready. Older bundled configs also
+// spawned it through iii-exec, which could leave a detached duplicate during
+// upgrades. Write the worker pid alongside iii.pid so `agentmemory stop` can
+// target the active worker and clean up that legacy state.
 function workerPidfilePath(): string {
   return join(homedir(), ".agentmemory", "worker.pid");
 }
@@ -327,7 +327,7 @@ async function main() {
   registerCascadeFunction(sdk, kv);
 
   registerSlidingWindowFunction(sdk, kv, provider);
-  registerQueryExpansionFunction(sdk, provider);
+  registerQueryExpansionFunction(sdk, kv, provider);
   registerTemporalGraphFunctions(sdk, kv, provider);
   registerRetentionFunctions(sdk, kv);
   registerCompressFileFunction(sdk, kv, provider);
@@ -367,6 +367,8 @@ async function main() {
   registerSmartSearchFunction(sdk, kv, (query, limit) =>
     hybridSearch.search(query, limit),
   );
+  registerCodingMemoryFunctions(sdk, kv);
+  registerPromotionFunctions(sdk, kv);
   registerRecentSearchesSweepFunction(sdk, kv);
 
   registerApiTriggers(sdk, kv, secret, metricsStore, provider);
@@ -518,7 +520,7 @@ async function main() {
     `Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   bootLog(
-    `REST API: 128 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
+    `REST API: 134 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
   );
   bootLog(
     `MCP surface (opt-in via \`npx @agentmemory/mcp\`): ${getAllTools().length} tools · 6 resources · 3 prompts`,
@@ -589,18 +591,39 @@ async function main() {
     bootLog(`Auto-consolidation: enabled (every ${consolidationIntervalMs / 60000}m)`);
   }
 
+  let shuttingDown = false;
   const shutdown = async () => {
+    if (shuttingDown) return;
+    shuttingDown = true;
     console.log(`\n[agentmemory] Shutting down...`);
-    healthMonitor.stop();
-    dedupMap.stop();
-    indexPersistence.stop();
-    await new Promise<void>((resolve) => viewerServer.close(() => resolve()));
-    await indexPersistence.save().catch((err) => {
-      console.warn(`[agentmemory] Failed to save index on shutdown:`, err);
-    });
-    await sdk.shutdown();
-    clearWorkerPidfile();
-    process.exit(0);
+    const hardExit = setTimeout(() => {
+      clearWorkerPidfile();
+      process.exit(0);
+    }, 4500);
+    hardExit.unref();
+    try {
+      healthMonitor.stop();
+      dedupMap.stop();
+      indexPersistence.stop();
+      await Promise.race([
+        new Promise<void>((resolve) => viewerServer.close(() => resolve())),
+        new Promise<void>((resolve) => setTimeout(resolve, 750)),
+      ]);
+      await Promise.race([
+        indexPersistence.save().catch((err) => {
+          console.warn(`[agentmemory] Failed to save index on shutdown:`, err);
+        }),
+        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+      ]);
+      await Promise.race([
+        sdk.shutdown(),
+        new Promise<void>((resolve) => setTimeout(resolve, 1000)),
+      ]);
+    } finally {
+      clearTimeout(hardExit);
+      clearWorkerPidfile();
+      process.exit(0);
+    }
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);

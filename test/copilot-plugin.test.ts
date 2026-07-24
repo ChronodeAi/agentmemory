@@ -295,7 +295,7 @@ describe("Copilot hook scripts", () => {
     expect(result.requests[0]?.path).toBe("/agentmemory/session/start");
     expect(result.requests[0]?.body).toMatchObject({
       sessionId: "copilot-session",
-      project: "C:\\repo",
+      project: expect.stringMatching(/^local\/[a-f0-9]{24}$/),
       cwd: "C:\\repo",
     });
   });
@@ -351,7 +351,7 @@ describe("Copilot hook scripts", () => {
       sessionId: "copilot-session",
       data: {
         tool_name: "edit",
-        tool_input: JSON.stringify({ filePath: "src/index.ts" }),
+        tool_input: { filePath: "src/index.ts" },
         error: "failed",
       },
     });

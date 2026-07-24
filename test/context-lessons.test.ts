@@ -108,7 +108,7 @@ describe("mem::context — lessons auto-injection (#457)", () => {
     expect(result.context).not.toContain("Lessons Learned");
   });
 
-  it("ranks project-scoped lessons above global lessons", async () => {
+  it("injects project-scoped lessons without implicit global lessons", async () => {
     await seedLesson(kv, {
       id: "lesson_global",
       content: "global-lesson-marker",
@@ -130,8 +130,7 @@ describe("mem::context — lessons auto-injection (#457)", () => {
     const projectIdx = result.context.indexOf("project-lesson-marker");
     const globalIdx = result.context.indexOf("global-lesson-marker");
     expect(projectIdx).toBeGreaterThan(-1);
-    expect(globalIdx).toBeGreaterThan(-1);
-    expect(projectIdx).toBeLessThan(globalIdx);
+    expect(globalIdx).toBe(-1);
   });
 
   it("excludes lessons scoped to a different project", async () => {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { resolveProject } from "../src/hooks/_project.js";
 
-describe("resolveProject — hook project basename resolver", () => {
+describe("resolveProject — canonical hook project resolver", () => {
   const originalEnv = process.env.AGENTMEMORY_PROJECT_NAME;
 
   beforeEach(() => {
@@ -32,35 +32,40 @@ describe("resolveProject — hook project basename resolver", () => {
 
   it("ignores empty env override", () => {
     process.env.AGENTMEMORY_PROJECT_NAME = "   ";
-    const repoBasename = "agentmemory";
-    expect(resolveProject(process.cwd())).toBe(repoBasename);
+    expect(resolveProject(process.cwd())).toBe(
+      "github.com/rohitg00/agentmemory",
+    );
   });
 
-  it("returns git toplevel basename when cwd is inside a repo", () => {
+  it("returns the credential-free canonical remote inside a repo", () => {
     const top = resolveProject(process.cwd());
-    expect(top).toBe("agentmemory");
+    expect(top).toBe("github.com/rohitg00/agentmemory");
   });
 
   it("returns git toplevel basename from a nested subdir", () => {
     const nested = join(process.cwd(), "src", "hooks");
-    expect(resolveProject(nested)).toBe("agentmemory");
+    expect(resolveProject(nested)).toBe(
+      "github.com/rohitg00/agentmemory",
+    );
   });
 
-  it("falls back to basename(cwd) when not in a git repo", () => {
+  it("falls back to a stable hashed path when not in a git repo", () => {
     const dir = mkdtempSync(join(tmpdir(), "amem-noproj-"));
     try {
-      expect(resolveProject(dir)).toBe(dir.split("/").pop());
+      expect(resolveProject(dir)).toMatch(/^local\/[a-f0-9]{24}$/);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
   });
 
   it("defaults to process.cwd() when no cwd argument given", () => {
-    expect(resolveProject()).toBe("agentmemory");
+    expect(resolveProject()).toBe("github.com/rohitg00/agentmemory");
   });
 
   it("defaults to process.cwd() when cwd argument is empty", () => {
-    expect(resolveProject("")).toBe("agentmemory");
-    expect(resolveProject("   ")).toBe("agentmemory");
+    expect(resolveProject("")).toBe("github.com/rohitg00/agentmemory");
+    expect(resolveProject("   ")).toBe(
+      "github.com/rohitg00/agentmemory",
+    );
   });
 });

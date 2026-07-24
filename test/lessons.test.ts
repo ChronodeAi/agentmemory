@@ -41,6 +41,15 @@ function mockSdk() {
       const payload = typeof idOrInput === "string" ? data : idOrInput.payload;
       const fn = functions.get(id);
       if (!fn) throw new Error(`No function: ${id}`);
+      if (
+        id.startsWith("mem::lesson-") &&
+        payload &&
+        typeof payload === "object" &&
+        !("project" in payload) &&
+        !("scope" in payload)
+      ) {
+        return fn({ scope: "global", ...payload });
+      }
       return fn(payload);
     },
   };

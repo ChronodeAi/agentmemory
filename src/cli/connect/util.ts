@@ -28,6 +28,8 @@ export const AGENTMEMORY_MCP_BLOCK = {
   env: {
     AGENTMEMORY_URL: "${AGENTMEMORY_URL:-http://localhost:3111}",
     AGENTMEMORY_SECRET: "${AGENTMEMORY_SECRET:-}",
+    AGENTMEMORY_SECRET_FILE:
+      "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
     AGENTMEMORY_TOOLS: "${AGENTMEMORY_TOOLS:-all}",
   },
 };
@@ -49,6 +51,8 @@ export const AGENTMEMORY_COPILOT_MCP_BLOCK = {
   env: {
     AGENTMEMORY_URL: "${AGENTMEMORY_URL:-http://localhost:3111}",
     AGENTMEMORY_SECRET: "${AGENTMEMORY_SECRET:-}",
+    AGENTMEMORY_SECRET_FILE:
+      "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
     AGENTMEMORY_TOOLS: "${AGENTMEMORY_TOOLS:-all}",
   },
   tools: ["*"],

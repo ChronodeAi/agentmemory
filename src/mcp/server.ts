@@ -40,6 +40,15 @@ function parseCsvList(value: unknown): string[] {
   return [];
 }
 
+function parseProjectScope(
+  args: Record<string, unknown>,
+): { project?: string; scope?: "global" } | null {
+  const project = asNonEmptyString(args.project);
+  if (args.scope === "global") return { scope: "global" };
+  if (!project) return null;
+  return { project };
+}
+
 export function registerMcpEndpoints(
   sdk: ISdk,
   kv: StateKV,
@@ -93,6 +102,16 @@ export function registerMcpEndpoints(
                 body: { error: "query is required for memory_recall" },
               };
             }
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
             const format =
               typeof args.format === "string" ? args.format.trim().toLowerCase() : "full";
             if (!["full", "compact", "narrative"].includes(format)) {
@@ -127,6 +146,7 @@ export function registerMcpEndpoints(
               format,
               token_budget: tokenBudget,
               agentId: recallAgentId,
+              ...projectScope,
             } });
             const text =
               format === "narrative" &&
@@ -153,9 +173,16 @@ export function registerMcpEndpoints(
                 body: { error: "filePath is required for memory_compress_file" },
               };
             }
+            const project = asNonEmptyString(args.project);
+            if (!project) {
+              return {
+                status_code: 400,
+                body: { error: "project is required for memory_compress_file" },
+              };
+            }
             const result = await sdk.trigger({
               function_id: "mem::compress-file",
-              payload: { filePath: args.filePath.trim() },
+              payload: { filePath: args.filePath.trim(), project },
             });
             return {
               status_code: 200,
@@ -172,6 +199,16 @@ export function registerMcpEndpoints(
                 body: { error: "content is required for memory_save" },
               };
             }
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
             const type = (args.type as string) || "fact";
             const concepts =
               typeof args.concepts === "string"
@@ -182,17 +219,12 @@ export function registerMcpEndpoints(
                 ? args.files.split(",").map((f: string) => f.trim()).filter(Boolean)
                 : [];
 
-            const project =
-              typeof args.project === "string" && args.project.trim().length > 0
-                ? args.project.trim()
-                : undefined;
-
             const result = await sdk.trigger({ function_id: "mem::remember", payload: {
               content: args.content,
               type,
               concepts,
               files,
-              ...(project !== undefined && { project }),
+              ...projectScope,
             } });
             return {
               status_code: 200,
@@ -209,6 +241,16 @@ export function registerMcpEndpoints(
                 body: { error: "files is required for memory_file_history" },
               };
             }
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
             const fileList = parseCsvList(args.files);
             if (!fileList.length) {
               return {
@@ -216,7 +258,12 @@ export function registerMcpEndpoints(
                 body: { error: "files must contain at least one valid path" },
               };
             }
-            const payload: { sessionId?: string; files: string[] } = { files: fileList };
+            const payload: {
+              sessionId?: string;
+              files: string[];
+              project?: string;
+              scope?: "global";
+            } = { files: fileList, ...projectScope };
             const sessionId = asNonEmptyString(args.sessionId);
             if (sessionId) payload.sessionId = sessionId;
             const result = await sdk.trigger({
@@ -253,7 +300,21 @@ export function registerMcpEndpoints(
           }
 
           case "memory_sessions": {
-            const sessions = await kv.list(KV.sessions);
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
+            const sessions = (await kv.list<Session>(KV.sessions)).filter(
+              (session) =>
+                projectScope.scope === "global" ||
+                session.project === projectScope.project,
+            );
             return {
               status_code: 200,
               body: {
@@ -271,14 +332,25 @@ export function registerMcpEndpoints(
                 body: { error: "query is required for memory_smart_search" },
               };
             }
-            const expandIds = parseCsvList(args.expandIds).slice(0, 20);
-            const limit = Math.max(1, Math.min(100, asNumber(args.limit, 10) ?? 10));
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
+            const expandIds = parseCsvList(args.expandIds).slice(0, 5);
+            const limit = Math.max(1, Math.min(5, asNumber(args.limit, 5) ?? 5));
             const result = await sdk.trigger({
               function_id: "mem::smart-search",
               payload: {
                 query: args.query,
                 expandIds,
                 limit,
+                ...projectScope,
               },
             });
             return {
@@ -292,6 +364,13 @@ export function registerMcpEndpoints(
           }
 
           case "memory_vision_search": {
+            const project = asNonEmptyString(args.project);
+            if (!project) {
+              return {
+                status_code: 400,
+                body: { error: "project is required for memory_vision_search" },
+              };
+            }
             const queryText = typeof args.queryText === "string" ? args.queryText : undefined;
             const queryImageRef = typeof args.queryImageRef === "string" ? args.queryImageRef : undefined;
             const queryImageBase64 = typeof args.queryImageBase64 === "string" ? args.queryImageBase64 : undefined;
@@ -305,7 +384,14 @@ export function registerMcpEndpoints(
             const sessionId = typeof args.sessionId === "string" ? args.sessionId : undefined;
             const result = await sdk.trigger({
               function_id: "mem::vision-search",
-              payload: { queryText, queryImageRef, queryImageBase64, topK, sessionId },
+              payload: {
+                queryText,
+                queryImageRef,
+                queryImageBase64,
+                topK,
+                project,
+                sessionId,
+              },
             });
             return {
               status_code: 200,
@@ -477,9 +563,20 @@ export function registerMcpEndpoints(
           }
 
           case "memory_consolidate": {
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
             try {
               const result = await sdk.trigger({ function_id: "mem::consolidate-pipeline", payload: {
                 tier: args.tier as string,
+                ...projectScope,
               } });
               return {
                 status_code: 200,
@@ -1024,10 +1121,17 @@ export function registerMcpEndpoints(
             if (typeof args.actionIds !== "string" || !args.actionIds.trim()) {
               return { status_code: 400, body: { error: "actionIds is required" } };
             }
+            const project = asNonEmptyString(args.project);
+            if (!project) {
+              return {
+                status_code: 400,
+                body: { error: "project is required for memory_crystallize" },
+              };
+            }
             const crysIds = args.actionIds.split(",").map((s: string) => s.trim()).filter(Boolean);
             const crysResult = await sdk.trigger({ function_id: "mem::crystallize", payload: {
               actionIds: crysIds,
-              project: args.project,
+              project,
               sessionId: args.sessionId,
             } });
             return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(crysResult, null, 2) }] } };
@@ -1095,6 +1199,10 @@ export function registerMcpEndpoints(
             if (typeof args.content !== "string" || !args.content.trim()) {
               return { status_code: 400, body: { error: "content is required" } };
             }
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return { status_code: 400, body: { error: "project required unless scope is global" } };
+            }
             const lessonTags = typeof args.tags === "string" && args.tags.trim()
               ? args.tags.split(",").map((t: string) => t.trim()).filter(Boolean)
               : [];
@@ -1102,7 +1210,7 @@ export function registerMcpEndpoints(
               content: args.content,
               context: args.context || "",
               confidence: args.confidence,
-              project: args.project,
+              ...projectScope,
               tags: lessonTags,
               source: "manual",
             } });
@@ -1113,9 +1221,13 @@ export function registerMcpEndpoints(
             if (typeof args.query !== "string" || !args.query.trim()) {
               return { status_code: 400, body: { error: "query is required" } };
             }
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return { status_code: 400, body: { error: "project required unless scope is global" } };
+            }
             const lessonRecallResult = await sdk.trigger({ function_id: "mem::lesson-recall", payload: {
               query: args.query,
-              project: args.project,
+              ...projectScope,
               minConfidence: args.minConfidence,
               limit: args.limit,
             } });
@@ -1123,16 +1235,24 @@ export function registerMcpEndpoints(
           }
 
           case "memory_reflect": {
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return { status_code: 400, body: { error: "project required unless scope is global" } };
+            }
             const reflectResult = await sdk.trigger({ function_id: "mem::reflect", payload: {
-              project: args.project,
+              ...projectScope,
               maxClusters: args.maxClusters,
             } });
             return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(reflectResult, null, 2) }] } };
           }
 
           case "memory_insight_list": {
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return { status_code: 400, body: { error: "project required unless scope is global" } };
+            }
             const insightListResult = await sdk.trigger({ function_id: "mem::insight-list", payload: {
-              project: args.project,
+              ...projectScope,
               minConfidence: args.minConfidence,
               limit: args.limit,
             } });
@@ -1151,7 +1271,9 @@ export function registerMcpEndpoints(
           }
 
           case "memory_slot_list": {
-            const result = await sdk.trigger({ function_id: "mem::slot-list", payload: {} });
+            const project = asNonEmptyString(args.project);
+            if (!project) return { status_code: 400, body: { error: "project required" } };
+            const result = await sdk.trigger({ function_id: "mem::slot-list", payload: { project } });
             return {
               status_code: 200,
               body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
@@ -1160,8 +1282,9 @@ export function registerMcpEndpoints(
 
           case "memory_slot_get": {
             const label = asNonEmptyString(args.label);
-            if (!label) return { status_code: 400, body: { error: "label required" } };
-            const result = await sdk.trigger({ function_id: "mem::slot-get", payload: { label } });
+            const project = asNonEmptyString(args.project);
+            if (!label || !project) return { status_code: 400, body: { error: "label and project required" } };
+            const result = await sdk.trigger({ function_id: "mem::slot-get", payload: { label, project } });
             return {
               status_code: 200,
               body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
@@ -1172,6 +1295,7 @@ export function registerMcpEndpoints(
             const label = asNonEmptyString(args.label);
             if (!label) return { status_code: 400, body: { error: "label required" } };
             const payload: Record<string, unknown> = { label };
+            if (typeof args.project === "string") payload.project = args.project;
             if (typeof args.content === "string") payload.content = args.content;
             if (typeof args.description === "string") payload.description = args.description;
             if (typeof args.sizeLimit === "number") payload.sizeLimit = args.sizeLimit;
@@ -1190,8 +1314,9 @@ export function registerMcpEndpoints(
           case "memory_slot_append": {
             const label = asNonEmptyString(args.label);
             const text = typeof args.text === "string" ? args.text : null;
-            if (!label || !text) return { status_code: 400, body: { error: "label and text required" } };
-            const result = await sdk.trigger({ function_id: "mem::slot-append", payload: { label, text } });
+            const project = asNonEmptyString(args.project);
+            if (!label || !text || !project) return { status_code: 400, body: { error: "label, text, and project required" } };
+            const result = await sdk.trigger({ function_id: "mem::slot-append", payload: { label, text, project } });
             return {
               status_code: 200,
               body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
@@ -1200,10 +1325,11 @@ export function registerMcpEndpoints(
 
           case "memory_slot_replace": {
             const label = asNonEmptyString(args.label);
-            if (!label || typeof args.content !== "string") {
-              return { status_code: 400, body: { error: "label and content (string) required" } };
+            const project = asNonEmptyString(args.project);
+            if (!label || !project || typeof args.content !== "string") {
+              return { status_code: 400, body: { error: "label, project, and content (string) required" } };
             }
-            const result = await sdk.trigger({ function_id: "mem::slot-replace", payload: { label, content: args.content } });
+            const result = await sdk.trigger({ function_id: "mem::slot-replace", payload: { label, content: args.content, project } });
             return {
               status_code: 200,
               body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
@@ -1212,8 +1338,9 @@ export function registerMcpEndpoints(
 
           case "memory_slot_delete": {
             const label = asNonEmptyString(args.label);
-            if (!label) return { status_code: 400, body: { error: "label required" } };
-            const result = await sdk.trigger({ function_id: "mem::slot-delete", payload: { label } });
+            const project = asNonEmptyString(args.project);
+            if (!label || !project) return { status_code: 400, body: { error: "label and project required" } };
+            const result = await sdk.trigger({ function_id: "mem::slot-delete", payload: { label, project } });
             return {
               status_code: 200,
               body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] },
@@ -1239,6 +1366,82 @@ export function registerMcpEndpoints(
               status_code: 200,
               body: { content: [{ type: "text", text: JSON.stringify({ commit: link, sessions }, null, 2) }] },
             };
+          }
+
+          case "memory_context_packet": {
+            const project = asNonEmptyString(args.project);
+            const sessionId = asNonEmptyString(args.sessionId);
+            if (!project || !sessionId) {
+              return { status_code: 400, body: { error: "project and sessionId required" } };
+            }
+            const result = await sdk.trigger({
+              function_id: "mem::context-packet",
+              payload: {
+                project,
+                sessionId,
+                query: asNonEmptyString(args.query),
+                files: parseCsvList(args.files),
+                token_budget: asNumber(args.token_budget),
+              },
+            });
+            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
+          }
+
+          case "memory_commit_link": {
+            const project = asNonEmptyString(args.project);
+            const sha = asNonEmptyString(args.sha);
+            if (!project || !sha) {
+              return { status_code: 400, body: { error: "project and sha required" } };
+            }
+            const result = await sdk.trigger({
+              function_id: "mem::commit-link",
+              payload: { project, sha, sessionId: asNonEmptyString(args.sessionId) },
+            });
+            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
+          }
+
+          case "memory_project_health": {
+            const project = asNonEmptyString(args.project);
+            if (!project) return { status_code: 400, body: { error: "project required" } };
+            const result = await sdk.trigger({
+              function_id: "mem::project-health",
+              payload: { project },
+            });
+            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
+          }
+
+          case "memory_promotion_candidates": {
+            const project = asNonEmptyString(args.project);
+            if (!project) return { status_code: 400, body: { error: "project required" } };
+            const result = await sdk.trigger({
+              function_id: "mem::promotion-list",
+              payload: {
+                project,
+                sessionId: asNonEmptyString(args.sessionId),
+                status: asNonEmptyString(args.status),
+              },
+            });
+            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
+          }
+
+          case "memory_promotion_decide": {
+            const project = asNonEmptyString(args.project);
+            const candidateId = asNonEmptyString(args.candidateId);
+            const action = asNonEmptyString(args.action);
+            if (!project || !candidateId || !action) {
+              return { status_code: 400, body: { error: "project, candidateId, and action required" } };
+            }
+            const result = await sdk.trigger({
+              function_id: "mem::promotion-decide",
+              payload: {
+                project,
+                candidateId,
+                action,
+                canonicalAdr: asNonEmptyString(args.canonicalAdr),
+                commitSha: asNonEmptyString(args.commitSha),
+              },
+            });
+            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
           }
 
           case "memory_commits": {

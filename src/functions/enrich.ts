@@ -1,5 +1,5 @@
 import type { ISdk } from "iii-sdk";
-import type { Memory } from "../types.js";
+import type { Memory, Session } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
@@ -27,16 +27,31 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
       const project =
         typeof data.project === "string" && data.project.trim().length > 0
           ? data.project.trim()
-          : undefined;
+          : "";
+      if (!project) {
+        return { context: "", truncated: false, error: "project is required" };
+      }
+      const session = await kv.get<Session>(KV.sessions, data.sessionId);
+      if (!session || session.project !== project) {
+        return {
+          context: "",
+          truncated: false,
+          error: "session does not belong to project",
+        };
+      }
 
       const parts: string[] = [];
 
       const fileContextPromise = sdk
-        .trigger<{ sessionId: string; files: string[] }, { context: string }>({
+        .trigger<
+          { sessionId: string; files: string[]; project: string },
+          { context: string }
+        >({
           function_id: "mem::file-context",
           payload: {
             sessionId: data.sessionId,
             files: data.files,
+            project,
           },
         })
         .catch(() => ({ context: "" }));
@@ -50,14 +65,14 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
         searchQueries.length > 0
           ? sdk
               .trigger<
-                { query: string; limit: number; project?: string },
+                { query: string; limit: number; project: string },
                 { results: Array<{ observation: { narrative: string } }> }
               >({
                 function_id: "mem::search",
                 payload: {
                   query: searchQueries.join(" "),
                   limit: 5,
-                  ...(project !== undefined && { project }),
+                  project,
                 },
               })
               .catch(() => ({ results: [] }))
@@ -71,8 +86,7 @@ export function registerEnrichFunction(sdk: ISdk, kv: StateKV): void {
               (m) =>
                 m.type === "bug" &&
                 m.isLatest &&
-                // Guard only when both sides have an explicit project; unscoped memories pass through.
-                (!project || !m.project || m.project === project) &&
+                m.project === project &&
                 m.files.some((f) =>
                   data.files.some((df) => f.includes(df) || df.includes(f)),
                 ),

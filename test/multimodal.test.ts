@@ -112,6 +112,16 @@ describe("End-to-End Multimodal Flow", () => {
   });
 
   it("Step 2 & 3: mem::compress should call the vision model and store compressed observation in KV", async () => {
+    await kv.set("mem:sessions", "test-session", {
+      id: "test-session",
+      project: "test/project",
+      cwd: "/tmp/test-project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 1,
+      privacy: "standard",
+      externalProcessing: true,
+    });
     const mockProvider: MemoryProvider = {
       name: "mock-vision",
       compress: async (_systemPrompt, userPrompt) => {

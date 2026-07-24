@@ -10,6 +10,7 @@ import type {
   GraphNode,
   GraphEdge,
   GraphQueryResult,
+  Session,
 } from "../src/types.js";
 
 function mockKV() {
@@ -104,6 +105,28 @@ describe("Graph Functions", () => {
     const edges = await kv.list<GraphEdge>("mem:graph:edges");
     expect(edges.length).toBe(1);
     expect(edges[0].type).toBe("uses");
+  });
+
+  it("does not send strict-project observations to graph extraction", async () => {
+    const session: Session = {
+      id: "ses_1",
+      project: "github.com/example/strict",
+      cwd: "/tmp/strict",
+      startedAt: "2026-02-01T00:00:00Z",
+      status: "completed",
+      observationCount: 1,
+      privacy: "strict",
+      externalProcessing: false,
+    };
+    await kv.set("mem:sessions", session.id, session);
+
+    const result = (await sdk.trigger("mem::graph-extract", {
+      observations: [testObs],
+    })) as { success: boolean; error: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("external_processing_disabled");
+    expect(mockProvider.compress).not.toHaveBeenCalled();
   });
 
   it("graph-extract accepts self-closing entity tags", async () => {

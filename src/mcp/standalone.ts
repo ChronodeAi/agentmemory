@@ -105,6 +105,28 @@ interface Validated {
   tokenBudget?: number;
   memoryIds?: string[];
   reason?: string;
+  project?: string;
+  scope?: "global";
+}
+
+function applyProjectScope(
+  validated: Validated,
+  args: Record<string, unknown>,
+): void {
+  const project =
+    typeof args["project"] === "string" && args["project"].trim()
+      ? args["project"].trim()
+      : undefined;
+  if (args["scope"] === "global") {
+    validated.scope = "global";
+    return;
+  }
+  if (!project) {
+    throw new Error(
+      "project is required unless scope is explicitly global",
+    );
+  }
+  validated.project = project;
 }
 
 function validate(toolName: string, args: Record<string, unknown>): Validated {
@@ -122,6 +144,7 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
       v.type = (args["type"] as string) || "fact";
       v.concepts = normalizeList(args["concepts"]);
       v.files = normalizeList(args["files"]);
+      applyProjectScope(v, args);
       return v;
     }
     case "memory_recall":
@@ -143,10 +166,12 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
         const n = Number(budget);
         if (Number.isFinite(n) && n > 0) v.tokenBudget = Math.floor(n);
       }
+      applyProjectScope(v, args);
       return v;
     }
     case "memory_sessions": {
       v.limit = parseLimit(args["limit"], 20);
+      applyProjectScope(v, args);
       return v;
     }
     case "memory_governance_delete": {
@@ -180,6 +205,8 @@ async function handleProxy(
           type: v.type,
           concepts: v.concepts,
           files: v.files,
+          project: v.project,
+          scope: v.scope,
         }),
       });
       return textResponse(result);
@@ -191,6 +218,8 @@ async function handleProxy(
         format: v.format ?? "full",
       };
       if (v.tokenBudget != null) body["token_budget"] = v.tokenBudget;
+      if (v.project) body["project"] = v.project;
+      if (v.scope) body["scope"] = v.scope;
       const result = await handle.call("/agentmemory/search", {
         method: "POST",
         body: JSON.stringify(body),
@@ -199,6 +228,8 @@ async function handleProxy(
     }
     case "memory_smart_search": {
       const body: Record<string, unknown> = { query: v.query, limit: v.limit };
+      if (v.project) body["project"] = v.project;
+      if (v.scope) body["scope"] = v.scope;
       if (v.format != null) body["format"] = v.format;
       if (v.tokenBudget != null) body["token_budget"] = v.tokenBudget;
       const result = await handle.call("/agentmemory/smart-search", {
@@ -209,7 +240,11 @@ async function handleProxy(
     }
     case "memory_sessions": {
       const result = await handle.call(
-        `/agentmemory/sessions?limit=${v.limit}`,
+        `/agentmemory/sessions?limit=${v.limit}&${
+          v.scope === "global"
+            ? "scope=global"
+            : `project=${encodeURIComponent(v.project ?? "")}`
+        }`,
         { method: "GET" },
       );
       return textResponse(result, true);
@@ -258,6 +293,7 @@ async function handleLocal(
         version: 1,
         isLatest: true,
         sessionIds: [],
+        project: v.project,
       });
       kvInstance.persist();
       return textResponse({ saved: id });
@@ -270,6 +306,10 @@ async function handleLocal(
       const all =
         await kvInstance.list<Record<string, unknown>>("mem:memories");
       const results = all
+        .filter(
+          (memory) =>
+            v.scope === "global" || memory["project"] === v.project,
+        )
         .filter((m) => {
           const text = [
             typeof m["title"] === "string" ? m["title"] : "",
@@ -291,7 +331,11 @@ async function handleLocal(
       const sessions =
         await kvInstance.list<Record<string, unknown>>("mem:sessions");
       const limit = v.limit ?? 20;
-      return textResponse({ sessions: sessions.slice(0, limit) }, true);
+      const scoped = sessions.filter(
+        (session) =>
+          v.scope === "global" || session["project"] === v.project,
+      );
+      return textResponse({ sessions: scoped.slice(0, limit) }, true);
     }
 
     case "memory_governance_delete": {
@@ -339,7 +383,7 @@ async function handleProxyGeneric(
   handle: ProxyHandle,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   // Forward to the server's full MCP surface so non-Claude clients can
-  // reach all 53 tools (lessons, sentinels, slots, signals, graph, …)
+  // reach all 58 tools (lessons, sentinels, slots, signals, graph, ...)
   // instead of being capped at the 7 IMPLEMENTED_TOOLS set baked into
   // this shim. The server validates arguments per tool.
   const result = (await handle.call("/agentmemory/mcp/call", {

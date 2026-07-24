@@ -3,8 +3,16 @@ import type { CompressedObservation, HookPayload, Session } from "../types.js";
 import { KV, STREAM } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { isReflectEnabled } from "../functions/slots.js";
-import { getAgentId, isGraphExtractionEnabled } from "../config.js";
+import {
+  getAgentId,
+  getEnvVar,
+  isGraphExtractionEnabled,
+} from "../config.js";
 import { logger } from "../logger.js";
+import {
+  closeStaleSessions,
+  startOrResumeSession,
+} from "../functions/session-lifecycle.js";
 
 export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction(
@@ -14,34 +22,44 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
       project: string;
       cwd: string;
       agentId?: string;
+      parentSessionId?: string;
+      privacy?: "standard" | "private" | "strict";
+      captureProfile?: "minimal" | "balanced" | "full";
+      externalProcessing?: boolean;
     }) => {
       const requestAgentId =
         typeof data.agentId === "string" && data.agentId.trim().length > 0
           ? data.agentId.trim().slice(0, 128)
           : undefined;
       const agentId = requestAgentId ?? getAgentId();
-      const session: Session = {
-        id: data.sessionId,
+      await closeStaleSessions(kv);
+      const { session, resumed } = await startOrResumeSession(kv, {
+        sessionId: data.sessionId,
         project: data.project,
         cwd: data.cwd,
-        startedAt: new Date().toISOString(),
-        status: "active",
-        observationCount: 0,
         ...(agentId ? { agentId } : {}),
-      };
-      await kv.set(KV.sessions, data.sessionId, session);
+        ...(data.parentSessionId
+          ? { parentSessionId: data.parentSessionId }
+          : {}),
+        ...(data.privacy ? { privacy: data.privacy } : {}),
+        ...(data.captureProfile
+          ? { captureProfile: data.captureProfile }
+          : {}),
+        ...(data.externalProcessing !== undefined
+          ? { externalProcessing: data.externalProcessing }
+          : {}),
+      });
       const contextResult = await sdk.trigger<
-        { sessionId: string; project: string; agentId?: string },
+        { sessionId: string; project: string },
         { context: string }
       >({
-        function_id: "mem::context",
+        function_id: "mem::context-packet",
         payload: {
           sessionId: data.sessionId,
           project: data.project,
-          ...(agentId ? { agentId } : {}),
         },
       });
-      return { session, context: contextResult.context };
+      return { session, resumed, context: contextResult.context };
     },
   );
   sdk.registerTrigger({
@@ -59,8 +77,25 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     config: { topic: "agentmemory.observation" },
   });
 
-  sdk.registerFunction("event::session::stopped", async (data: { sessionId: string }) => {
+  sdk.registerFunction("event::session::stopped", async (data: { sessionId: string; project?: string }) => {
     const summary = await sdk.trigger({ function_id: "mem::summarize", payload: data });
+    const session = await kv.get<Session>(KV.sessions, data.sessionId);
+    if (session && (!data.project || session.project === data.project)) {
+      try {
+        await sdk.trigger({
+          function_id: "mem::promotion-generate",
+          payload: {
+            sessionId: data.sessionId,
+            project: session.project,
+          },
+        });
+      } catch (err) {
+        logger.warn("promotion generation failed", {
+          sessionId: data.sessionId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
     if (isReflectEnabled()) {
       try {
         sdk.trigger({
@@ -75,7 +110,13 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         });
       }
     }
-    if (isGraphExtractionEnabled()) {
+    const localProcessing = getEnvVar("AGENTMEMORY_LOCAL_PROCESSING") === "true";
+    const graphProcessingAllowed =
+      session !== null &&
+      (localProcessing ||
+        (session.privacy !== "strict" &&
+          session.externalProcessing !== false));
+    if (isGraphExtractionEnabled() && graphProcessingAllowed) {
       try {
         const observations = await kv.list<CompressedObservation>(
           KV.observations(data.sessionId),

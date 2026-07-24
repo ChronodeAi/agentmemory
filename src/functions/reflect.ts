@@ -1,6 +1,10 @@
 import type { ISdk } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
-import { KV, fingerprintId } from "../state/schema.js";
+import {
+  KV,
+  fingerprintId,
+  jaccardSimilarity,
+} from "../state/schema.js";
 import type {
   Insight,
   GraphNode,
@@ -9,9 +13,16 @@ import type {
   Lesson,
   Crystal,
   MemoryProvider,
+  Session,
+  CompressedObservation,
 } from "../types.js";
 import { recordAudit } from "./audit.js";
 import { REFLECT_SYSTEM, buildReflectPrompt } from "../prompts/reflect.js";
+import {
+  recordMatchesProject,
+  requireProjectReadScope,
+} from "../project-scope.js";
+import { getEnvVar } from "../config.js";
 
 interface ConceptCluster {
   concepts: string[];
@@ -166,23 +177,98 @@ export function registerReflectFunctions(
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::reflect", 
-    async (data: { maxClusters?: number; project?: string }) => {
+    async (data: {
+      maxClusters?: number;
+      project?: string;
+      scope?: "project" | "global";
+    }) => {
+      const projectScope = requireProjectReadScope(data, "mem::reflect");
+      const project =
+        projectScope.kind === "project" ? projectScope.project : undefined;
+      const allSessions = await kv.list<Session>(KV.sessions);
+      const scopedSessions = allSessions.filter((session) =>
+        recordMatchesProject(session.project, projectScope),
+      );
+      if (getEnvVar("AGENTMEMORY_LOCAL_PROCESSING") !== "true") {
+        if (
+          scopedSessions.some(
+            (session) =>
+              session.privacy === "strict" ||
+              session.externalProcessing === false,
+          )
+        ) {
+          return {
+            success: false,
+            error:
+              "external_processing_disabled_for_strict_project; configure a local provider and AGENTMEMORY_LOCAL_PROCESSING=true",
+          };
+        }
+      }
       const maxClusters = Math.min(data?.maxClusters ?? 10, 20);
       const maxInsightsPerCluster = 5;
       const maxTotal = 50;
 
-      const [graphNodes, graphEdges, semanticMemories, lessons, crystals] =
+      const [
+        allGraphNodes,
+        allGraphEdges,
+        allSemanticMemories,
+        lessons,
+        allCrystals,
+        allInsights,
+      ] =
         await Promise.all([
           kv.list<GraphNode>(KV.graphNodes).catch(() => []),
           kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
           kv.list<SemanticMemory>(KV.semantic).catch(() => []),
           kv.list<Lesson>(KV.lessons).catch(() => []),
           kv.list<Crystal>(KV.crystals).catch(() => []),
+          kv.list<Insight>(KV.insights).catch(() => []),
         ]);
 
-      let activeLessons = lessons.filter((l) => !l.deleted);
-      if (data?.project) {
-        activeLessons = activeLessons.filter((l) => l.project === data.project);
+      const semanticMemories = allSemanticMemories.filter((memory) =>
+        recordMatchesProject(memory.project, projectScope),
+      );
+      const activeLessons = lessons.filter(
+        (lesson) =>
+          !lesson.deleted &&
+          recordMatchesProject(lesson.project, projectScope),
+      );
+      const crystals = allCrystals.filter((crystal) =>
+        recordMatchesProject(crystal.project, projectScope),
+      );
+      const existingInsights = allInsights.filter(
+        (insight) =>
+          !insight.deleted &&
+          recordMatchesProject(insight.project, projectScope),
+      );
+
+      let graphNodes = allGraphNodes;
+      let graphEdges = allGraphEdges;
+      if (projectScope.kind === "project") {
+        const projectObservationIds = new Set<string>();
+        const projectObservations = await Promise.all(
+          scopedSessions.map((session) =>
+            kv
+              .list<CompressedObservation>(KV.observations(session.id))
+              .catch(() => []),
+          ),
+        );
+        for (const observations of projectObservations) {
+          for (const observation of observations) {
+            projectObservationIds.add(observation.id);
+          }
+        }
+        graphNodes = allGraphNodes.filter((node) =>
+          node.sourceObservationIds.some((id) =>
+            projectObservationIds.has(id),
+          ),
+        );
+        const projectNodeIds = new Set(graphNodes.map((node) => node.id));
+        graphEdges = allGraphEdges.filter(
+          (edge) =>
+            projectNodeIds.has(edge.sourceNodeId) &&
+            projectNodeIds.has(edge.targetNodeId),
+        );
       }
 
       let conceptClusters = buildGraphClusters(
@@ -276,8 +362,19 @@ export function registerReflectFunctions(
 
             if (!content) continue;
 
-            const fp = fingerprintId("ins", content.trim().toLowerCase());
-            const existing = await kv.get<Insight>(KV.insights, fp);
+            const fp = fingerprintId(
+              "ins",
+              `${projectScope.kind}:${project ?? "global"}:${content.trim().toLowerCase()}`,
+            );
+            const existing =
+              existingInsights.find((insight) => insight.id === fp) ||
+              existingInsights.find(
+                (insight) =>
+                  jaccardSimilarity(
+                    insight.content.toLowerCase(),
+                    content.toLowerCase(),
+                  ) >= 0.82,
+              );
 
             if (existing && !existing.deleted) {
               reinforceInsight(existing);
@@ -295,13 +392,14 @@ export function registerReflectFunctions(
                 sourceMemoryIds: cluster.factIds,
                 sourceLessonIds: cluster.lessonIds,
                 sourceCrystalIds: cluster.crystalIds,
-                project: data?.project,
+                project,
                 tags: conceptNames,
                 createdAt: now,
                 updatedAt: now,
                 decayRate: 0.05,
               };
               await kv.set(KV.insights, insight.id, insight);
+              existingInsights.push(insight);
               newInsights++;
             }
 
@@ -320,6 +418,8 @@ export function registerReflectFunctions(
           clustersProcessed: conceptClusters.length - clustersSkipped,
           clustersSkipped,
           usedFallback,
+          project,
+          scope: projectScope.kind,
         });
       } catch {}
 
@@ -337,9 +437,11 @@ export function registerReflectFunctions(
   sdk.registerFunction("mem::insight-list", 
     async (data: {
       project?: string;
+      scope?: "project" | "global";
       minConfidence?: number;
       limit?: number;
     }) => {
+      const projectScope = requireProjectReadScope(data, "mem::insight-list");
       const limit = data?.limit ?? 50;
       const minConfidence = data?.minConfidence ?? 0;
       let items = await kv.list<Insight>(KV.insights);
@@ -348,8 +450,8 @@ export function registerReflectFunctions(
         (i) => !i.deleted && i.confidence >= minConfidence,
       );
 
-      if (data?.project) {
-        items = items.filter((i) => i.project === data.project);
+      if (projectScope.kind === "project") {
+        items = items.filter((i) => i.project === projectScope.project);
       }
 
       items.sort((a, b) => b.confidence - a.confidence);
@@ -362,12 +464,17 @@ export function registerReflectFunctions(
     async (data: {
       query: string;
       project?: string;
+      scope?: "project" | "global";
       minConfidence?: number;
       limit?: number;
     }) => {
       if (!data?.query?.trim()) {
         return { success: false, error: "query is required" };
       }
+      const projectScope = requireProjectReadScope(
+        data,
+        "mem::insight-search",
+      );
 
       const query = data.query.toLowerCase();
       const minConfidence = data.minConfidence ?? 0.1;
@@ -378,8 +485,8 @@ export function registerReflectFunctions(
         (i) => !i.deleted && i.confidence >= minConfidence,
       );
 
-      if (data.project) {
-        items = items.filter((i) => i.project === data.project);
+      if (projectScope.kind === "project") {
+        items = items.filter((i) => i.project === projectScope.project);
       }
 
       const terms = query.split(/\s+/).filter((t) => t.length > 1);

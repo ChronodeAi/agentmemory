@@ -61,6 +61,9 @@ import { setBootVerbose } from "./logger.js";
 import { VERSION } from "./version.js";
 import { getAllTools, ESSENTIAL_TOOLS } from "./mcp/tools-registry.js";
 import { knownAgents } from "./cli/connect/index.js";
+import { materializeIiiRuntimeConfig } from "./cli/iii-runtime-config.js";
+import { getEnvVar } from "./config.js";
+import { resolveProjectConfig } from "./project-config.js";
 
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
@@ -94,7 +97,7 @@ if (args.includes("--version") || args.includes("-V")) {
 // script tracks `latest`, which made every fresh agentmemory install pull
 // engine 0.11.6 — and 0.11.6 introduces a new sandbox-everything-via-
 // `iii worker add` worker model that agentmemory hasn't been refactored
-// for yet (we still use the old `iii-exec watch` config-file model). The
+// for yet (we still use the pre-sandbox worker registration model). The
 // architectural mismatch surfaces as EPIPE reconnect loops and empty
 // search results after save. Pin to v0.11.2 — the last engine that runs
 // agentmemory's current worker model cleanly — until the refactor lands.
@@ -546,13 +549,10 @@ function clearEnginePidfile(): void {
   } catch {}
 }
 
-// Worker pidfile: the agentmemory worker process
-// (`node dist/index.mjs`) is spawned by iii-exec inside the engine. When
-// `agentmemory stop` kills only the engine pid, the worker can survive
-// (detached spawn, signal not propagated, or kept alive by a wrapper
-// script). On the next start, the orphaned worker reconnects to the new
-// engine and shows up as a duplicate registration. We write the worker
-// pid from src/index.ts on boot so stop can find and reap it.
+// Worker pidfile: the CLI imports dist/index.mjs after the engine is ready.
+// Older configs also spawned it through iii-exec, so stop must still reap a
+// detached or orphaned worker during upgrades. The worker writes its pid from
+// src/index.ts on boot so stop can find the exact process.
 function workerPidfilePath(): string {
   return join(homedir(), ".agentmemory", "worker.pid");
 }
@@ -924,7 +924,26 @@ function pickCompatibleIii(candidates: Array<string | null | undefined>): string
 }
 
 async function startEngine(): Promise<boolean> {
-  const configPath = findIiiConfig();
+  const sourceConfigPath = findIiiConfig();
+  let configPath = sourceConfigPath;
+  if (sourceConfigPath) {
+    try {
+      configPath = materializeIiiRuntimeConfig(sourceConfigPath, {
+        restPort: getRestPort(),
+        streamPort: getStreamPort(),
+        enginePort: getEnginePort(),
+      });
+    } catch (error) {
+      startupFailure = {
+        kind: "engine-crashed",
+        stderr:
+          error instanceof Error
+            ? `Could not prepare iii runtime config: ${error.message}`
+            : `Could not prepare iii runtime config: ${String(error)}`,
+      };
+      return false;
+    }
+  }
   const pathIii = whichBinary("iii");
   vlog(`iii binary: ${pathIii ?? "(not on PATH)"}, config: ${configPath || "(not found)"}`);
 
@@ -1370,7 +1389,7 @@ async function main() {
 async function apiFetch<T = unknown>(base: string, path: string, timeoutMs = 5000): Promise<T | null> {
   try {
     const headers: Record<string, string> = {};
-    const secret = process.env["AGENTMEMORY_SECRET"];
+    const secret = getEnvVar("AGENTMEMORY_SECRET");
     if (secret) headers["Authorization"] = `Bearer ${secret}`;
     const res = await fetch(`${base}/agentmemory/${path}`, {
       signal: AbortSignal.timeout(timeoutMs),
@@ -1383,8 +1402,14 @@ async function apiFetch<T = unknown>(base: string, path: string, timeoutMs = 500
 }
 
 async function runStatus() {
-  const port = getRestPort();
   const base = getBaseUrl();
+  const globalScope = args.includes("--global");
+  const project = globalScope
+    ? undefined
+    : resolveProjectConfig(process.cwd()).project_id;
+  const sessionQuery = globalScope
+    ? "sessions?scope=global&agentId=*"
+    : `sessions?project=${encodeURIComponent(project!)}&agentId=*`;
   p.intro("agentmemory status");
 
   const up = await isEngineRunning();
@@ -1395,13 +1420,27 @@ async function runStatus() {
   }
 
   try {
-    const [healthRes, sessionsRes, graphRes, memoriesRes, flagsRes, followupRes] = await Promise.all([
+    const [
+      healthRes,
+      sessionsRes,
+      graphRes,
+      memoriesRes,
+      flagsRes,
+      followupRes,
+      projectHealthRes,
+    ] = await Promise.all([
       apiFetch<any>(base, "health"),
-      apiFetch<any>(base, "sessions"),
+      apiFetch<any>(base, sessionQuery),
       apiFetch<any>(base, "graph/stats"),
       apiFetch<any>(base, "memories?count=true"),
       apiFetch<any>(base, "config/flags"),
       apiFetch<any>(base, "diagnostics/followup"),
+      project
+        ? apiFetch<any>(
+            base,
+            `project-health?project=${encodeURIComponent(project)}`,
+          )
+        : Promise.resolve(null),
     ]);
 
     if (typeof healthRes?.viewerPort === "number") {
@@ -1422,7 +1461,9 @@ async function runStatus() {
       (sum: number, s: any) => sum + (Number(s?.observationCount) || 0),
       0,
     );
-    const memCount = Number(memoriesRes?.latestCount ?? memoriesRes?.total ?? 0) || 0;
+    const memCount = project
+      ? Number(projectHealthRes?.totals?.memories ?? 0) || 0
+      : Number(memoriesRes?.latestCount ?? memoriesRes?.total ?? 0) || 0;
     const estFullTokens = obsCount * 80;
     const estInjectedTokens = Math.min(obsCount, 50) * 38;
     const tokensSaved = estFullTokens - estInjectedTokens;
@@ -1431,6 +1472,7 @@ async function runStatus() {
     p.log.success(`Connected — v${version} at ${base}`);
 
     const lines = [
+      `Scope:        ${project ?? "global"}`,
       `Health:       ${status === "healthy" ? pc.green("✓ healthy") : pc.yellow(status)}`,
       `Sessions:     ${sessions}`,
       `Observations: ${obsCount}`,
@@ -2458,6 +2500,43 @@ async function signalAndWait(
   return !pidAlive(pid);
 }
 
+function unloadManagedLaunchAgent(): {
+  loaded: boolean;
+  unloaded: boolean;
+  detail?: string;
+} {
+  if (platform() !== "darwin" || typeof process.getuid !== "function") {
+    return { loaded: false, unloaded: false };
+  }
+  const launchctl = whichBinary("launchctl");
+  if (!launchctl) return { loaded: false, unloaded: false };
+  const service = `gui/${process.getuid()}/com.agentmemory.server`;
+  try {
+    execFileSync(launchctl, ["print", service], {
+      stdio: ["ignore", "ignore", "ignore"],
+      timeout: 3000,
+    });
+  } catch {
+    return { loaded: false, unloaded: false };
+  }
+  const result = spawnSync(launchctl, ["bootout", service], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: 10000,
+  });
+  if ((result.status ?? 1) === 0) {
+    return { loaded: true, unloaded: true };
+  }
+  return {
+    loaded: true,
+    unloaded: false,
+    detail:
+      result.stderr?.trim() ||
+      result.error?.message ||
+      `launchctl exited ${result.status ?? "without status"}`,
+  };
+}
+
 function findEnginePidsByPort(port: number): number[] {
   if (IS_WINDOWS) return [];
   const lsof = whichBinary("lsof");
@@ -2514,6 +2593,19 @@ async function stopDockerEngine(composeFile: string, port: number): Promise<void
 
 async function runStop(): Promise<void> {
   p.intro("agentmemory stop");
+  const launchAgent = unloadManagedLaunchAgent();
+  if (launchAgent.loaded && !launchAgent.unloaded) {
+    p.log.error(
+      `Could not unload com.agentmemory.server: ${launchAgent.detail ?? "unknown error"}`,
+    );
+    process.exit(1);
+  }
+  if (launchAgent.unloaded) {
+    p.log.info(
+      "Unloaded com.agentmemory.server so launchd cannot restart the worker during shutdown.",
+    );
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
   const port = getRestPort();
   const state = readEngineState();
   const running = await isEngineRunning();
@@ -2596,11 +2688,9 @@ async function runStop(): Promise<void> {
   if (pidfilePid) candidates.add(pidfilePid);
   for (const pid of portPids) candidates.add(pid);
 
-  // stop must also reap the agentmemory worker process
-  // (`node dist/index.mjs`). If only the engine is killed, the worker can
-  // survive (detached spawn / signal not propagated) and reconnect to the
-  // next engine as a duplicate registration. workerPid was read above so
-  // the engine-down branch could also reap orphans.
+  // Stop the agentmemory worker before the engine so it can persist indexes
+  // and audit state. workerPid was read above so the engine-down branch can
+  // also reap a worker left by an older iii-exec-based configuration.
   const workerCandidates = new Set<number>();
   if (workerPid) workerCandidates.add(workerPid);
 
@@ -2726,7 +2816,7 @@ async function runImportJsonl(): Promise<void> {
   if (maxFiles !== undefined) body["maxFiles"] = maxFiles;
 
   const headers: Record<string, string> = { "content-type": "application/json" };
-  const secret = process.env["AGENTMEMORY_SECRET"];
+  const secret = getEnvVar("AGENTMEMORY_SECRET");
   if (secret) headers["authorization"] = `Bearer ${secret}`;
 
   p.log.info(`Importing JSONL from ${pathArg || "~/.claude/projects"}…`);

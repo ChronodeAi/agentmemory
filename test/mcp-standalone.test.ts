@@ -25,12 +25,33 @@ import {
   V040_TOOLS,
 } from "../src/mcp/tools-registry.js";
 import { InMemoryKV } from "../src/mcp/in-memory-kv.js";
-import { handleToolCall } from "../src/mcp/standalone.js";
+import { handleToolCall as rawHandleToolCall } from "../src/mcp/standalone.js";
 import {
   resetHandleForTests,
   setLivezProbe,
 } from "../src/mcp/rest-proxy.js";
 import { writeFileSync } from "node:fs";
+
+const PROJECT_SCOPED_TOOLS = new Set([
+  "memory_save",
+  "memory_recall",
+  "memory_smart_search",
+  "memory_sessions",
+]);
+
+function handleToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+  kv?: InMemoryKV,
+) {
+  return rawHandleToolCall(
+    toolName,
+    PROJECT_SCOPED_TOOLS.has(toolName)
+      ? { scope: "global", ...args }
+      : args,
+    kv,
+  );
+}
 
 // Issue #449: hard-coded fetch() against :3111 in the livez probe was racing
 // with vitest's mock setup, making this file the "10-11 pre-existing failures"

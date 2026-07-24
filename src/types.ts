@@ -3,7 +3,11 @@ export interface Session {
   project: string;
   cwd: string;
   startedAt: string;
+  updatedAt?: string;
   endedAt?: string;
+  resumedAt?: string;
+  resumeCount?: number;
+  staleClosedAt?: string;
   status: "active" | "completed" | "abandoned";
   observationCount: number;
   model?: string;
@@ -12,9 +16,16 @@ export interface Session {
   summary?: string;
   commitShas?: string[];
   agentId?: string;
+  parentSessionId?: string;
+  childSessionIds?: string[];
+  childAgentIds?: string[];
+  privacy?: "standard" | "private" | "strict";
+  captureProfile?: "minimal" | "balanced" | "full";
+  externalProcessing?: boolean;
 }
 
 export interface CommitLink {
+  project?: string;
   sha: string;
   shortSha: string;
   branch?: string;
@@ -41,6 +52,17 @@ export interface RawObservation {
   modality?: "text" | "image" | "mixed";
   imageData?: string;
   agentId?: string;
+}
+
+export interface FactLedgerEntry {
+  observationId: string;
+  sessionId: string;
+  timestamp: string;
+  type?: ObservationType;
+  title?: string;
+  facts: string[];
+  files: string[];
+  compactedAt: string;
 }
 
 export interface CompressedObservation {
@@ -137,6 +159,9 @@ export interface HookPayload {
   cwd: string;
   timestamp: string;
   data: unknown;
+  privacy?: "standard" | "private" | "strict";
+  captureProfile?: "minimal" | "balanced" | "full";
+  externalProcessing?: boolean;
 }
 
 export interface ProviderConfig {
@@ -309,6 +334,7 @@ export interface ExportPagination {
 export interface ExportData {
   version: "0.3.0" | "0.4.0" | "0.5.0" | "0.6.0" | "0.6.1" | "0.7.0" | "0.7.2" | "0.7.3" | "0.7.4" | "0.7.5" | "0.7.6" | "0.7.7" | "0.7.9" | "0.8.0" | "0.8.1" | "0.8.2" | "0.8.3" | "0.8.4" | "0.8.5" | "0.8.6" | "0.8.7" | "0.8.8" | "0.8.9" | "0.8.10" | "0.8.11" | "0.8.12" | "0.8.13" | "0.9.0" | "0.9.1" | "0.9.2" | "0.9.3" | "0.9.4" | "0.9.5" | "0.9.6" | "0.9.7" | "0.9.8" | "0.9.9" | "0.9.10" | "0.9.11" | "0.9.12" | "0.9.13" | "0.9.14" | "0.9.15" | "0.9.16" | "0.9.17" | "0.9.18" | "0.9.19" | "0.9.20" | "0.9.21" | "0.9.22" | "0.9.23" | "0.9.24" | "0.9.25" | "0.9.26" | "0.9.27" | "0.9.28";
   exportedAt: string;
+  sections?: string[];
   sessions: Session[];
   observations: Record<string, CompressedObservation[]>;
   memories: Memory[];
@@ -499,6 +525,7 @@ export type ConsolidationTier =
 
 export interface SemanticMemory {
   id: string;
+  project?: string;
   fact: string;
   confidence: number;
   sourceSessionIds: string[];
@@ -512,6 +539,7 @@ export interface SemanticMemory {
 
 export interface ProceduralMemory {
   id: string;
+  project?: string;
   name: string;
   steps: string[];
   triggerCondition: string;
@@ -834,6 +862,35 @@ export interface Insight {
   lastDecayedAt?: string;
   decayRate: number;
   deleted?: boolean;
+}
+
+export type PromotionCategory =
+  | "bug"
+  | "workflow"
+  | "architecture"
+  | "preference"
+  | "security"
+  | "business";
+
+export interface PromotionCandidate {
+  id: string;
+  project: string;
+  sessionId: string;
+  category: PromotionCategory;
+  title: string;
+  content: string;
+  status: "pending" | "auto_promoted" | "accepted" | "rejected";
+  requiresExplicitApproval: boolean;
+  freshVerification: boolean;
+  sourceObservationIds: string[];
+  failureObservationIds: string[];
+  verificationObservationIds: string[];
+  commitSha?: string;
+  canonicalAdr?: string;
+  promotedRecordId?: string;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt?: string;
 }
 
 export interface DiagnosticCheck {

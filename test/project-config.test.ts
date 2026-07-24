@@ -1,0 +1,126 @@
+import { execFileSync } from "node:child_process";
+import {
+  mkdtempSync,
+  mkdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { afterEach, describe, expect, it } from "vitest";
+import {
+  getUserProjectConfigPath,
+  inferProjectId,
+  normalizeGitRemote,
+  resolveProjectConfig,
+} from "../src/project-config.js";
+
+const roots: string[] = [];
+const priorEnv = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...priorEnv };
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true });
+});
+
+function gitProject(remote?: string): string {
+  const root = mkdtempSync(join(tmpdir(), "agentmemory-project-"));
+  roots.push(root);
+  execFileSync("git", ["init", "-q"], { cwd: root });
+  if (remote) {
+    execFileSync("git", ["remote", "add", "origin", remote], { cwd: root });
+  }
+  return root;
+}
+
+describe("canonical project configuration", () => {
+  it("normalizes credential-free HTTPS and SCP-style Git remotes", () => {
+    expect(
+      normalizeGitRemote(
+        "https://user:token@GitHub.com/ChronodeAi/Memetics.git",
+      ),
+    ).toBe("github.com/chronodeai/memetics");
+    expect(
+      normalizeGitRemote("git@github.com:ChronodeAi/Memetics.git"),
+    ).toBe("github.com/chronodeai/memetics");
+  });
+
+  it("uses the normalized remote and a stable hashed path fallback", () => {
+    const remote = gitProject("git@github.com:ChronodeAi/Memetics.git");
+    expect(inferProjectId(remote)).toBe(
+      "github.com/chronodeai/memetics",
+    );
+    const local = gitProject();
+    expect(inferProjectId(local)).toMatch(/^local\/[a-f0-9]{24}$/);
+    expect(inferProjectId(local)).toBe(inferProjectId(local));
+  });
+
+  it("preserves process-environment precedence over the manifest", () => {
+    const root = gitProject("git@github.com:ChronodeAi/Memetics.git");
+    mkdirSync(join(root, ".agentmemory"));
+    writeFileSync(
+      join(root, ".agentmemory", "project.yaml"),
+      [
+        "schema_version: 1",
+        "project_id: manifest/project",
+        "capture_profile: minimal",
+        "privacy: standard",
+        "external_processing: true",
+      ].join("\n"),
+    );
+    process.env["AGENTMEMORY_PROJECT_ID"] = "env/project";
+    process.env["AGENTMEMORY_CAPTURE_PROFILE"] = "full";
+    process.env["AGENTMEMORY_PRIVACY"] = "strict";
+    process.env["AGENTMEMORY_EXTERNAL_PROCESSING"] = "true";
+
+    const config = resolveProjectConfig(root);
+    expect(config.project_id).toBe("env/project");
+    expect(config.capture_profile).toBe("full");
+    expect(config.privacy).toBe("strict");
+    expect(config.external_processing).toBe(false);
+  });
+
+  it("keeps user overrides isolated for repositories with colliding basenames", () => {
+    const parent = mkdtempSync(join(tmpdir(), "agentmemory-collision-"));
+    roots.push(parent);
+    const first = join(parent, "one", "shared-name");
+    const second = join(parent, "two", "shared-name");
+    mkdirSync(first, { recursive: true });
+    mkdirSync(second, { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: first });
+    execFileSync("git", ["init", "-q"], { cwd: second });
+    process.env["HOME"] = join(parent, "home");
+
+    const firstConfig = getUserProjectConfigPath(first);
+    const secondConfig = getUserProjectConfigPath(second);
+    expect(firstConfig).not.toBe(secondConfig);
+    mkdirSync(dirname(firstConfig), { recursive: true });
+    writeFileSync(
+      firstConfig,
+      [
+        "schema_version: 1",
+        "project_id: github.com/example/first",
+        "privacy: strict",
+        "capture_profile: balanced",
+        "external_processing: false",
+      ].join("\n"),
+    );
+    writeFileSync(
+      secondConfig,
+      [
+        "schema_version: 1",
+        "project_id: github.com/example/second",
+        "privacy: strict",
+        "capture_profile: balanced",
+        "external_processing: false",
+      ].join("\n"),
+    );
+
+    expect(resolveProjectConfig(first).project_id).toBe(
+      "github.com/example/first",
+    );
+    expect(resolveProjectConfig(second).project_id).toBe(
+      "github.com/example/second",
+    );
+  });
+});

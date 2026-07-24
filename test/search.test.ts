@@ -46,6 +46,15 @@ function mockSdk() {
       const payload = typeof idOrInput === "string" ? data : idOrInput.payload;
       const fn = functions.get(id);
       if (!fn) throw new Error(`No function: ${id}`);
+      if (
+        id === "mem::search" &&
+        payload &&
+        typeof payload === "object" &&
+        !("project" in payload) &&
+        !("scope" in payload)
+      ) {
+        return fn({ project: "demo", ...payload });
+      }
       return fn(payload);
     },
   };
@@ -169,6 +178,7 @@ describe("mem::search", () => {
       strength: 7,
       version: 1,
       isLatest: true,
+      project: "demo",
     });
     // Force the rebuild to pick up the new memory (mem::search only
     // rebuilds on first call when idx.size === 0).
@@ -202,6 +212,60 @@ describe("mem::search", () => {
     expect(vi!.size).toBeGreaterThan(0);
 
     // Cleanup
+    setVectorIndex(null);
+    setEmbeddingProvider(null);
+  });
+
+  it("does not send strict-project observations to an external embedder", async () => {
+    const session = await kv.get<Session>(KV.sessions, "ses_1");
+    expect(session).not.toBeNull();
+    await kv.set(KV.sessions, "ses_1", {
+      ...session!,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    const embedBatch = vi.fn(async (texts: string[]) =>
+      texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+    );
+    setEmbeddingProvider({
+      name: "openai",
+      dimensions: 3,
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+      embedBatch,
+    });
+    setVectorIndex(new VectorIndex());
+
+    await rebuildIndex(kv as never);
+
+    expect(embedBatch).not.toHaveBeenCalled();
+    expect(getVectorIndex()?.size).toBe(0);
+    setVectorIndex(null);
+    setEmbeddingProvider(null);
+  });
+
+  it("allows strict-project observations through the local embedder", async () => {
+    const session = await kv.get<Session>(KV.sessions, "ses_1");
+    expect(session).not.toBeNull();
+    await kv.set(KV.sessions, "ses_1", {
+      ...session!,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    const embedBatch = vi.fn(async (texts: string[]) =>
+      texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+    );
+    setEmbeddingProvider({
+      name: "local",
+      dimensions: 3,
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+      embedBatch,
+    });
+    setVectorIndex(new VectorIndex());
+
+    await rebuildIndex(kv as never);
+
+    expect(embedBatch).toHaveBeenCalled();
+    expect(getVectorIndex()?.size).toBeGreaterThan(0);
     setVectorIndex(null);
     setEmbeddingProvider(null);
   });

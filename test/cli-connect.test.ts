@@ -142,6 +142,55 @@ describe("agentmemory connect — claude-code adapter (mock filesystem)", () => 
     expect(second.kind).toBe("already-wired");
   });
 
+  it("repairs hooks without --force when a direct-binary MCP entry already exists", async () => {
+    const claudeDir = join(tmpHome, ".claude");
+    require("node:fs").mkdirSync(claudeDir, { recursive: true });
+    writeFileSync(
+      join(tmpHome, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          agentmemory: {
+            command: "/usr/local/bin/agentmemory",
+            args: ["mcp"],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(claudeDir, "settings.json"),
+      JSON.stringify({
+        theme: "dark",
+        hooks: {
+          PreToolUse: [
+            {
+              matcher: "Bash",
+              hooks: [{ type: "command", command: "echo user-hook" }],
+            },
+          ],
+        },
+      }),
+    );
+
+    const a = await loadAdapter();
+    const result = await a.install({
+      dryRun: false,
+      force: false,
+      withHooks: true,
+    });
+
+    expect(result.kind).toBe("already-wired");
+    const settings = JSON.parse(
+      readFileSync(join(claudeDir, "settings.json"), "utf-8"),
+    );
+    expect(settings.theme).toBe("dark");
+    const commands = Object.values(settings.hooks)
+      .flatMap((entries: any) => entries)
+      .flatMap((entry: any) => entry.hooks)
+      .map((hook: any) => hook.command);
+    expect(commands).toContain("echo user-hook");
+    expect(commands.some((command: string) => command.includes("agentmemory"))).toBe(true);
+  });
+
   it("install() writes env passthrough block for AGENTMEMORY_URL + AGENTMEMORY_SECRET (#375)", async () => {
     // Remote deployments (k8s, reverse proxy) set AGENTMEMORY_URL +
     // AGENTMEMORY_SECRET in the shell. The wired MCP entry must honour
@@ -167,6 +216,9 @@ describe("agentmemory connect — claude-code adapter (mock filesystem)", () => 
       "${AGENTMEMORY_URL:-http://localhost:3111}",
     );
     expect(entry.env.AGENTMEMORY_SECRET).toBe("${AGENTMEMORY_SECRET:-}");
+    expect(entry.env.AGENTMEMORY_SECRET_FILE).toBe(
+      "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
+    );
     expect(entry.env.AGENTMEMORY_TOOLS).toBe("${AGENTMEMORY_TOOLS:-all}");
   });
 
@@ -352,6 +404,8 @@ describe("agentmemory connect — copilot-cli adapter (mock filesystem)", () => 
       env: {
         AGENTMEMORY_URL: "${AGENTMEMORY_URL:-http://localhost:3111}",
         AGENTMEMORY_SECRET: "${AGENTMEMORY_SECRET:-}",
+        AGENTMEMORY_SECRET_FILE:
+          "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
         AGENTMEMORY_TOOLS: "${AGENTMEMORY_TOOLS:-all}",
       },
       tools: ["*"],
@@ -415,6 +469,9 @@ describe("agentmemory connect — copilot-cli adapter (mock filesystem)", () => 
       "${AGENTMEMORY_URL:-http://localhost:3111}",
     );
     expect(entry.env.AGENTMEMORY_SECRET).toBe("${AGENTMEMORY_SECRET:-}");
+    expect(entry.env.AGENTMEMORY_SECRET_FILE).toBe(
+      "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
+    );
     expect(entry.env.AGENTMEMORY_TOOLS).toBe("${AGENTMEMORY_TOOLS:-all}");
   });
 
@@ -430,6 +487,8 @@ describe("agentmemory connect — copilot-cli adapter (mock filesystem)", () => 
             env: {
               AGENTMEMORY_URL: "${AGENTMEMORY_URL:-http://localhost:3111}",
               AGENTMEMORY_SECRET: "${AGENTMEMORY_SECRET:-}",
+              AGENTMEMORY_SECRET_FILE:
+                "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
               AGENTMEMORY_TOOLS: "${AGENTMEMORY_TOOLS:-all}",
             },
             tools: ["memory_save"],

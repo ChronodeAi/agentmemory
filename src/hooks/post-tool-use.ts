@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 import { resolveProject } from "./_project.js";
+import { captureToolEvent } from "./_capture.js";
+import { resolveProjectConfig } from "../project-config.js";
 
 function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
@@ -37,6 +39,14 @@ async function main() {
   const toolInput = data.tool_input ?? data.toolArgs;
 
   const { imageData, cleanOutput } = extractImageData(toolOutput(data));
+  const config = resolveProjectConfig(data.cwd as string | undefined);
+  const captured = captureToolEvent(
+    toolName,
+    toolInput,
+    cleanOutput,
+    config,
+  );
+  if (!captured) return;
 
   fetch(`${REST_URL}/agentmemory/observe`, {
     method: "POST",
@@ -44,13 +54,17 @@ async function main() {
     body: JSON.stringify({
       hookType: "post_tool_use",
       sessionId,
-      project: resolveProject(data.cwd as string | undefined),
+      project: config.project_id,
       cwd: (data.cwd as string | undefined) || process.cwd(),
       timestamp: new Date().toISOString(),
+      privacy: config.privacy,
+      captureProfile: config.capture_profile,
+      externalProcessing: config.external_processing,
       data: {
         tool_name: toolName,
-        tool_input: toolInput,
-        tool_output: truncate(cleanOutput, 8000),
+        tool_input: captured.toolInput,
+        tool_output: captured.toolOutput,
+        capture: captured.capture,
         ...(imageData ? { image_data: imageData } : {}),
       },
     }),
@@ -101,18 +115,6 @@ function extractImageData(output: unknown): { imageData: string | undefined; cle
   }
 
   return { imageData: undefined, cleanOutput: output };
-}
-
-function truncate(value: unknown, max: number): unknown {
-  if (typeof value === "string" && value.length > max) {
-    return value.slice(0, max) + "\n[...truncated]";
-  }
-  if (typeof value === "object" && value !== null) {
-    const str = JSON.stringify(value);
-    if (str.length > max) return str.slice(0, max) + "...[truncated]";
-    return value;
-  }
-  return value;
 }
 
 main().catch(() => process.exit(0));

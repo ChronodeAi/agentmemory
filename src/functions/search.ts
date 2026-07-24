@@ -9,6 +9,7 @@ import { memoryToObservation } from '../state/memory-utils.js'
 import { recordAccessBatch } from './access-tracker.js'
 import { logger } from "../logger.js";
 import { getAgentId, isAgentScopeIsolated } from "../config.js";
+import { requireProjectReadScope } from "../project-scope.js";
 
 let index: SearchIndex | null = null
 let vectorIndex: VectorIndex | null = null
@@ -96,10 +97,14 @@ export async function vectorIndexAddGuarded(
   sessionId: string,
   text: string,
   context: { kind: "memory" | "observation" | "synthetic"; logId: string },
+  options?: { externalProcessing?: boolean },
 ): Promise<boolean> {
   const vi = vectorIndex
   const ep = currentEmbeddingProvider
   if (!vi || !ep) return false
+  if (options?.externalProcessing === false && ep.name !== "local") {
+    return false
+  }
   try {
     const embedding = await ep.embed(clipEmbedInput(text))
     if (embedding.length !== ep.dimensions) {
@@ -141,29 +146,39 @@ export async function vectorIndexAddBatchGuarded(
     sessionId: string
     text: string
     context: { kind: "memory" | "observation" | "synthetic"; logId: string }
+    externalProcessing?: boolean
   }>,
 ): Promise<{ ok: number; fail: number }> {
   const vi = vectorIndex
   const ep = currentEmbeddingProvider
   if (!vi || !ep || items.length === 0) return { ok: 0, fail: 0 }
+  const eligibleItems = items.filter(
+    (item) => item.externalProcessing !== false || ep.name === "local",
+  )
+  const privacySkipped = items.length - eligibleItems.length
+  if (eligibleItems.length === 0) {
+    return { ok: 0, fail: privacySkipped }
+  }
 
   let embeddings: Float32Array[]
   try {
-    embeddings = await ep.embedBatch(items.map((i) => clipEmbedInput(i.text)))
+    embeddings = await ep.embedBatch(
+      eligibleItems.map((i) => clipEmbedInput(i.text)),
+    )
   } catch (err) {
     logger.warn("vector-index add batch: embed failed — skipping batch", {
-      batchSize: items.length,
+      batchSize: eligibleItems.length,
       provider: ep.name,
       error: err instanceof Error ? err.message : String(err),
     })
     return { ok: 0, fail: items.length }
   }
 
-  if (embeddings.length !== items.length) {
+  if (embeddings.length !== eligibleItems.length) {
     logger.warn(
       "vector-index add batch: provider returned wrong length — skipping batch",
       {
-        batchSize: items.length,
+        batchSize: eligibleItems.length,
         returned: embeddings.length,
         provider: ep.name,
       },
@@ -172,9 +187,9 @@ export async function vectorIndexAddBatchGuarded(
   }
 
   let ok = 0
-  let fail = 0
-  for (let i = 0; i < items.length; i++) {
-    const item = items[i]
+  let fail = privacySkipped
+  for (let i = 0; i < eligibleItems.length; i++) {
+    const item = eligibleItems[i]
     const embedding = embeddings[i]
     if (embedding.length !== ep.dimensions) {
       logger.warn("vector-index add batch: dimension mismatch — skipping item", {
@@ -236,6 +251,7 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
     sessionId: string
     text: string
     context: { kind: "memory" | "observation" | "synthetic"; logId: string }
+    externalProcessing?: boolean
   }
   const pending: EmbedJob[] = []
   let count = 0
@@ -248,6 +264,17 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
   const enqueue = async (job: EmbedJob): Promise<void> => {
     pending.push(job)
     if (pending.length >= batchSize) await flush()
+  }
+
+  const sessions = await kv.list<Session>(KV.sessions)
+  const projectPrivacy = new Map<string, boolean>()
+  for (const session of sessions) {
+    const permitsExternal =
+      session.privacy !== "strict" && session.externalProcessing !== false
+    projectPrivacy.set(
+      session.project,
+      (projectPrivacy.get(session.project) ?? true) && permitsExternal,
+    )
   }
 
   // Memories live in their own KV scope outside per-session observation
@@ -265,6 +292,10 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
         sessionId: memory.sessionIds?.[0] ?? 'memory',
         text: memory.title + ' ' + memory.content,
         context: { kind: "memory", logId: memory.id },
+        externalProcessing:
+          memory.project === undefined
+            ? true
+            : (projectPrivacy.get(memory.project) ?? false),
       })
       count++
     }
@@ -274,23 +305,30 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
     })
   }
 
-  const sessions = await kv.list<Session>(KV.sessions)
   if (!sessions.length) {
     await flush()
     return count
   }
 
-  const obsPerSession: CompressedObservation[][] = []
+  const obsPerSession: Array<{
+    session: Session
+    observations: CompressedObservation[]
+  }> = []
   const failedSessions: string[] = []
   for (let batch = 0; batch < sessions.length; batch += 10) {
     const chunk = sessions.slice(batch, batch + 10)
     const results = await Promise.all(
       chunk.map(async (s) => {
         try {
-          return await kv.list<CompressedObservation>(KV.observations(s.id))
+          return {
+            session: s,
+            observations: await kv.list<CompressedObservation>(
+              KV.observations(s.id),
+            ),
+          }
         } catch {
           failedSessions.push(s.id)
-          return [] as CompressedObservation[]
+          return { session: s, observations: [] as CompressedObservation[] }
         }
       })
     )
@@ -299,7 +337,7 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
   if (failedSessions.length > 0) {
     logger.warn('rebuildIndex: failed to load observations for sessions', { failedSessions })
   }
-  for (const observations of obsPerSession) {
+  for (const { session, observations } of obsPerSession) {
     for (const obs of observations) {
       if (obs.title && obs.narrative) {
         idx.add(obs)
@@ -308,6 +346,9 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
           sessionId: obs.sessionId,
           text: obs.title + ' ' + obs.narrative,
           context: { kind: "observation", logId: obs.id },
+          externalProcessing:
+            session.privacy !== "strict" &&
+            session.externalProcessing !== false,
         })
         count++
       }
@@ -330,6 +371,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       format?: string
       token_budget?: number
       agentId?: string
+      scope?: "project" | "global"
     }) => {
       const idx = getSearchIndex()
 
@@ -346,7 +388,9 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
         }
         effectiveLimit = Math.min(data.limit, MAX_LIMIT)
       }
-      const projectFilter = typeof data.project === 'string' && data.project.trim().length > 0 ? data.project.trim() : undefined
+      const projectScope = requireProjectReadScope(data, "mem::search")
+      const projectFilter =
+        projectScope.kind === "project" ? projectScope.project : undefined
       const cwdFilter = typeof data.cwd === 'string' && data.cwd.trim().length > 0 ? data.cwd.trim() : undefined
       // #817: agent-scope isolation. mem::search backs REST /search,
       // memory_recall and recall_context. Without filtering here a
@@ -460,17 +504,11 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
             //      entry; neither does a real sessionId when sessionIds[0] happens
             //      to be a session from a different lifecycle. Probe KV.memories
             //      directly to get the memory's own project field.
-            //   2. Deleted session — the session existed when the entry was indexed
-            //      but was since evicted. The KV.memories probe returns null for
-            //      these (they are observations, not memories), so memProject is
-            //      null and the entry passes through as unscoped. This is the safe
-            //      fallback: we lose the ability to filter but never incorrectly
-            //      block a result whose session we can no longer verify.
-            // In both cases, a null memProject means "project unknown — treat as
-            // unscoped and let it through" to preserve backward-compatibility.
+            // Deleted or legacy rows with no verifiable project remain stored
+            // but are excluded from implicit project reads.
             if (projectFilter) {
               const memProject = await loadMemoryProject(r.obsId)
-              if (memProject !== null && memProject !== projectFilter) continue
+              if (memProject !== projectFilter) continue
             }
             // cwd filter does not apply to unbound entries.
           }

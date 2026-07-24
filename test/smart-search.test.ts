@@ -12,6 +12,8 @@ import type {
   Session,
 } from "../src/types.js";
 
+const PROJECT = "my-project";
+
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
   return {
@@ -46,6 +48,15 @@ function mockSdk() {
       const payload = typeof idOrInput === "string" ? data : idOrInput.payload;
       const fn = functions.get(id);
       if (!fn) throw new Error(`No function: ${id}`);
+      if (
+        id === "mem::smart-search" &&
+        payload &&
+        typeof payload === "object" &&
+        !("project" in payload) &&
+        !("scope" in payload)
+      ) {
+        return fn({ scope: "global", ...payload });
+      }
       return fn(payload);
     },
   };
@@ -100,7 +111,7 @@ describe("Smart Search Function", () => {
 
     const session: Session = {
       id: "ses_1",
-      project: "my-project",
+      project: PROJECT,
       cwd: "/tmp",
       startedAt: "2026-02-01T00:00:00Z",
       status: "completed",
@@ -157,6 +168,43 @@ describe("Smart Search Function", () => {
     })) as { mode: string; results: CompactSearchResult[] };
 
     expect(result.results.length).toBeLessThanOrEqual(2);
+  });
+
+  it("accepts reciprocal-rank scores when retrieval has lexical evidence", async () => {
+    searchResults = [
+      {
+        observation: makeObs(),
+        bm25Score: 12,
+        vectorScore: 0,
+        combinedScore: 1 / 61,
+        sessionId: "ses_1",
+      },
+    ];
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: "auth",
+    })) as { results: CompactSearchResult[] };
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.obsId).toBe("obs_1");
+  });
+
+  it("omits vector-only results below the relevance floor", async () => {
+    searchResults = [
+      {
+        observation: makeObs(),
+        bm25Score: 0,
+        vectorScore: 0.1,
+        combinedScore: 1 / 61,
+        sessionId: "ses_1",
+      },
+    ];
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: "unrelated",
+    })) as { results: CompactSearchResult[] };
+
+    expect(result.results).toEqual([]);
   });
 
   it("expand returns empty for nonexistent observation IDs", async () => {

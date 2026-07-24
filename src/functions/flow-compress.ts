@@ -3,6 +3,7 @@ import type { StateKV } from "../state/kv.js";
 import { KV, generateId } from "../state/schema.js";
 import type { Action, ActionEdge, RoutineRun, MemoryProvider } from "../types.js";
 import { recordAudit } from "./audit.js";
+import { modelProcessingForProject } from "./model-processing.js";
 
 const FLOW_COMPRESS_SYSTEM = `You are a workflow summarizer. Given a completed action chain, produce a concise summary capturing:
 1. The overall goal and outcome
@@ -65,6 +66,31 @@ export function registerFlowCompressFunction(
         };
       }
 
+      const actionProjects = new Set(
+        doneActions
+          .map((action) => action.project)
+          .filter((project): project is string => Boolean(project)),
+      );
+      if (actionProjects.size !== 1) {
+        return {
+          success: false,
+          error: "actions must share one explicit project scope",
+          compressed: 0,
+        };
+      }
+      const project = [...actionProjects][0];
+      if (data.project && data.project !== project) {
+        return {
+          success: false,
+          error: "project scope does not match actions",
+          compressed: 0,
+        };
+      }
+      const processing = await modelProcessingForProject(kv, project);
+      if (!processing.allowed) {
+        return { success: false, error: processing.error, compressed: 0 };
+      }
+
       const allEdges = await kv.list<ActionEdge>(KV.actionEdges);
       const relevantIds = new Set(doneActions.map((a) => a.id));
       const relevantEdges = allEdges.filter(
@@ -93,6 +119,7 @@ export function registerFlowCompressFunction(
           concepts: extractConcepts(doneActions),
           files: extractFiles(doneActions),
           sessionIds: [],
+          project,
           strength: 1.0,
           version: 1,
           isLatest: true,
@@ -108,7 +135,7 @@ export function registerFlowCompressFunction(
           action: "compress_flow",
           flowCompressed: true,
           actionCount: doneActions.length,
-          project: data.project,
+          project,
         });
 
         return {

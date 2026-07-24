@@ -154,6 +154,7 @@ describe("mem::search agent-scope isolation (#817 follow-up)", () => {
     const result = (await sdk.trigger("mem::search", {
       query: "SECRET_MARKER",
       limit: 10,
+      project: "shared",
     })) as { results: SearchResult[] };
     expect(result.results.length).toBeGreaterThan(0);
     for (const r of result.results) {
@@ -171,6 +172,7 @@ describe("mem::search agent-scope isolation (#817 follow-up)", () => {
       query: "SECRET_MARKER",
       limit: 10,
       agentId: "*",
+      project: "shared",
     })) as { results: SearchResult[] };
     const ids = result.results.map((r) => r.observation.id);
     expect(ids).toContain("obs-a-secret");
@@ -183,7 +185,11 @@ describe("mem::search agent-scope isolation (#817 follow-up)", () => {
     await seedTwoAgents(kv);
 
     await expect(
-      sdk.trigger("mem::search", { query: "SECRET_MARKER", limit: 10 }),
+      sdk.trigger("mem::search", {
+        query: "SECRET_MARKER",
+        limit: 10,
+        project: "shared",
+      }),
     ).rejects.toThrow(/AGENTMEMORY_AGENT_SCOPE=isolated/);
   });
 
@@ -195,6 +201,7 @@ describe("mem::search agent-scope isolation (#817 follow-up)", () => {
     const result = (await sdk.trigger("mem::search", {
       query: "SECRET_MARKER",
       limit: 10,
+      project: "shared",
     })) as { results: SearchResult[] };
     const ids = result.results.map((r) => r.observation.id);
     expect(ids).toContain("obs-a-secret");

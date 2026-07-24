@@ -14,6 +14,11 @@ import { getBoundViewerPort, getViewerSkipped } from "../viewer/server.js";
 import { MAX_FILES_UPPER_BOUND } from "../functions/replay.js";
 import { logger } from "../logger.js";
 import {
+  closeStaleSessions,
+  startOrResumeSession,
+} from "../functions/session-lifecycle.js";
+import { requireProjectReadScope } from "../project-scope.js";
+import {
   isGraphExtractionEnabled,
   isConsolidationEnabled,
   isAutoCompressEnabled,
@@ -23,6 +28,13 @@ import {
   getAgentId,
   isAgentScopeIsolated,
 } from "../config.js";
+import {
+  flushIndexSave,
+  getEmbeddingProvider,
+  getSearchIndex,
+  getVectorIndex,
+  rebuildIndex,
+} from "../functions/search.js";
 
 type Response = {
   status_code: number;
@@ -279,7 +291,6 @@ export function registerApiTriggers(
     config: {
       api_path: "/agentmemory/health",
       http_method: "GET",
-      middleware_function_ids: ["middleware::api-auth"],
     },
   });
 
@@ -307,6 +318,19 @@ export function registerApiTriggers(
         cwd,
         timestamp,
         data: body.data,
+        ...(body.privacy === "standard" ||
+        body.privacy === "private" ||
+        body.privacy === "strict"
+          ? { privacy: body.privacy }
+          : {}),
+        ...(body.captureProfile === "minimal" ||
+        body.captureProfile === "balanced" ||
+        body.captureProfile === "full"
+          ? { captureProfile: body.captureProfile }
+          : {}),
+        ...(typeof body.externalProcessing === "boolean"
+          ? { externalProcessing: body.externalProcessing }
+          : {}),
       };
       const result = await sdk.trigger({ function_id: "mem::observe", payload });
       return { status_code: 201, body: result };
@@ -386,6 +410,178 @@ export function registerApiTriggers(
     },
   });
 
+  sdk.registerFunction(
+    "api::context-packet",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const sessionId = asNonEmptyString(body.sessionId);
+      if (!project || !sessionId) {
+        return {
+          status_code: 400,
+          body: { error: "project and sessionId are required" },
+        };
+      }
+      const tokenBudget = parseOptionalPositiveInt(body.token_budget);
+      if (tokenBudget === null || (tokenBudget ?? 2000) > 2000) {
+        return {
+          status_code: 400,
+          body: { error: "token_budget must be an integer from 1 to 2000" },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::context-packet",
+        payload: {
+          project,
+          sessionId,
+          query: asNonEmptyString(body.query) ?? undefined,
+          files: Array.isArray(body.files)
+            ? body.files.filter((file): file is string => typeof file === "string")
+            : [],
+          token_budget: tokenBudget,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::context-packet",
+    config: {
+      api_path: "/agentmemory/context-packet",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::commit-link",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const sha = asNonEmptyString(body.sha);
+      if (!project || !sha) {
+        return {
+          status_code: 400,
+          body: { error: "project and sha are required" },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::commit-link",
+        payload: {
+          project,
+          sha,
+          sessionId: asNonEmptyString(body.sessionId) ?? undefined,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::commit-link",
+    config: {
+      api_path: "/agentmemory/commit-link",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::project-health",
+    async (req: ApiRequest): Promise<Response> => {
+      const project = asNonEmptyString(req.query_params?.["project"]);
+      if (!project) {
+        return { status_code: 400, body: { error: "project is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::project-health",
+        payload: { project },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::project-health",
+    config: {
+      api_path: "/agentmemory/project-health",
+      http_method: "GET",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::promotion-candidates",
+    async (req: ApiRequest): Promise<Response> => {
+      const project = asNonEmptyString(req.query_params?.["project"]);
+      if (!project) {
+        return { status_code: 400, body: { error: "project is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::promotion-list",
+        payload: {
+          project,
+          sessionId: asNonEmptyString(req.query_params?.["sessionId"]),
+          status: asNonEmptyString(req.query_params?.["status"]),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::promotion-candidates",
+    config: {
+      api_path: "/agentmemory/promotion-candidates",
+      http_method: "GET",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::promotion-decide",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const candidateId = asNonEmptyString(body.candidateId);
+      const action = asNonEmptyString(body.action);
+      if (
+        !project ||
+        !candidateId ||
+        (action !== "accept" && action !== "reject")
+      ) {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "project, candidateId, and action (accept or reject) are required",
+          },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::promotion-decide",
+        payload: {
+          project,
+          candidateId,
+          action,
+          canonicalAdr: asNonEmptyString(body.canonicalAdr),
+          commitSha: asNonEmptyString(body.commitSha),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::promotion-decide",
+    config: {
+      api_path: "/agentmemory/promotion-decide",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
   sdk.registerFunction("api::search",
     async (
       req: ApiRequest<{
@@ -407,6 +603,20 @@ export function registerApiTriggers(
           : undefined;
       if (typeof body.query !== "string" || !body.query.trim()) {
         return { status_code: 400, body: { error: "query is required and must be a non-empty string" } };
+      }
+      const projectScope =
+        body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof body.project === "string" && body.project.trim()
+            ? { project: body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return {
+          status_code: 400,
+          body: {
+            error: "project is required unless scope is explicitly global",
+          },
+        };
       }
       if (
         body.limit !== undefined &&
@@ -450,7 +660,7 @@ export function registerApiTriggers(
       const payload = {
         query: body.query.trim(),
         limit: body.limit as number | undefined,
-        project: body.project as string | undefined,
+        ...projectScope,
         cwd: body.cwd as string | undefined,
         format:
           typeof body.format === "string"
@@ -473,21 +683,63 @@ export function registerApiTriggers(
     },
   });
 
+  sdk.registerFunction(
+    "api::index-rebuild",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      if (body.scope !== "global") {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "scope must be explicitly set to global because the search index is shared",
+          },
+        };
+      }
+      const result = await withKeyedLock("search-index-rebuild", async () => {
+        const entries = await rebuildIndex(kv);
+        await flushIndexSave();
+        return {
+          success: true,
+          entries,
+          keywordEntries: getSearchIndex().size,
+          vectorEntries: getVectorIndex()?.size ?? 0,
+          embeddingProvider: getEmbeddingProvider()?.name ?? "none",
+        };
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  sdk.registerTrigger({
+    type: "http",
+    function_id: "api::index-rebuild",
+    config: {
+      api_path: "/agentmemory/index/rebuild",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
   sdk.registerFunction("api::compress-file", 
-    async (req: ApiRequest<{ filePath: string }>): Promise<Response> => {
+    async (req: ApiRequest<{ filePath: string; project: string }>): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
       const body = (req.body ?? {}) as Record<string, unknown>;
       const filePath = asNonEmptyString(body.filePath);
-      if (!filePath) {
+      const project = asNonEmptyString(body.project);
+      if (!filePath || !project) {
         return {
           status_code: 400,
-          body: { error: "filePath is required and must be a non-empty string" },
+          body: {
+            error: "filePath and project are required and must be non-empty strings",
+          },
         };
       }
       const result = await sdk.trigger({
         function_id: "mem::compress-file",
-        payload: { filePath },
+        payload: { filePath, project },
       });
       return { status_code: 200, body: result };
     },
@@ -584,7 +836,15 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::session::start",
     async (
-      req: ApiRequest<{ sessionId: string; project: string; cwd: string }>,
+      req: ApiRequest<{
+        sessionId: string;
+        project: string;
+        cwd: string;
+        parentSessionId?: string;
+        privacy?: "standard" | "private" | "strict";
+        captureProfile?: "minimal" | "balanced" | "full";
+        externalProcessing?: boolean;
+      }>,
     ): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const sessionId = asNonEmptyString(body.sessionId);
@@ -599,6 +859,24 @@ export function registerApiTriggers(
         };
       }
       const title = typeof body.title === "string" ? body.title.trim() : undefined;
+      const parentSessionId =
+        asNonEmptyString(body.parentSessionId) ?? undefined;
+      const privacy =
+        body.privacy === "standard" ||
+        body.privacy === "private" ||
+        body.privacy === "strict"
+          ? body.privacy
+          : undefined;
+      const captureProfile =
+        body.captureProfile === "minimal" ||
+        body.captureProfile === "balanced" ||
+        body.captureProfile === "full"
+          ? body.captureProfile
+          : undefined;
+      const externalProcessing =
+        typeof body.externalProcessing === "boolean"
+          ? body.externalProcessing
+          : undefined;
       // allow session/start to override AGENT_ID from request body
       // (multi-agent runtimes that route many roles through one server
       // process). Falls back to the AGENT_ID env on the server.
@@ -607,28 +885,44 @@ export function registerApiTriggers(
           ? body.agentId.trim().slice(0, 128)
           : undefined;
       const agentId = requestAgentId ?? getAgentId();
-      const session: Session = {
-        id: sessionId,
-        project,
-        cwd,
-        startedAt: new Date().toISOString(),
-        status: "active",
-        observationCount: 0,
-        ...(title ? { summary: title.slice(0, 200) } : {}),
-        ...(title ? { firstPrompt: title.slice(0, 200) } : {}),
-        ...(agentId ? { agentId } : {}),
-      };
-      await kv.set(KV.sessions, sessionId, session);
+      await closeStaleSessions(kv);
+      let lifecycle: Awaited<ReturnType<typeof startOrResumeSession>>;
+      try {
+        lifecycle = await startOrResumeSession(kv, {
+          sessionId,
+          project,
+          cwd,
+          ...(title ? { title } : {}),
+          ...(agentId ? { agentId } : {}),
+          ...(parentSessionId ? { parentSessionId } : {}),
+          ...(privacy ? { privacy } : {}),
+          ...(captureProfile ? { captureProfile } : {}),
+          ...(externalProcessing !== undefined
+            ? { externalProcessing }
+            : {}),
+        });
+      } catch (error) {
+        return {
+          status_code: 409,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const contextResult = await sdk.trigger<
-        { sessionId: string; project: string; agentId?: string },
+        { sessionId: string; project: string },
         { context: string }
       >({
-        function_id: "mem::context",
-        payload: { sessionId, project, ...(agentId ? { agentId } : {}) },
+        function_id: "mem::context-packet",
+        payload: { sessionId, project },
       });
       return {
         status_code: 200,
-        body: { session, context: contextResult.context },
+        body: {
+          session: lifecycle.session,
+          resumed: lifecycle.resumed,
+          context: contextResult.context,
+        },
       };
     },
   );
@@ -644,12 +938,27 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::session::end",
     async (req: ApiRequest<{ sessionId: string }>): Promise<Response> => {
-      const sessionId = asNonEmptyString((req.body as Record<string, unknown>)?.sessionId);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const sessionId = asNonEmptyString(body.sessionId);
+      const project = asNonEmptyString(body.project);
       if (!sessionId) {
         return {
           status_code: 400,
           body: { error: "sessionId is required and must be a non-empty string" },
         };
+      }
+      const session = await kv.get<Session>(KV.sessions, sessionId);
+      if (!session) {
+        return { status_code: 404, body: { error: "session not found" } };
+      }
+      if (!project || session.project !== project) {
+        return {
+          status_code: 409,
+          body: { error: "session does not belong to the requested project" },
+        };
+      }
+      if (session.status === "completed") {
+        return { status_code: 200, body: { success: true, alreadyClosed: true } };
       }
       await kv.update(KV.sessions, sessionId, [
         { type: "set", path: "endedAt", value: new Date().toISOString() },
@@ -659,7 +968,7 @@ export function registerApiTriggers(
       try {
         sdk.trigger({
           function_id: "event::session::stopped",
-          payload: { sessionId },
+          payload: { sessionId, project },
           action: TriggerAction.Void(),
         });
       } catch (err) {
@@ -714,6 +1023,13 @@ export function registerApiTriggers(
           body: { error: "sha is required and must be a non-empty string" },
         };
       }
+      const project = asNonEmptyString(body.project);
+      if (!project) {
+        return {
+          status_code: 400,
+          body: { error: "project is required and must be a non-empty string" },
+        };
+      }
       const sessionId = asNonEmptyString(body.sessionId) ?? undefined;
       const branch = asNonEmptyString(body.branch) ?? undefined;
       const repo = asNonEmptyString(body.repo) ?? undefined;
@@ -728,10 +1044,16 @@ export function registerApiTriggers(
 
       const link = await withKeyedLock(`commit:${sha}`, async () => {
         const existing = await kv.get<CommitLink>(KV.commits, sha);
+        if (existing?.project && existing.project !== project) {
+          throw new Error(
+            `commit ${sha} is already linked to ${existing.project}`,
+          );
+        }
         const sessionSet = new Set<string>(existing?.sessionIds ?? []);
         if (sessionId) sessionSet.add(sessionId);
         const merged: CommitLink = {
           sha,
+          project,
           shortSha: existing?.shortSha ?? sha.slice(0, 7),
           branch: branch ?? existing?.branch,
           repo: repo ?? existing?.repo,
@@ -750,6 +1072,9 @@ export function registerApiTriggers(
         await withKeyedLock(`session:${sessionId}`, async () => {
           const session = await kv.get<Session>(KV.sessions, sessionId);
           if (!session) return;
+          if (session.project !== project) {
+            throw new Error("session does not belong to project");
+          }
           const shaSet = new Set<string>(session.commitShas ?? []);
           shaSet.add(sha);
           session.commitShas = Array.from(shaSet);
@@ -836,7 +1161,28 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const sessions = await kv.list<Session>(KV.sessions);
+      let projectScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        projectScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::sessions",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      const sessions = (await kv.list<Session>(KV.sessions)).filter(
+        (session) =>
+          projectScope.kind === "global" ||
+          session.project === projectScope.project,
+      );
       const normalizedAgentId =
         typeof req.query_params?.["agentId"] === "string"
           ? req.query_params["agentId"].trim()
@@ -907,7 +1253,20 @@ export function registerApiTriggers(
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const result = await sdk.trigger({ function_id: "mem::file-context", payload: req.body });
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const projectScope =
+        body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof body.project === "string" && body.project.trim()
+            ? { project: body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return { status_code: 400, body: { error: "project required unless scope is global" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::file-context",
+        payload: { ...body, ...projectScope },
+      });
       return { status_code: 200, body: result };
     },
   );
@@ -925,6 +1284,7 @@ export function registerApiTriggers(
         terms?: string[];
         toolName?: string;
         project?: string;
+        scope?: "project" | "global";
       }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
@@ -991,6 +1351,7 @@ export function registerApiTriggers(
         ttlDays?: number;
         sourceObservationIds?: string[];
         project?: string;
+        scope?: "project" | "global";
       }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
@@ -1002,11 +1363,14 @@ export function registerApiTriggers(
       ) {
         return { status_code: 400, body: { error: "content is required" } };
       }
-      if (
-        req.body.project !== undefined &&
-        (typeof req.body.project !== "string" || !req.body.project.trim())
-      ) {
-        return { status_code: 400, body: { error: "project must be a non-empty string" } };
+      const projectScope =
+        req.body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof req.body.project === "string" && req.body.project.trim()
+            ? { project: req.body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return { status_code: 400, body: { error: "project required unless scope is global" } };
       }
       const result = await sdk.trigger({
         function_id: "mem::remember",
@@ -1017,7 +1381,7 @@ export function registerApiTriggers(
           ...(req.body.files !== undefined && { files: req.body.files }),
           ...(req.body.ttlDays !== undefined && { ttlDays: req.body.ttlDays }),
           ...(req.body.sourceObservationIds !== undefined && { sourceObservationIds: req.body.sourceObservationIds }),
-          ...(req.body.project !== undefined && { project: req.body.project }),
+          ...projectScope,
         },
       });
       return { status_code: 201, body: result };
@@ -1057,11 +1421,33 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::consolidate", 
     async (
-      req: ApiRequest<{ project?: string; minObservations?: number }>,
+      req: ApiRequest<{
+        project?: string;
+        scope?: "project" | "global";
+        minObservations?: number;
+      }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const result = await sdk.trigger({ function_id: "mem::consolidate", payload: req.body });
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const projectScope =
+        body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : asNonEmptyString(body.project)
+            ? { project: asNonEmptyString(body.project) }
+            : null;
+      if (!projectScope) {
+        return {
+          status_code: 400,
+          body: {
+            error: "project is required unless scope is explicitly global",
+          },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::consolidate",
+        payload: { ...body, ...projectScope },
+      });
       return { status_code: 200, body: result };
     },
   );
@@ -1101,7 +1487,12 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::migrate",
     async (
-      req: ApiRequest<{ dbPath?: string; step?: string; dryRun?: boolean }>,
+      req: ApiRequest<{
+        dbPath?: string;
+        step?: string;
+        dryRun?: boolean;
+        projectAliases?: Record<string, string>;
+      }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -1121,6 +1512,9 @@ export function registerApiTriggers(
           ...(req.body.step !== undefined && { step: req.body.step }),
           ...(req.body.dbPath !== undefined && { dbPath: req.body.dbPath }),
           ...(req.body.dryRun !== undefined && { dryRun: req.body.dryRun }),
+          ...(req.body.projectAliases !== undefined && {
+            projectAliases: req.body.projectAliases,
+          }),
         },
       });
       return { status_code: 200, body: result };
@@ -1155,6 +1549,7 @@ export function registerApiTriggers(
         expandIds?: Array<string | { obsId: string; sessionId: string }>;
         limit?: number;
         project?: string;
+        scope?: "project" | "global";
         includeLessons?: boolean;
         agentId?: string;
         sessionId?: string;
@@ -1172,6 +1567,15 @@ export function registerApiTriggers(
           body: { error: "query or expandIds is required" },
         };
       }
+      const projectScope =
+        req.body?.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof req.body?.project === "string" && req.body.project.trim()
+            ? { project: req.body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return { status_code: 400, body: { error: "project required unless scope is global" } };
+      }
       // #771: route the X-Agentmemory-Source header into the payload so
       // the followup-rate diagnostic can skip viewer-originated calls.
       // Body wins if both are set (advanced callers explicitly override).
@@ -1186,7 +1590,7 @@ export function registerApiTriggers(
         query: req.body?.query,
         expandIds: req.body?.expandIds,
         limit: req.body?.limit,
-        project: req.body?.project,
+        ...projectScope,
         includeLessons: req.body?.includeLessons,
         agentId: req.body?.agentId,
         sessionId: req.body?.sessionId,
@@ -1269,7 +1673,11 @@ export function registerApiTriggers(
           body: { error: "project query param is required" },
         };
       }
-      const result = await sdk.trigger({ function_id: "mem::profile", payload: { project } });
+      const refresh = req.query_params?.["refresh"] === "true";
+      const result = await sdk.trigger({
+        function_id: "mem::profile",
+        payload: { project, refresh },
+      });
       return { status_code: 200, body: result };
     },
   );
@@ -1290,7 +1698,12 @@ export function registerApiTriggers(
       // Pass through the query-string pagination so callers can chunk.
       const rawMax = req.query_params?.["maxSessions"];
       const rawOffset = req.query_params?.["offset"];
-      const payload: { maxSessions?: number; offset?: number } = {};
+      const rawSections = req.query_params?.["sections"];
+      const payload: {
+        maxSessions?: number;
+        offset?: number;
+        sections?: string[];
+      } = {};
       if (typeof rawMax === "string") {
         const n = Number(rawMax);
         if (Number.isInteger(n) && n > 0) payload.maxSessions = n;
@@ -1298,6 +1711,14 @@ export function registerApiTriggers(
       if (typeof rawOffset === "string") {
         const n = Number(rawOffset);
         if (Number.isInteger(n) && n >= 0) payload.offset = n;
+      }
+      if (typeof rawSections === "string") {
+        const sections = rawSections
+          .split(",")
+          .map((section) => section.trim())
+          .filter(Boolean)
+          .slice(0, 20);
+        if (sections.length > 0) payload.sections = sections;
       }
       const result = await sdk.trigger({
         function_id: "mem::export",
@@ -1645,8 +2066,23 @@ export function registerApiTriggers(
     async (req: ApiRequest<{ tier?: string }>): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const projectScope =
+        body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : asNonEmptyString(body.project)
+            ? { project: asNonEmptyString(body.project) }
+            : null;
+      if (!projectScope) {
+        return {
+          status_code: 400,
+          body: {
+            error: "project is required unless scope is explicitly global",
+          },
+        };
+      }
       try {
-        const result = await sdk.trigger({ function_id: "mem::consolidate-pipeline", payload: req.body || {},
+        const result = await sdk.trigger({ function_id: "mem::consolidate-pipeline", payload: { ...body, ...projectScope },
          });
         return { status_code: 200, body: result };
       } catch {
@@ -2008,6 +2444,7 @@ export function registerApiTriggers(
       const queryText = asNonEmptyString(body["queryText"]);
       const queryImageRef = asNonEmptyString(body["queryImageRef"]);
       const queryImageBase64 = asNonEmptyString(body["queryImageBase64"]);
+      const project = asNonEmptyString(body["project"]);
       const sessionId = asNonEmptyString(body["sessionId"]);
       if (!queryText && !queryImageRef && !queryImageBase64) {
         return {
@@ -2015,11 +2452,14 @@ export function registerApiTriggers(
           body: { error: "queryText, queryImageRef, or queryImageBase64 required" },
         };
       }
+      if (!project) {
+        return { status_code: 400, body: { error: "project is required" } };
+      }
       const topKParsed = parseOptionalPositiveInt(body["topK"]);
       if (topKParsed === null) {
         return { status_code: 400, body: { error: "topK must be a positive integer" } };
       }
-      const payload: Record<string, unknown> = {};
+      const payload: Record<string, unknown> = { project };
       if (queryText) payload["queryText"] = queryText;
       if (queryImageRef) payload["queryImageRef"] = queryImageRef;
       if (queryImageBase64) payload["queryImageBase64"] = queryImageBase64;
@@ -2045,12 +2485,16 @@ export function registerApiTriggers(
       if (authErr) return authErr;
       const body = (req.body ?? {}) as Record<string, unknown>;
       const imageRef = asNonEmptyString(body["imageRef"]);
+      const project = asNonEmptyString(body["project"]);
       const sessionId = asNonEmptyString(body["sessionId"]);
       const observationId = asNonEmptyString(body["observationId"]);
-      if (!imageRef) {
-        return { status_code: 400, body: { error: "imageRef is required" } };
+      if (!imageRef || !project) {
+        return {
+          status_code: 400,
+          body: { error: "imageRef and project are required" },
+        };
       }
-      const payload: Record<string, unknown> = { imageRef };
+      const payload: Record<string, unknown> = { imageRef, project };
       if (sessionId) payload["sessionId"] = sessionId;
       if (observationId) payload["observationId"] = observationId;
       const result = await sdk.trigger({ function_id: "mem::vision-embed", payload });
@@ -2071,7 +2515,9 @@ export function registerApiTriggers(
     const authErr = checkAuth(req, secret);
     if (authErr) return authErr;
     if (!isSlotsEnabled()) return slotsDisabledResponse();
-    const result = await sdk.trigger({ function_id: "mem::slot-list", payload: {} });
+    const project = asNonEmptyString(req.query_params?.["project"]);
+    if (!project) return { status_code: 400, body: { error: "project query param required" } };
+    const result = await sdk.trigger({ function_id: "mem::slot-list", payload: { project } });
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({
@@ -2085,8 +2531,9 @@ export function registerApiTriggers(
     if (authErr) return authErr;
     if (!isSlotsEnabled()) return slotsDisabledResponse();
     const label = asNonEmptyString(req.query_params?.["label"]);
-    if (!label) return { status_code: 400, body: { error: "label query param required" } };
-    const result = await sdk.trigger({ function_id: "mem::slot-get", payload: { label } });
+    const project = asNonEmptyString(req.query_params?.["project"]);
+    if (!label || !project) return { status_code: 400, body: { error: "label and project query params required" } };
+    const result = await sdk.trigger({ function_id: "mem::slot-get", payload: { label, project } });
     const resp = result as { success?: boolean; error?: string };
     if (resp?.success === false) {
       return { status_code: resp.error?.includes("not found") ? 404 : 400, body: resp };
@@ -2131,6 +2578,7 @@ export function registerApiTriggers(
       return { status_code: 400, body: { error: "sizeLimit must be <= 20000" } };
     }
     const payload: Record<string, unknown> = { label };
+    if (typeof body["project"] === "string") payload["project"] = body["project"];
     if (typeof body["content"] === "string") payload["content"] = body["content"];
     if (typeof body["description"] === "string") payload["description"] = body["description"];
     if (sizeLimit !== undefined) payload["sizeLimit"] = sizeLimit;
@@ -2155,9 +2603,10 @@ export function registerApiTriggers(
     if (!isSlotsEnabled()) return slotsDisabledResponse();
     const body = (req.body ?? {}) as Record<string, unknown>;
     const label = asNonEmptyString(body["label"]);
+    const project = asNonEmptyString(body["project"]);
     const text = typeof body["text"] === "string" ? body["text"] : null;
-    if (!label || !text) return { status_code: 400, body: { error: "label and text required" } };
-    const result = await sdk.trigger({ function_id: "mem::slot-append", payload: { label, text } });
+    if (!label || !text || !project) return { status_code: 400, body: { error: "label, text, and project required" } };
+    const result = await sdk.trigger({ function_id: "mem::slot-append", payload: { label, text, project } });
     const resp = result as { success?: boolean; error?: string };
     if (resp?.success === false) {
       const notFound = resp.error?.includes("not found");
@@ -2178,11 +2627,12 @@ export function registerApiTriggers(
     if (!isSlotsEnabled()) return slotsDisabledResponse();
     const body = (req.body ?? {}) as Record<string, unknown>;
     const label = asNonEmptyString(body["label"]);
+    const project = asNonEmptyString(body["project"]);
     const content = body["content"];
-    if (!label || typeof content !== "string") {
-      return { status_code: 400, body: { error: "label and content (string) required" } };
+    if (!label || !project || typeof content !== "string") {
+      return { status_code: 400, body: { error: "label, project, and content (string) required" } };
     }
-    const result = await sdk.trigger({ function_id: "mem::slot-replace", payload: { label, content } });
+    const result = await sdk.trigger({ function_id: "mem::slot-replace", payload: { label, content, project } });
     const resp = result as { success?: boolean; error?: string };
     if (resp?.success === false) {
       const notFound = resp.error?.includes("not found");
@@ -2202,8 +2652,9 @@ export function registerApiTriggers(
     if (authErr) return authErr;
     if (!isSlotsEnabled()) return slotsDisabledResponse();
     const label = asNonEmptyString(req.query_params?.["label"]);
-    if (!label) return { status_code: 400, body: { error: "label query param required" } };
-    const result = await sdk.trigger({ function_id: "mem::slot-delete", payload: { label } });
+    const project = asNonEmptyString(req.query_params?.["project"]);
+    if (!label || !project) return { status_code: 400, body: { error: "label and project query params required" } };
+    const result = await sdk.trigger({ function_id: "mem::slot-delete", payload: { label, project } });
     const resp = result as { success?: boolean; error?: string };
     if (resp?.success === false) {
       return { status_code: resp.error?.includes("not found") ? 404 : 400, body: resp };
@@ -2227,6 +2678,7 @@ export function registerApiTriggers(
     const maxObservations = parseOptionalPositiveInt(body["maxObservations"]);
     if (maxObservations === null) return { status_code: 400, body: { error: "maxObservations must be a positive integer" } };
     const payload: Record<string, unknown> = { sessionId };
+    if (typeof body["project"] === "string") payload["project"] = body["project"];
     if (maxObservations !== undefined) payload["maxObservations"] = maxObservations;
     const result = await sdk.trigger({ function_id: "mem::slot-reflect", payload });
     return { status_code: 200, body: result };
@@ -2961,7 +3413,12 @@ export function registerApiTriggers(
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
-    if (!body?.actionIds) return { status_code: 400, body: { error: "actionIds is required" } };
+    if (!body?.actionIds || !asNonEmptyString(body.project)) {
+      return {
+        status_code: 400,
+        body: { error: "actionIds and project are required" },
+      };
+    }
     const result = await sdk.trigger({ function_id: "mem::crystallize", payload: body });
     return { status_code: 200, body: result };
   });
@@ -2971,6 +3428,10 @@ export function registerApiTriggers(
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const params = req.query_params || {};
+    const project = asNonEmptyString(params.project);
+    if (!project) {
+      return { status_code: 400, body: { error: "project is required" } };
+    }
     const limit = parseOptionalPositiveInt(params.limit);
     if (limit === null) {
       return {
@@ -2978,7 +3439,7 @@ export function registerApiTriggers(
         body: { error: "invalid numeric parameter: limit" },
       };
     }
-    const result = await sdk.trigger({ function_id: "mem::crystal-list", payload: { project: params.project, sessionId: params.sessionId, limit } });
+    const result = await sdk.trigger({ function_id: "mem::crystal-list", payload: { project, sessionId: params.sessionId, limit } });
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::crystal-list", config: { api_path: "/agentmemory/crystals", http_method: "GET" } });
@@ -2987,6 +3448,9 @@ export function registerApiTriggers(
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
+    if (!asNonEmptyString(body?.project)) {
+      return { status_code: 400, body: { error: "project is required" } };
+    }
     const result = await sdk.trigger({ function_id: "mem::auto-crystallize", payload: body || {} });
     return { status_code: 200, body: result };
   });
@@ -3085,6 +3549,13 @@ export function registerApiTriggers(
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
     if (!body?.content || typeof body.content !== "string") return { status_code: 400, body: { error: "content is required" } };
+    const projectScope =
+      body.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof body.project === "string" && body.project.trim()
+          ? { project: body.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const tags = typeof body.tags === "string" ? (body.tags as string).split(",").map((t: string) => t.trim()).filter(Boolean) : Array.isArray(body.tags) ? body.tags : [];
     const result = (await sdk.trigger({
       function_id: "mem::lesson-save",
@@ -3092,7 +3563,7 @@ export function registerApiTriggers(
         content: body.content,
         context: body.context || "",
         confidence: typeof body.confidence === "number" ? body.confidence : undefined,
-        project: typeof body.project === "string" ? body.project : undefined,
+        ...projectScope,
         tags,
         source: "manual",
       },
@@ -3106,6 +3577,13 @@ export function registerApiTriggers(
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const params = req.query_params || {};
+    const projectScope =
+      params.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof params.project === "string" && params.project.trim()
+          ? { project: params.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const minConfidence = parseOptionalFiniteNumber(params.minConfidence);
     if (minConfidence === null) {
       return {
@@ -3121,7 +3599,7 @@ export function registerApiTriggers(
       };
     }
     const result = await sdk.trigger({ function_id: "mem::lesson-list", payload: {
-      project: params.project,
+      ...projectScope,
       source: params.source,
       minConfidence,
       limit,
@@ -3135,7 +3613,17 @@ export function registerApiTriggers(
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
     if (!body?.query || typeof body.query !== "string") return { status_code: 400, body: { error: "query is required" } };
-    const result = await sdk.trigger({ function_id: "mem::lesson-recall", payload: body });
+    const projectScope =
+      body.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof body.project === "string" && body.project.trim()
+          ? { project: body.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
+    const result = await sdk.trigger({
+      function_id: "mem::lesson-recall",
+      payload: { ...body, ...projectScope },
+    });
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::lesson-search", config: { api_path: "/agentmemory/lessons/search", http_method: "POST" } });
@@ -3144,8 +3632,29 @@ export function registerApiTriggers(
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
-    if (!body?.lessonId || typeof body.lessonId !== "string") return { status_code: 400, body: { error: "lessonId is required" } };
-    const result = await sdk.trigger({ function_id: "mem::lesson-strengthen", payload: { lessonId: body.lessonId } });
+    const projectScope =
+      body?.scope === "global"
+        ? ({ scope: "global" } as const)
+        : asNonEmptyString(body?.project)
+          ? { project: asNonEmptyString(body.project) }
+          : null;
+    if (
+      !body?.lessonId ||
+      typeof body.lessonId !== "string" ||
+      !projectScope
+    ) {
+      return {
+        status_code: 400,
+        body: {
+          error:
+            "lessonId and project are required unless scope is explicitly global",
+        },
+      };
+    }
+    const result = await sdk.trigger({
+      function_id: "mem::lesson-strengthen",
+      payload: { lessonId: body.lessonId, ...projectScope },
+    });
     return { status_code: 200, body: result };
   });
   sdk.registerTrigger({ type: "http", function_id: "api::lesson-strengthen", config: { api_path: "/agentmemory/lessons/strengthen", http_method: "POST" } });
@@ -3171,8 +3680,15 @@ export function registerApiTriggers(
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = (req.body as Record<string, unknown>) || {};
+    const projectScope =
+      body.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof body.project === "string" && body.project.trim()
+          ? { project: body.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const result = await sdk.trigger({ function_id: "mem::reflect", payload: {
-      project: typeof body.project === "string" ? body.project : undefined,
+      ...projectScope,
       maxClusters: typeof body.maxClusters === "number" ? body.maxClusters : undefined,
     } });
     return { status_code: 200, body: result };
@@ -3183,6 +3699,13 @@ export function registerApiTriggers(
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const params = req.query_params || {};
+    const projectScope =
+      params.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof params.project === "string" && params.project.trim()
+          ? { project: params.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const minConfidence = parseOptionalFiniteNumber(params.minConfidence);
     if (minConfidence === null) {
       return {
@@ -3198,7 +3721,7 @@ export function registerApiTriggers(
       };
     }
     const result = await sdk.trigger({ function_id: "mem::insight-list", payload: {
-      project: params.project,
+      ...projectScope,
       minConfidence,
       limit,
     } });
@@ -3211,9 +3734,16 @@ export function registerApiTriggers(
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
     if (!body?.query || typeof body.query !== "string") return { status_code: 400, body: { error: "query is required" } };
+    const projectScope =
+      body.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof body.project === "string" && body.project.trim()
+          ? { project: body.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const result = await sdk.trigger({ function_id: "mem::insight-search", payload: {
       query: body.query,
-      project: typeof body.project === "string" ? body.project : undefined,
+      ...projectScope,
       minConfidence: typeof body.minConfidence === "number" ? body.minConfidence : undefined,
       limit: typeof body.limit === "number" ? body.limit : undefined,
     } });

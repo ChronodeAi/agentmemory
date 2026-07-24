@@ -27,6 +27,8 @@ args = ["-y", "@agentmemory/mcp"]
 
 [mcp_servers.agentmemory.env]
 AGENTMEMORY_URL = "http://localhost:3111"
+AGENTMEMORY_SECRET_FILE = "~/.agentmemory/secret"
+AGENTMEMORY_TOOLS = "all"
 `;
 
 const SECTION_HEADER = "[mcp_servers.agentmemory]";
@@ -79,6 +81,14 @@ export const adapter: ConnectAdapter = {
 
     if (wired && !opts.force) {
       logAlreadyWired("Codex CLI", CODEX_TOML);
+      if (opts.withHooks) {
+        const hookResult = installCodexHooks(opts);
+        if (hookResult.kind === "skipped") {
+          p.log.warn(
+            `Codex hooks fallback skipped: ${hookResult.reason}.`,
+          );
+        }
+      }
       return { kind: "already-wired", mutatedPath: CODEX_TOML };
     }
 

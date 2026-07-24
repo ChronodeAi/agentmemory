@@ -72,7 +72,7 @@ export function registerContextFunction(
 
       const [pinnedSlots, profile, lessons] = await Promise.all([
         isSlotsEnabled()
-          ? listPinnedSlots(kv).catch(() => [] as MemorySlot[])
+          ? listPinnedSlots(kv, data.project).catch(() => [] as MemorySlot[])
           : Promise.resolve([] as MemorySlot[]),
         kv
           .get<ProjectProfile>(KV.profiles, data.project)
@@ -133,7 +133,7 @@ export function registerContextFunction(
       // 10 to keep the block bounded since the outer token-budget loop
       // below will drop the whole block if it doesn't fit. #457.
       const relevantLessons = lessons
-        .filter((l) => !l.deleted && (!l.project || l.project === data.project))
+        .filter((l) => !l.deleted && l.project === data.project)
         .sort((a, b) => {
           const scoreA = (a.project === data.project ? 1.5 : 1) * a.confidence;
           const scoreB = (b.project === data.project ? 1.5 : 1) * b.confidence;

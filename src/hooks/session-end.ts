@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { resolveProject } from "./_project.js";
 
 function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
@@ -32,11 +33,12 @@ async function main() {
   if (isSdkChildContext(data)) return;
 
   const sessionId = ((data.session_id || data.sessionId) as string) || "unknown";
+  const project = resolveProject(data.cwd as string | undefined);
 
   fetch(`${REST_URL}/agentmemory/session/end`, {
     method: "POST",
     headers: authHeaders(),
-    body: JSON.stringify({ sessionId }),
+    body: JSON.stringify({ sessionId, project }),
     signal: AbortSignal.timeout(30000),
   }).catch(() => {});
 
@@ -44,14 +46,14 @@ async function main() {
     fetch(`${REST_URL}/agentmemory/crystals/auto`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ olderThanDays: 0 }),
+      body: JSON.stringify({ olderThanDays: 0, project }),
       signal: AbortSignal.timeout(60000),
     }).catch(() => {});
 
     fetch(`${REST_URL}/agentmemory/consolidate-pipeline`, {
       method: "POST",
       headers: authHeaders(),
-      body: JSON.stringify({ tier: "all", force: true }),
+      body: JSON.stringify({ tier: "all", force: true, project }),
       signal: AbortSignal.timeout(120000),
     }).catch(() => {});
   }

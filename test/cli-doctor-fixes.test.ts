@@ -173,13 +173,30 @@ describe("doctor v2 diagnostic catalog", () => {
     const diagnostics = buildDiagnostics(
       stubEffects({
         findIiiBinary: () => "/opt/homebrew/bin/iii",
-        localBinIiiPath: () => "/Users/test/.local/bin/iii",
+        localBinIiiPath: () => "/Users/test/.agentmemory/bin/iii",
+        iiiBinaryVersion: (path) =>
+          path === "/opt/homebrew/bin/iii" ? "0.13.0" : null,
       }),
     );
     const check = diagnostics.find((d) => d.id === "iii-on-path-not-local-bin")!;
     const status = await check.check(stubCtx());
     expect(status.ok).toBe(false);
     expect(check.manualOnly).toBe(true);
+  });
+
+  it("accepts a pinned private iii when PATH resolves another install", async () => {
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        findIiiBinary: () => "/opt/homebrew/bin/iii",
+        localBinIiiPath: () => "/Users/test/.agentmemory/bin/iii",
+        iiiBinaryVersion: (path) =>
+          path === "/Users/test/.agentmemory/bin/iii" ? "0.11.2" : "0.13.0",
+      }),
+    );
+    const check = diagnostics.find((d) => d.id === "iii-on-path-not-local-bin")!;
+    const status = await check.check(stubCtx());
+    expect(status.ok).toBe(true);
+    expect(status.detail).toContain("using private iii v0.11.2");
   });
 
   it("dryRunPlan lists each failing diagnostic with the fix preview", () => {

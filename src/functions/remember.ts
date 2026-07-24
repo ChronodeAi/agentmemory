@@ -9,6 +9,7 @@ import { recordAudit } from "./audit.js";
 import { getSearchIndex, vectorIndexAddGuarded, vectorIndexRemove, flushIndexSave } from "./search.js";
 import { getAgentId } from "../config.js";
 import { logger } from "../logger.js";
+import { requireProjectReadScope } from "../project-scope.js";
 
 export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::remember", 
@@ -21,6 +22,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       sourceObservationIds?: string[];
       agentId?: string;
       project?: string;
+      scope?: "project" | "global";
     }) => {
       if (
         !data.content ||
@@ -54,12 +56,11 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       // Normalize project early so every subsequent comparison and storage
       // operation uses the same cleaned value. Raw data.project must not be
       // referenced below this point.
+      const projectScope = requireProjectReadScope(data, "mem::remember");
       const project =
-        typeof data.project === "string" && data.project.trim().length > 0
-          ? data.project.trim()
-          : undefined;
+        projectScope.kind === "project" ? projectScope.project : undefined;
 
-      return withKeyedLock("mem:remember", async () => {
+      return withKeyedLock(`mem:remember:${project ?? "global"}`, async () => {
         const existingMemories = await kv.list<Memory>(KV.memories);
         let supersededId: string | undefined;
         let supersededVersion = 1;
@@ -67,11 +68,9 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
         const lowerContent = data.content.toLowerCase();
         for (const existing of existingMemories) {
           if (existing.isLatest === false) continue;
-          // Never supersede a memory that belongs to a different project.
-          // Both sides must have an explicit project for the guard to engage;
-          // an unscoped memory (legacy, no project field) is treated as a
-          // wildcard so pre-existing data is not stranded.
-          if (project && existing.project && existing.project !== project) {
+          // Supersession and semantic reinforcement are scope-local. Legacy
+          // unscoped rows never compete with project records.
+          if (existing.project !== project) {
             continue;
           }
           const similarity = jaccardSimilarity(
@@ -145,6 +144,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           memory.sessionIds?.[0] ?? "memory",
           memory.title + " " + memory.content,
           { kind: "memory", logId: memory.id },
+          { externalProcessing: project === undefined },
         );
 
         if (supersededId) {

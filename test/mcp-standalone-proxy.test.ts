@@ -1,5 +1,8 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { handleToolCall } from "../src/mcp/standalone.js";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { handleToolCall as rawHandleToolCall } from "../src/mcp/standalone.js";
 import { resetHandleForTests } from "../src/mcp/rest-proxy.js";
 import { InMemoryKV } from "../src/mcp/in-memory-kv.js";
 
@@ -14,6 +17,26 @@ function installFetch(handler: (url: string, init?: RequestInit) => Response): F
 }
 
 const BASE = "http://localhost:3111";
+const PROJECT_SCOPED_TOOLS = new Set([
+  "memory_save",
+  "memory_recall",
+  "memory_smart_search",
+  "memory_sessions",
+]);
+
+function handleToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+  kv?: InMemoryKV,
+) {
+  return rawHandleToolCall(
+    toolName,
+    PROJECT_SCOPED_TOOLS.has(toolName)
+      ? { scope: "global", ...args }
+      : args,
+    kv,
+  );
+}
 
 describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
   const originalFetch = globalThis.fetch;
@@ -22,12 +45,15 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     resetHandleForTests();
     process.env["AGENTMEMORY_URL"] = BASE;
     delete process.env["AGENTMEMORY_SECRET"];
+    delete process.env["AGENTMEMORY_SECRET_FILE"];
   });
 
   afterEach(() => {
     resetHandleForTests();
     globalThis.fetch = originalFetch;
     delete process.env["AGENTMEMORY_URL"];
+    delete process.env["AGENTMEMORY_SECRET"];
+    delete process.env["AGENTMEMORY_SECRET_FILE"];
   });
 
   it("proxies memory_sessions to GET /agentmemory/sessions when server is up", async () => {
@@ -111,6 +137,7 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
       limit: 5,
       format: "full",
       token_budget: 800,
+      scope: "global",
     });
     expect(calls.find((c) => c.url.endsWith("/agentmemory/smart-search"))).toBeUndefined();
   });
@@ -195,6 +222,83 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     await handleToolCall("memory_sessions", {});
     expect(authByPath.get("/agentmemory/livez")).toBe("Bearer s3cret");
     expect(authByPath.get("/agentmemory/sessions")).toBe("Bearer s3cret");
+  });
+
+  it("loads the Bearer token from AGENTMEMORY_SECRET_FILE", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentmemory-secret-"));
+    const secretFile = join(dir, "secret");
+    writeFileSync(secretFile, "file-secret\n", { mode: 0o600 });
+    process.env["AGENTMEMORY_SECRET_FILE"] = secretFile;
+    const authByPath = new Map<string, string | undefined>();
+    installFetch((url, init) => {
+      const auth = (init?.headers as Record<string, string> | undefined)?.[
+        "authorization"
+      ];
+      authByPath.set(new URL(url).pathname, auth);
+      if (url.endsWith("/agentmemory/livez")) return new Response("ok", { status: 200 });
+      return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
+    });
+
+    try {
+      await handleToolCall("memory_sessions", {});
+      expect(authByPath.get("/agentmemory/livez")).toBe("Bearer file-secret");
+      expect(authByPath.get("/agentmemory/sessions")).toBe("Bearer file-secret");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("prefers the process secret over the secret file", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentmemory-secret-"));
+    const secretFile = join(dir, "secret");
+    writeFileSync(secretFile, "file-secret\n", { mode: 0o600 });
+    process.env["AGENTMEMORY_SECRET"] = "process-secret";
+    process.env["AGENTMEMORY_SECRET_FILE"] = secretFile;
+    let authorization: string | undefined;
+    installFetch((url, init) => {
+      authorization = (init?.headers as Record<string, string> | undefined)?.[
+        "authorization"
+      ];
+      if (url.endsWith("/agentmemory/livez")) return new Response("ok", { status: 200 });
+      return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
+    });
+
+    try {
+      await handleToolCall("memory_sessions", {});
+      expect(authorization).toBe("Bearer process-secret");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses the default path from an unexpanded secret-file placeholder", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentmemory-secret-"));
+    const secretFile = join(dir, "secret");
+    writeFileSync(secretFile, "placeholder-secret\n", { mode: 0o600 });
+    process.env["AGENTMEMORY_SECRET"] = "${AGENTMEMORY_SECRET:-}";
+    process.env["AGENTMEMORY_SECRET_FILE"] =
+      `\${AGENTMEMORY_SECRET_FILE:-${secretFile}}`;
+    const authByPath = new Map<string, string | undefined>();
+    installFetch((url, init) => {
+      const auth = (init?.headers as Record<string, string> | undefined)?.[
+        "authorization"
+      ];
+      authByPath.set(new URL(url).pathname, auth);
+      if (url.endsWith("/agentmemory/livez")) return new Response("ok", { status: 200 });
+      return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
+    });
+
+    try {
+      await handleToolCall("memory_sessions", {});
+      expect(authByPath.get("/agentmemory/livez")).toBe(
+        "Bearer placeholder-secret",
+      );
+      expect(authByPath.get("/agentmemory/sessions")).toBe(
+        "Bearer placeholder-secret",
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("falls back to local InMemoryKV when server is unreachable", async () => {

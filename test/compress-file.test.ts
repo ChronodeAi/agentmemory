@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -93,6 +93,7 @@ describe("mem::compress-file", () => {
   let summarize: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
+    vi.stubEnv("AGENTMEMORY_LOCAL_PROCESSING", "true");
     fileStore.clear();
     symlinkPaths.clear();
     openEloopPaths.clear();
@@ -104,6 +105,10 @@ describe("mem::compress-file", () => {
       kv as never,
       { name: "test-provider", summarize, compress: summarize } as never,
     );
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   it("rejects symlinks", async () => {
@@ -208,5 +213,19 @@ describe("mem::compress-file", () => {
       "# Title\n\nLong original body.",
     );
     expect(fileStore.get(path)).toBe("# Title\n\nShort body.");
+  });
+
+  it("does not send strict-project files to the provider", async () => {
+    vi.stubEnv("AGENTMEMORY_LOCAL_PROCESSING", "false");
+    const path = "/tmp/private-notes.md";
+    fileStore.set(path, "# Private\n\nDo not send this content.");
+
+    const result = (await sdk.trigger("mem::compress-file", {
+      filePath: path,
+    })) as { success: boolean; error: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("external_processing_disabled");
+    expect(summarize).not.toHaveBeenCalled();
   });
 });

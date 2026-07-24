@@ -10,6 +10,7 @@ import { KV, generateId, fingerprintId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { modelProcessingForSession } from "./model-processing.js";
 
 const SKILL_EXTRACT_SYSTEM = `You are a skill extraction engine. Given a completed multi-step task session, extract a reusable procedural skill document.
 
@@ -136,6 +137,11 @@ export function registerSkillExtractFunctions(
       }
       if (observations.length < 3) {
         return { success: false, error: "too few observations for skill extraction" };
+      }
+
+      const processing = await modelProcessingForSession(kv, data.sessionId);
+      if (!processing.allowed) {
+        return { success: false, error: processing.error };
       }
 
       try {

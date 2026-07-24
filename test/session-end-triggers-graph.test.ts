@@ -11,6 +11,7 @@ import { readFileSync } from "node:fs";
 // blocking).
 describe("api::session::end → event::session::stopped (#666)", () => {
   const api = readFileSync("src/triggers/api.ts", "utf-8");
+  const events = readFileSync("src/triggers/events.ts", "utf-8");
 
   it("api::session::end fires event::session::stopped after kv.update", () => {
     expect(api).toMatch(
@@ -18,9 +19,9 @@ describe("api::session::end → event::session::stopped (#666)", () => {
     );
   });
 
-  it("event::session::stopped trigger payload includes sessionId", () => {
+  it("event::session::stopped trigger payload includes sessionId and project", () => {
     expect(api).toMatch(
-      /function_id:\s*"event::session::stopped",\s*payload:\s*\{\s*sessionId\s*\}/,
+      /function_id:\s*"event::session::stopped",\s*payload:\s*\{\s*sessionId,\s*project\s*\}/,
     );
   });
 
@@ -28,6 +29,12 @@ describe("api::session::end → event::session::stopped (#666)", () => {
     expect(api).toMatch(
       /function_id:\s*"event::session::stopped"[\s\S]*?action:\s*TriggerAction\.Void\(\)/,
     );
+  });
+
+  it("automatic graph extraction honors strict session privacy", () => {
+    expect(events).toMatch(/session\.privacy !== "strict"/);
+    expect(events).toMatch(/session\.externalProcessing !== false/);
+    expect(events).toMatch(/AGENTMEMORY_LOCAL_PROCESSING/);
   });
 });
 

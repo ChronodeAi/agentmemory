@@ -1,5 +1,5 @@
 import type { ISdk } from "iii-sdk";
-import type { EmbeddingProvider } from "../types.js";
+import type { EmbeddingProvider, Session } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { isManagedImagePath } from "../utils/image-store.js";
@@ -12,6 +12,7 @@ interface StoredEmbedding {
   modelName: string;
   dimensions: number;
   updatedAt: string;
+  project?: string;
   sessionId?: string;
   observationId?: string;
 }
@@ -25,6 +26,7 @@ export function registerVisionSearchFunctions(
     "mem::vision-embed",
     async (data: {
       imageRef: string;
+      project?: string;
       sessionId?: string;
       observationId?: string;
     }) => {
@@ -41,6 +43,19 @@ export function registerVisionSearchFunctions(
       if (!refCount || Number(refCount) < 1) {
         return { success: false, error: "imageRef not registered in mem:image-refs" };
       }
+      const session = data.sessionId
+        ? await kv.get<Session>(KV.sessions, data.sessionId).catch(() => null)
+        : null;
+      if (data.sessionId && !session) {
+        return { success: false, error: "session_not_found" };
+      }
+      const project = data.project ?? session?.project;
+      if (!project) {
+        return { success: false, error: "project is required" };
+      }
+      if (session && session.project !== project) {
+        return { success: false, error: "project scope does not match session" };
+      }
       try {
         const vec = await imageProvider.embedImage(data.imageRef);
         const stored: StoredEmbedding = {
@@ -49,6 +64,7 @@ export function registerVisionSearchFunctions(
           modelName: imageProvider.name,
           dimensions: imageProvider.dimensions,
           updatedAt: new Date().toISOString(),
+          project,
           sessionId: data.sessionId,
           observationId: data.observationId,
         };
@@ -75,10 +91,25 @@ export function registerVisionSearchFunctions(
       queryImageRef?: string;
       queryImageBase64?: string;
       topK?: number;
+      project: string;
       sessionId?: string;
     }) => {
       if (!imageProvider?.embedImage) {
         return { success: false, error: "image embeddings disabled (set AGENTMEMORY_IMAGE_EMBEDDINGS=true)" };
+      }
+      if (!data?.project || typeof data.project !== "string") {
+        return { success: false, error: "project is required" };
+      }
+      if (data.sessionId) {
+        const session = await kv
+          .get<Session>(KV.sessions, data.sessionId)
+          .catch(() => null);
+        if (!session) {
+          return { success: false, error: "session_not_found" };
+        }
+        if (session.project !== data.project) {
+          return { success: false, error: "project scope does not match session" };
+        }
       }
       const requestedTopK =
         typeof data?.topK === "number" && Number.isFinite(data.topK)
@@ -115,9 +146,10 @@ export function registerVisionSearchFunctions(
       if (!queryVec) return { success: false, error: "failed to build query vector" };
 
       const stored = await kv.list<StoredEmbedding>(KV.imageEmbeddings);
-      const filtered = data?.sessionId
-        ? stored.filter((s) => s.sessionId === data.sessionId)
-        : stored;
+      const projectStored = stored.filter((item) => item.project === data.project);
+      const filtered = data.sessionId
+        ? projectStored.filter((item) => item.sessionId === data.sessionId)
+        : projectStored;
 
       const scored = filtered.map((s) => ({
         imageRef: s.imageRef,

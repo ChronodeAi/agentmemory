@@ -10,6 +10,7 @@ import type {
 import { KV, generateId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { logger } from "../logger.js";
+import { modelProcessingForSession } from "./model-processing.js";
 
 const TEMPORAL_EXTRACTION_SYSTEM = `You are a temporal knowledge extraction engine. Given observations, extract entities AND their temporal relationships with full context metadata.
 
@@ -156,6 +157,8 @@ export function registerTemporalGraphFunctions(
 ): void {
   sdk.registerFunction("mem::temporal-graph-extract", 
     async (data: {
+      sessionId: string;
+      project?: string;
       observations: Array<{
         id: string;
         title: string;
@@ -168,6 +171,16 @@ export function registerTemporalGraphFunctions(
     }) => {
       if (!data.observations || data.observations.length === 0) {
         return { success: false, error: "No observations provided" };
+      }
+      if (!data.sessionId || typeof data.sessionId !== "string") {
+        return { success: false, error: "sessionId is required" };
+      }
+      const processing = await modelProcessingForSession(kv, data.sessionId);
+      if (!processing.allowed) {
+        return { success: false, error: processing.error };
+      }
+      if (data.project && processing.session?.project !== data.project) {
+        return { success: false, error: "project scope does not match session" };
       }
 
       const items = data.observations

@@ -6,6 +6,7 @@ vi.mock("../src/logger.js", () => ({
 
 vi.mock("../src/config.js", () => ({
   getConsolidationDecayDays: () => 30,
+  getEnvVar: () => undefined,
   isConsolidationEnabled: vi.fn(() => true),
 }));
 
@@ -80,6 +81,7 @@ function makePattern(i: number): Memory {
     strength: 5,
     version: 1,
     isLatest: true,
+    project: "test-project",
   };
 }
 
@@ -106,6 +108,7 @@ describe("Consolidation Pipeline", () => {
 
     const result = (await sdk.trigger("mem::consolidate-pipeline", {
       tier: "semantic",
+      project: "test-project",
     })) as { success: boolean; results: Record<string, unknown> };
 
     expect(result.success).toBe(true);
@@ -131,6 +134,7 @@ describe("Consolidation Pipeline", () => {
 
     const result = (await sdk.trigger("mem::consolidate-pipeline", {
       tier: "procedural",
+      project: "test-project",
     })) as { success: boolean; results: Record<string, unknown> };
 
     expect(result.success).toBe(true);
@@ -155,6 +159,7 @@ describe("Consolidation Pipeline", () => {
 
     const result = (await sdk.trigger("mem::consolidate-pipeline", {
       tier: "semantic",
+      project: "test-project",
     })) as { success: boolean; results: Record<string, unknown> };
 
     expect(result.success).toBe(true);
@@ -183,6 +188,7 @@ describe("Consolidation Pipeline", () => {
 
     const result = (await sdk.trigger("mem::consolidate-pipeline", {
       tier: "procedural",
+      project: "test-project",
     })) as { success: boolean; results: Record<string, unknown> };
 
     expect(result.success).toBe(true);
@@ -204,7 +210,10 @@ describe("Consolidation Pipeline", () => {
     };
     registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
 
-    await sdk.trigger("mem::consolidate-pipeline", { tier: "semantic" });
+    await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+      project: "test-project",
+    });
 
     const audits = await kv.list("mem:audit");
     expect(audits.length).toBe(1);
@@ -219,7 +228,9 @@ describe("Consolidation Pipeline", () => {
     };
     registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
 
-    const result = (await sdk.trigger("mem::consolidate-pipeline", {})) as {
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      project: "test-project",
+    })) as {
       success: boolean;
       skipped?: boolean;
       reason?: string;
@@ -243,6 +254,7 @@ describe("Consolidation Pipeline", () => {
 
     const result = (await sdk.trigger("mem::consolidate-pipeline", {
       force: true,
+      project: "test-project",
     })) as { success: boolean; results: Record<string, unknown> };
 
     expect(result.success).toBe(true);

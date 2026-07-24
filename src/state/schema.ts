@@ -66,7 +66,17 @@ export const KV = {
   imageRefs: "mem:image-refs",
   imageEmbeddings: "mem:image-embeddings",
   slots: "mem:slots",
+  projectSlots: (project: string) =>
+    `mem:slots:project:${createHash("sha256").update(project).digest("hex").slice(0, 24)}`,
   globalSlots: "mem:slots:global",
+  injectedSources: (sessionId: string) => `mem:injected-sources:${sessionId}`,
+  factLedger: (sessionId: string) => `mem:fact-ledger:${sessionId}`,
+  projectMetrics: (project: string) =>
+    `mem:project-metrics:${createHash("sha256").update(project).digest("hex").slice(0, 24)}`,
+  promotionCandidates: (project: string) =>
+    `mem:promotion-candidates:${createHash("sha256").update(project).digest("hex").slice(0, 24)}`,
+  migrationQuarantine: "mem:migration:quarantine",
+  migrationReports: "mem:migration:reports",
   state: "mem:state",
   commits: "mem:commits",
   // #771: tracks the most recent smart-search call per session, used by

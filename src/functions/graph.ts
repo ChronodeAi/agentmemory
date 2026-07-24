@@ -6,6 +6,7 @@ import type {
   GraphSnapshot,
   CompressedObservation,
   MemoryProvider,
+  Session,
 } from "../types.js";
 import { KV, generateId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
@@ -15,6 +16,7 @@ import {
 } from "../prompts/graph-extraction.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { getEnvVar } from "../config.js";
 
 // #753: keep the response payload below the iii state channel ceiling.
 // 500 nodes + their incident edges hold well under the limit on the
@@ -459,6 +461,29 @@ export function registerGraphFunction(
     async (data: { observations: CompressedObservation[] }) => {
       if (!data.observations || data.observations.length === 0) {
         return { success: false, error: "No observations provided" };
+      }
+      const sessionIds = Array.from(
+        new Set(data.observations.map((observation) => observation.sessionId)),
+      );
+      const sessions = await Promise.all(
+        sessionIds.map((sessionId) =>
+          kv.get<Session>(KV.sessions, sessionId).catch(() => null),
+        ),
+      );
+      const includesStrictSession = sessions.some(
+        (session) =>
+          session?.privacy === "strict" ||
+          session?.externalProcessing === false,
+      );
+      if (
+        includesStrictSession &&
+        getEnvVar("AGENTMEMORY_LOCAL_PROCESSING") !== "true"
+      ) {
+        return {
+          success: false,
+          error:
+            "external_processing_disabled_for_strict_project; configure a local provider and AGENTMEMORY_LOCAL_PROCESSING=true",
+        };
       }
 
       const prompt = buildGraphExtractionPrompt(

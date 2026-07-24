@@ -99,7 +99,13 @@ export function buildMergedHooks(
 function isAgentmemoryEntry(entry: HookEntry, scriptsDir: string): boolean {
   const normalizedScriptsDir = normalizePathForCommandMatch(scriptsDir);
   return entry.hooks.some((handler) =>
-    normalizePathForCommandMatch(handler.command).includes(normalizedScriptsDir),
+    {
+      const command = normalizePathForCommandMatch(handler.command);
+      return (
+        command.includes(normalizedScriptsDir) ||
+        /agentmemory(?:\/plugin)?\/scripts\/[a-z0-9-]+\.mjs/i.test(command)
+      );
+    },
   );
 }
 

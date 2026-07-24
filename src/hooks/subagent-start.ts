@@ -56,6 +56,8 @@ async function main() {
       data: {
         agent_id: agentId,
         agent_type: agentType,
+        parent_session_id:
+          data.parent_session_id ?? data.parentSessionId ?? sessionId,
       },
     }),
     signal: AbortSignal.timeout(TIMEOUT_MS),

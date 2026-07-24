@@ -5,6 +5,8 @@ import type { ISdk } from "iii-sdk";
 import type { MemoryProvider } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
+import { stripPrivateData } from "./privacy.js";
+import { modelProcessingForPath } from "./model-processing.js";
 
 const SENSITIVE_PATH_TERMS = [
   "secret",
@@ -99,7 +101,7 @@ export function registerCompressFileFunction(
 ): void {
   sdk.registerFunction(
     "mem::compress-file",
-    async (data: { filePath: string }) => {
+    async (data: { filePath: string; project?: string }) => {
       if (!data?.filePath || typeof data.filePath !== "string") {
         return { success: false, error: "filePath is required" };
       }
@@ -131,6 +133,16 @@ export function registerCompressFileFunction(
 
       if (!original.trim()) {
         return { success: true, skipped: true, reason: "file is empty" };
+      }
+      if (stripPrivateData(original) !== original) {
+        return {
+          success: false,
+          error: "refusing to process file containing sensitive data",
+        };
+      }
+      const processing = modelProcessingForPath(dirname(absolutePath), data.project);
+      if (!processing.allowed) {
+        return { success: false, error: processing.error };
       }
 
       const response = await provider.summarize(

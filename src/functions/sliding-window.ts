@@ -8,6 +8,7 @@ import { KV, generateId } from "../state/schema.js";
 import type { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import { modelProcessingForSession } from "./model-processing.js";
 
 const SLIDING_WINDOW_SYSTEM = `You are a contextual enrichment engine. Given a primary observation and its surrounding context window (previous and next observations from the same session), produce an enriched version.
 
@@ -162,6 +163,11 @@ export function registerSlidingWindowFunction(
           enriched: null,
           reason: "No adjacent context available",
         };
+      }
+
+      const processing = await modelProcessingForSession(kv, sessionId);
+      if (!processing.allowed) {
+        return { success: false, error: processing.error };
       }
 
       try {
