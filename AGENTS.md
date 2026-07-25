@@ -122,3 +122,24 @@ Hook scripts in `src/hooks/` are standalone Node.js scripts (no iii-sdk import).
 - 12 hooks, 15 skills
 - 260+ iii functions
 - 1,428+ tests
+
+<!-- AIWG:context-hook:start -->
+
+<!-- AIWG:provider-bootstrap:start -->
+
+# Provider workspace bootstrap
+
+Read and follow [WORKSPACE.md](./WORKSPACE.md) first.
+Then read [AIWG.md](./AIWG.md) for AIWG discovery, quickrefs, and framework routing.
+
+These are explicit reading instructions. Plain Markdown links are not claimed to auto-load.
+
+<!-- AIWG:provider-bootstrap:end -->
+
+<!--
+  This block is managed by `aiwg regenerate` and `aiwg use`.
+  Operator content above and below this block is preserved on regenerate.
+  Edit .aiwg/AIWG.md (the normalized source) then run `aiwg regenerate`.
+-->
+
+<!-- AIWG:context-hook:end -->
