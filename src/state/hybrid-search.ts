@@ -16,8 +16,21 @@ import {
 } from "../functions/graph-retrieval.js";
 import { extractEntitiesFromQuery } from "../functions/query-expansion.js";
 import { rerank } from "./reranker.js";
+import {
+  modelProcessingForProviderAttempt,
+  providerProcessingLocation,
+  type ProviderProcessingLocation,
+} from "../functions/model-processing.js";
 
 const RRF_K = 60;
+
+export interface HybridSearchProcessingContext {
+  project: string;
+  sessionId?: string;
+  dataClass?: string;
+  sourceProvenance?: string;
+  processingLocation?: ProviderProcessingLocation;
+}
 
 export class HybridSearch {
   private graphRetrieval: GraphRetrieval;
@@ -35,14 +48,19 @@ export class HybridSearch {
     this.graphRetrieval = new GraphRetrieval(kv);
   }
 
-  async search(query: string, limit = 20): Promise<HybridSearchResult[]> {
-    return this.tripleStreamSearch(query, limit);
+  async search(
+    query: string,
+    limit = 20,
+    processingContext?: HybridSearchProcessingContext,
+  ): Promise<HybridSearchResult[]> {
+    return this.tripleStreamSearch(query, limit, undefined, processingContext);
   }
 
   async searchWithExpansion(
     query: string,
     limit: number,
     expansion: QueryExpansion,
+    processingContext?: HybridSearchProcessingContext,
   ): Promise<HybridSearchResult[]> {
     const allQueries = [
       query,
@@ -56,7 +74,9 @@ export class HybridSearch {
     ];
 
     const resultSets = await Promise.all(
-      allQueries.map((q) => this.tripleStreamSearch(q, limit, allEntities)),
+      allQueries.map((q) =>
+        this.tripleStreamSearch(q, limit, allEntities, processingContext),
+      ),
     );
 
     const merged = new Map<string, HybridSearchResult>();
@@ -78,6 +98,7 @@ export class HybridSearch {
     query: string,
     limit: number,
     entityHints?: string[],
+    processingContext?: HybridSearchProcessingContext,
   ): Promise<HybridSearchResult[]> {
     const bm25Results = this.bm25.search(query, limit * 2);
 
@@ -90,8 +111,27 @@ export class HybridSearch {
 
     if (this.vector && this.embeddingProvider && this.vector.size > 0) {
       try {
-        queryEmbedding = await this.embeddingProvider.embed(query);
-        vectorResults = this.vector.search(queryEmbedding, limit * 2);
+        const decision = processingContext
+          ? await modelProcessingForProviderAttempt(this.kv, {
+              project: processingContext.project,
+              sessionId: processingContext.sessionId,
+              provider: this.embeddingProvider.name,
+              purpose: "hybrid_query_embedding",
+              dataClass: processingContext.dataClass ?? "query_text",
+              sourceProvenance:
+                processingContext.sourceProvenance ?? "hybrid_search_query",
+              processingLocation:
+                processingContext.processingLocation ??
+                providerProcessingLocation(this.embeddingProvider),
+            })
+          : {
+              allowed: false,
+              error: "project_processing_context_required",
+            };
+        if (decision.allowed) {
+          queryEmbedding = await this.embeddingProvider.embed(query);
+          vectorResults = this.vector.search(queryEmbedding, limit * 2);
+        }
       } catch {
         // fall through to BM25-only
       }

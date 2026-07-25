@@ -1,7 +1,13 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import {
+  credentialFreeWorktreeId,
+  parseCommitTransitions,
+} from "./_capture.js";
 import { resolveProject } from "./_project.js";
 
 const exec = promisify(execFile);
@@ -29,6 +35,65 @@ async function git(args: string[], cwd: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export async function collectCommitLinkage(
+  cwd: string,
+  sha: string,
+  sessionId?: string,
+  project = resolveProject(cwd),
+) {
+  const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+  const message = await git(["log", "-1", "--pretty=%B", sha], cwd);
+  const author = await git(["log", "-1", "--pretty=%an <%ae>", sha], cwd);
+  const authoredAt = await git(["log", "-1", "--pretty=%aI", sha], cwd);
+  const worktreeRoot = await git(["rev-parse", "--show-toplevel"], cwd);
+  const baseHeadSha = await git(["rev-parse", `${sha}^`], cwd);
+  const transitionStatus = await git(
+    ["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-M", sha],
+    cwd,
+  );
+  const parsedTransitions = parseCommitTransitions(transitionStatus || "");
+  const fileTransitions = await Promise.all(
+    parsedTransitions.map(async (transition) => {
+      const blobPath =
+        transition.operation === "delete"
+          ? transition.previousPath || transition.path
+          : transition.path;
+      const blobRef =
+        transition.operation === "delete"
+          ? `${sha}^:${blobPath}`
+          : `${sha}:${blobPath}`;
+      const digest = await git(["rev-parse", blobRef], cwd);
+      return {
+        ...transition,
+        ...(digest ? { digest, digestKind: "git-blob" as const } : {}),
+      };
+    }),
+  );
+  const files =
+    fileTransitions.length > 0
+      ? fileTransitions.map((transition) => transition.path)
+      : undefined;
+
+  return {
+    sessionId,
+    project,
+    sha,
+    commitSha: sha,
+    baseHeadSha: baseHeadSha || undefined,
+    worktreeId: worktreeRoot
+      ? credentialFreeWorktreeId(project, worktreeRoot)
+      : undefined,
+    branch: branch || undefined,
+    repo: project,
+    message: message || undefined,
+    author: author || undefined,
+    authoredAt: authoredAt || undefined,
+    files,
+    fileTransitions:
+      fileTransitions.length > 0 ? fileTransitions : undefined,
+  };
 }
 
 async function main() {
@@ -88,28 +153,7 @@ async function main() {
     (await git(["rev-parse", "HEAD"], cwd));
   if (!sha) return;
 
-  const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
-  const repo = await git(["config", "--get", "remote.origin.url"], cwd);
-  const message = await git(["log", "-1", "--pretty=%B", sha], cwd);
-  const author = await git(["log", "-1", "--pretty=%an <%ae>", sha], cwd);
-  const authoredAt = await git(["log", "-1", "--pretty=%aI", sha], cwd);
-  const filesRaw = await git(
-    ["diff-tree", "--no-commit-id", "--name-only", "-r", sha],
-    cwd,
-  );
-  const files = filesRaw ? filesRaw.split("\n").filter(Boolean) : undefined;
-
-  const body = {
-    sessionId,
-    project,
-    sha,
-    branch: branch || undefined,
-    repo: repo || undefined,
-    message: message || undefined,
-    author: author || undefined,
-    authoredAt: authoredAt || undefined,
-    files,
-  };
+  const body = await collectCommitLinkage(cwd, sha, sessionId, project);
 
   try {
     await fetch(`${REST_URL}/agentmemory/session/commit`, {
@@ -123,4 +167,9 @@ async function main() {
   }
 }
 
-main().catch(() => process.exit(0));
+const invokedPath = process.argv[1]
+  ? pathToFileURL(resolve(process.argv[1])).href
+  : "";
+if (import.meta.url === invokedPath) {
+  main().catch(() => process.exit(0));
+}

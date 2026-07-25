@@ -5,6 +5,12 @@ import { StateKV } from "../state/kv.js";
 import { isManagedImagePath } from "../utils/image-store.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
+import {
+  modelProcessingForProviderAttempt,
+  providerProcessingLocation,
+  type ProviderAttemptDecision,
+  type ProviderProcessingLocation,
+} from "./model-processing.js";
 
 interface StoredEmbedding {
   imageRef: string;
@@ -15,13 +21,47 @@ interface StoredEmbedding {
   project?: string;
   sessionId?: string;
   observationId?: string;
+  processingLocation: ProviderProcessingLocation;
 }
 
 export function registerVisionSearchFunctions(
   sdk: ISdk,
   kv: StateKV,
   imageProvider: EmbeddingProvider | null,
+  processingLocation?: ProviderProcessingLocation,
 ): void {
+  const providerLocation = imageProvider
+    ? processingLocation ?? providerProcessingLocation(imageProvider)
+    : processingLocation;
+
+  async function authorize(
+    project: string,
+    sessionId: string | undefined,
+    purpose: string,
+    dataClass: string,
+    sourceProvenance: string,
+  ): Promise<ProviderAttemptDecision | { policyDecision: "deny"; error: string }> {
+    if (!imageProvider || !providerLocation) {
+      return { policyDecision: "deny", error: "image embeddings disabled" };
+    }
+    const decision = await modelProcessingForProviderAttempt(kv, {
+      project,
+      sessionId,
+      provider: imageProvider.name,
+      purpose,
+      dataClass,
+      sourceProvenance,
+      processingLocation: providerLocation,
+    });
+    return decision.allowed
+      ? decision.attempt!
+      : {
+          ...decision.attempt!,
+          policyDecision: "deny",
+          error: decision.error ?? "provider processing denied",
+        };
+  }
+
   sdk.registerFunction(
     "mem::vision-embed",
     async (data: {
@@ -56,6 +96,23 @@ export function registerVisionSearchFunctions(
       if (session && session.project !== project) {
         return { success: false, error: "project scope does not match session" };
       }
+      const processing = await authorize(
+        project,
+        data.sessionId,
+        "vision_embedding",
+        "managed_image_reference",
+        data.observationId ? "observation_image" : "vision_embed_request",
+      );
+      if (processing.policyDecision === "deny") {
+        return {
+          success: false,
+          error:
+            "error" in processing
+              ? processing.error
+              : "provider processing denied",
+          processing,
+        };
+      }
       try {
         const vec = await imageProvider.embedImage(data.imageRef);
         const stored: StoredEmbedding = {
@@ -67,6 +124,7 @@ export function registerVisionSearchFunctions(
           project,
           sessionId: data.sessionId,
           observationId: data.observationId,
+          processingLocation: processing.processingLocation,
         };
         await kv.set(KV.imageEmbeddings, data.imageRef, stored);
         await recordAudit(kv, "vision_embed", "mem::vision-embed", [data.imageRef], {
@@ -74,8 +132,14 @@ export function registerVisionSearchFunctions(
           dimensions: stored.dimensions,
           sessionId: data.sessionId,
           observationId: data.observationId,
+          processing,
         });
-        return { success: true, imageRef: data.imageRef, dimensions: stored.dimensions };
+        return {
+          success: true,
+          imageRef: data.imageRef,
+          dimensions: stored.dimensions,
+          processing,
+        };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         logger.warn("vision-embed failed", { imageRef: data.imageRef, error: msg });
@@ -120,8 +184,42 @@ export function registerVisionSearchFunctions(
       let queryVec: Float32Array | null = null;
       try {
         if (data?.queryText) {
+          const processing = await authorize(
+            data.project,
+            data.sessionId,
+            "vision_query_embedding",
+            "query_text",
+            "vision_search_request",
+          );
+          if (processing.policyDecision === "deny") {
+            return {
+              success: false,
+              error:
+                "error" in processing
+                  ? processing.error
+                  : "provider processing denied",
+              processing,
+            };
+          }
           queryVec = await imageProvider.embed(data.queryText);
         } else if (data?.queryImageBase64) {
+          const processing = await authorize(
+            data.project,
+            data.sessionId,
+            "vision_query_embedding",
+            "image_base64",
+            "vision_search_request",
+          );
+          if (processing.policyDecision === "deny") {
+            return {
+              success: false,
+              error:
+                "error" in processing
+                  ? processing.error
+                  : "provider processing denied",
+              processing,
+            };
+          }
           const b64 = data.queryImageBase64.startsWith("data:")
             ? data.queryImageBase64
             : `data:image/png;base64,${data.queryImageBase64}`;
@@ -133,6 +231,23 @@ export function registerVisionSearchFunctions(
           const refCount = await kv.get<number>(KV.imageRefs, data.queryImageRef);
           if (!refCount || Number(refCount) < 1) {
             return { success: false, error: "queryImageRef not registered in mem:image-refs" };
+          }
+          const processing = await authorize(
+            data.project,
+            data.sessionId,
+            "vision_query_embedding",
+            "managed_image_reference",
+            "vision_search_request",
+          );
+          if (processing.policyDecision === "deny") {
+            return {
+              success: false,
+              error:
+                "error" in processing
+                  ? processing.error
+                  : "provider processing denied",
+              processing,
+            };
           }
           queryVec = await imageProvider.embedImage(data.queryImageRef);
         } else {

@@ -9,6 +9,42 @@ export function timingSafeCompare(a: string, b: string): boolean {
   return timingSafeEqual(hmacA, hmacB);
 }
 
+export type AuthorizationDecision =
+  | { authorized: true }
+  | {
+      authorized: false;
+      statusCode: 401 | 503;
+      error: "unauthorized" | "authentication_unavailable";
+    };
+
+export function authorizeProtectedRequest(
+  headers: Record<string, string | string[] | undefined> | undefined,
+  secret: string | undefined,
+): AuthorizationDecision {
+  if (!secret) {
+    return {
+      authorized: false,
+      statusCode: 503,
+      error: "authentication_unavailable",
+    };
+  }
+  const authorization = headers?.["authorization"] ?? headers?.["Authorization"];
+  if (
+    typeof authorization !== "string" ||
+    !timingSafeCompare(authorization, `Bearer ${secret}`)
+  ) {
+    return { authorized: false, statusCode: 401, error: "unauthorized" };
+  }
+  return { authorized: true };
+}
+
+export function authorizeAdministrativeRequest(
+  headers: Record<string, string | string[] | undefined> | undefined,
+  adminSecret: string | undefined,
+): AuthorizationDecision {
+  return authorizeProtectedRequest(headers, adminSecret);
+}
+
 export function createViewerNonce(): string {
   return randomBytes(16).toString("base64url");
 }

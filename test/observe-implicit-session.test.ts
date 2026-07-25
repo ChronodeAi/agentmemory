@@ -108,7 +108,7 @@ describe("observe implicit session create (#638)", () => {
     expect(sessionScope?.get("ses_no_project")).toBeUndefined();
   });
 
-  it("does not overwrite an existing session when one already exists", async () => {
+  it("rejects an observation that does not match an existing session scope", async () => {
     const { registerObserveFunction } = await import("../src/functions/observe.js");
     const sdk = mockSdk();
     const kv = mockKV();
@@ -124,7 +124,7 @@ describe("observe implicit session create (#638)", () => {
       firstPrompt: "original first prompt",
     });
 
-    await sdk.trigger("mem::observe", {
+    const result = await sdk.trigger("mem::observe", {
       sessionId: "ses_existing",
       project: "/different/project",
       cwd: "/different/cwd",
@@ -134,11 +134,16 @@ describe("observe implicit session create (#638)", () => {
     });
 
     const session = kv.store.get("mem:sessions")!.get("ses_existing") as Record<string, unknown>;
-    // Original project + firstPrompt preserved
+    expect(result).toEqual({
+      success: false,
+      error: "session project or cwd does not match observation",
+    });
     expect(session.project).toBe("/orig/project");
     expect(session.firstPrompt).toBe("original first prompt");
-    // Counter bumped, updatedAt refreshed
-    expect(session.observationCount).toBe(8);
-    expect(session.updatedAt).toBeTruthy();
+    expect(session.observationCount).toBe(7);
+    expect(session.updatedAt).toBeUndefined();
+    expect(
+      kv.store.get("mem:obs:ses_existing")?.size ?? 0,
+    ).toBe(0);
   });
 });

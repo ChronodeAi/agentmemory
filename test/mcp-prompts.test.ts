@@ -7,6 +7,8 @@ vi.mock("../src/logger.js", () => ({
 import { registerMcpEndpoints } from "../src/mcp/server.js";
 import type { Session, SessionSummary, Memory } from "../src/types.js";
 
+const SECRET = "mcp-prompts-test-secret";
+
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
   return {
@@ -60,7 +62,7 @@ function mockSdk() {
 function makeReq(body?: unknown, headers?: Record<string, string>) {
   return {
     body,
-    headers: headers || {},
+    headers: headers || { authorization: `Bearer ${SECRET}` },
     query_params: {},
   };
 }
@@ -72,7 +74,7 @@ describe("MCP Prompts", () => {
   beforeEach(() => {
     sdk = mockSdk();
     kv = mockKV();
-    registerMcpEndpoints(sdk as never, kv as never);
+    registerMcpEndpoints(sdk as never, kv as never, SECRET);
   });
 
   it("lists 3 prompts", async () => {

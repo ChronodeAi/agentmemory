@@ -23,6 +23,7 @@ const DIMENSIONS = 512;
 
 export class ClipEmbeddingProvider implements EmbeddingProvider {
   readonly name = "clip";
+  readonly processingLocation = "local" as const;
   readonly dimensions = DIMENSIONS;
   private textExtractor: ClipPipeline | null = null;
   private imageExtractor: ClipPipeline | null = null;

@@ -4,6 +4,12 @@ import { createHash } from "node:crypto";
 const BASE_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 
+if (!SECRET) {
+  throw new Error(
+    "AGENTMEMORY_SECRET is mandatory for the governed integration profile",
+  );
+}
+
 const SESSION_ID = `test_${Date.now()}`;
 const PROJECT = "github.com/agentmemory/integration-test";
 const PROJECT_ROOT = "/tmp/test-project";
@@ -33,7 +39,7 @@ async function json(res: Response): Promise<unknown> {
 
 describe("agentmemory integration", () => {
   beforeAll(async () => {
-    const res = await fetch(url("/agentmemory/health")).catch(() => null);
+    const res = await fetch(url("/agentmemory/livez")).catch(() => null);
     if (!res || !res.ok) {
       throw new Error(
         `agentmemory is not running at ${BASE_URL}. Start it with: docker compose up -d && npm start`,
@@ -43,7 +49,9 @@ describe("agentmemory integration", () => {
 
   describe("health", () => {
     it("returns ok", async () => {
-      const res = await fetch(url("/agentmemory/health"));
+      const res = await fetch(url("/agentmemory/health"), {
+        headers: authHeaders(),
+      });
       expect(res.status).toBe(200);
       const body = (await json(res)) as { status: string; service: string };
       expect(["ok", "healthy"]).toContain(body.status);
@@ -276,38 +284,41 @@ describe("agentmemory integration", () => {
   });
 
   describe("auth", () => {
-    it("health endpoint is always public", async () => {
-      const res = await fetch(url("/agentmemory/health"));
+    it("liveness endpoint is always public", async () => {
+      const res = await fetch(url("/agentmemory/livez"));
       expect(res.status).toBe(200);
     });
 
-    if (SECRET) {
-      it("rejects unauthenticated requests", async () => {
-        const res = await fetch(url("/agentmemory/search"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ query: "test" }),
-        });
-        expect(res.status).toBe(401);
-      });
+    it("protects detailed health telemetry", async () => {
+      const res = await fetch(url("/agentmemory/health"));
+      expect(res.status).toBe(401);
+    });
 
-      it("rejects wrong bearer token", async () => {
-        const res = await fetch(url("/agentmemory/search"), {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: "Bearer wrong-token",
-          },
-          body: JSON.stringify({ query: "test" }),
-        });
-        expect(res.status).toBe(401);
+    it("rejects unauthenticated requests", async () => {
+      const res = await fetch(url("/agentmemory/search"), {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query: "test" }),
       });
+      expect(res.status).toBe(401);
+    });
 
-      it("rejects unauthenticated viewer requests on the API port", async () => {
-        const res = await fetch(url("/agentmemory/viewer"));
-        expect(res.status).toBe(401);
+    it("rejects wrong bearer token", async () => {
+      const res = await fetch(url("/agentmemory/search"), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: "Bearer wrong-token",
+        },
+        body: JSON.stringify({ query: "test" }),
       });
-    }
+      expect(res.status).toBe(401);
+    });
+
+    it("rejects unauthenticated viewer requests on the API port", async () => {
+      const res = await fetch(url("/agentmemory/viewer"));
+      expect(res.status).toBe(401);
+    });
   });
 });
 

@@ -1,3 +1,5 @@
+import { sanitizePrivateData, stripPrivateData } from "./functions/privacy.js";
+
 // Thin logging shim for agentmemory.
 //
 // iii-sdk v0.11 dropped `getContext()`, which had been the source of a
@@ -25,15 +27,16 @@
 type Fields = Record<string, unknown> | undefined;
 
 function fmt(level: string, msg: string, fields: Fields): string {
+  const safeMessage = stripPrivateData(msg);
   if (!fields || Object.keys(fields).length === 0) {
-    return `[agentmemory] ${level} ${msg}`;
+    return `[agentmemory] ${level} ${safeMessage}`;
   }
   try {
-    return `[agentmemory] ${level} ${msg} ${JSON.stringify(fields)}`;
+    return `[agentmemory] ${level} ${safeMessage} ${JSON.stringify(sanitizePrivateData(fields))}`;
   } catch {
     // Fields contained a circular reference or a BigInt — fall back
     // to the plain message so a log line never throws.
-    return `[agentmemory] ${level} ${msg}`;
+    return `[agentmemory] ${level} ${safeMessage}`;
   }
 }
 

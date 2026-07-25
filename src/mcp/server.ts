@@ -9,7 +9,10 @@ import type {
   GraphEdge,
 } from "../types.js";
 import { getVisibleTools } from "./tools-registry.js";
-import { timingSafeCompare } from "../auth.js";
+import {
+  authorizeAdministrativeRequest,
+  authorizeProtectedRequest,
+} from "../auth.js";
 import { getAgentId, isAgentScopeIsolated } from "../config.js";
 
 type McpResponse = {
@@ -53,18 +56,26 @@ export function registerMcpEndpoints(
   sdk: ISdk,
   kv: StateKV,
   secret?: string,
+  adminSecret?: string,
 ): void {
   function checkAuth(
     req: ApiRequest,
     sec: string | undefined,
   ): McpResponse | null {
-    if (!sec) return null;
-    const auth =
-      req.headers?.["authorization"] || req.headers?.["Authorization"];
-    if (typeof auth !== "string" || !timingSafeCompare(auth, `Bearer ${sec}`)) {
-      return { status_code: 401, body: { error: "unauthorized" } };
-    }
-    return null;
+    const decision = authorizeProtectedRequest(req.headers, sec);
+    const adminDecision = authorizeAdministrativeRequest(
+      req.headers,
+      adminSecret,
+    );
+    if (decision.authorized || adminDecision.authorized) return null;
+    const unavailable =
+      decision.statusCode === 503 && adminDecision.statusCode === 503;
+    return {
+      status_code: unavailable ? 503 : 401,
+      body: {
+        error: unavailable ? "authentication_unavailable" : "unauthorized",
+      },
+    };
   }
 
   sdk.registerFunction("mcp::tools::list", 
@@ -89,6 +100,23 @@ export function registerMcpEndpoints(
 
       if (!req.body || typeof req.body.name !== "string") {
         return { status_code: 400, body: { error: "name is required" } };
+      }
+      if (req.body.arguments?.scope === "global") {
+        const decision = authorizeAdministrativeRequest(
+          req.headers,
+          adminSecret,
+        );
+        if (!decision.authorized) {
+          return {
+            status_code: decision.statusCode,
+            body: {
+              error:
+                decision.error === "authentication_unavailable"
+                  ? "global_authentication_unavailable"
+                  : "global_unauthorized",
+            },
+          };
+        }
       }
 
       const { name, arguments: args = {} } = req.body;
@@ -1374,6 +1402,18 @@ export function registerMcpEndpoints(
             if (!project || !sessionId) {
               return { status_code: 400, body: { error: "project and sessionId required" } };
             }
+            if (
+              args.context_class !== undefined &&
+              args.context_class !== "advisory" &&
+              args.context_class !== "gate-critical"
+            ) {
+              return {
+                status_code: 400,
+                body: {
+                  error: "context_class must be advisory or gate-critical",
+                },
+              };
+            }
             const result = await sdk.trigger({
               function_id: "mem::context-packet",
               payload: {
@@ -1382,7 +1422,32 @@ export function registerMcpEndpoints(
                 query: asNonEmptyString(args.query),
                 files: parseCsvList(args.files),
                 token_budget: asNumber(args.token_budget),
+                context_class:
+                  args.context_class === "gate-critical"
+                    ? "gate-critical"
+                    : "advisory",
               },
+            });
+            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
+          }
+
+          case "memory_context_acknowledge": {
+            const project = asNonEmptyString(args.project);
+            const sessionId = asNonEmptyString(args.sessionId);
+            const packetId = asNonEmptyString(args.packetId);
+            const providerReceipt = asNonEmptyString(args.providerReceipt);
+            if (!project || !sessionId || !packetId || !providerReceipt) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project, sessionId, packetId, and providerReceipt required",
+                },
+              };
+            }
+            const result = await sdk.trigger({
+              function_id: "mem::context-acknowledge",
+              payload: { project, sessionId, packetId, providerReceipt },
             });
             return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
           }

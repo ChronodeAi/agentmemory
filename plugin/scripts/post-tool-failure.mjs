@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { createHash } from "node:crypto";
-import { isAbsolute, join, relative, resolve } from "node:path";
 import { execFileSync } from "node:child_process";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { parse } from "dotenv";
@@ -9,6 +9,7 @@ import { parse as parse$1 } from "yaml";
 //#region src/hooks/_capture.ts
 const METADATA_ONLY_TOOLS = /(?:^|[_-])(read|view|open|search|grep|glob|find|list|status|inspect|query)(?:$|[_-])/i;
 const HIGH_VALUE_TOOLS = /(?:edit|write|create|patch|apply|test|spec|migrat|commit|task|decision|deploy|build)/i;
+const MUTATION_TOOLS = /(?:edit|write|create|patch|apply|delete|remove|unlink)/i;
 function serialize(value) {
 	if (typeof value === "string") return value;
 	try {
@@ -52,6 +53,100 @@ function globToRegExp(glob) {
 function normalizedProjectPath(path, root) {
 	return relative(root, path.startsWith("/") ? path : resolve(root, path)).replace(/\\/g, "/").replace(/^\.\//, "");
 }
+function git$1(cwd, args) {
+	try {
+		return execFileSync("git", args, {
+			cwd,
+			encoding: "utf8",
+			timeout: 1e3,
+			maxBuffer: 1024 * 1024,
+			stdio: [
+				"ignore",
+				"pipe",
+				"ignore"
+			]
+		}).trim();
+	} catch {
+		return null;
+	}
+}
+function credentialFreeWorktreeId(project, worktreeRoot) {
+	return `wt_${createHash("sha256").update(project).update("\0").update(resolve(worktreeRoot)).digest("hex").slice(0, 32)}`;
+}
+function mutationOperation(toolName) {
+	if (/(?:delete|remove|unlink)/i.test(toolName)) return "delete";
+	if (/(?:write|create)/i.test(toolName)) return "write";
+	if (/(?:edit|patch|apply)/i.test(toolName)) return "edit";
+	return null;
+}
+function patchTransitions(input) {
+	const transitions = [];
+	for (const match of input.matchAll(/^\*\*\* (Add|Update|Delete) File: (.+)$/gm)) {
+		const action = match[1];
+		const path = match[2]?.trim();
+		if (!path) continue;
+		transitions.push({
+			path,
+			operation: action === "Add" ? "write" : action === "Delete" ? "delete" : "edit"
+		});
+	}
+	return transitions;
+}
+function collectMutationPaths(value, operation, depth = 0) {
+	if (depth > 4 || value === null || value === void 0) return [];
+	if (typeof value === "string") return patchTransitions(value);
+	if (Array.isArray(value)) return value.flatMap((item) => collectMutationPaths(item, operation, depth + 1));
+	if (typeof value !== "object") return [];
+	const transitions = [];
+	for (const [key, item] of Object.entries(value)) if (typeof item === "string" && /(?:^|_)(?:file|path)(?:$|_)/i.test(key)) transitions.push({
+		path: item,
+		operation
+	});
+	else if (typeof item === "object") transitions.push(...collectMutationPaths(item, operation, depth + 1));
+	return transitions;
+}
+function captureWorktreeProvenance(toolName, toolInput, config) {
+	const operation = mutationOperation(toolName);
+	if (!operation) return void 0;
+	const worktreeRoot = git$1(config.root, ["rev-parse", "--show-toplevel"]);
+	const baseHeadSha = git$1(config.root, ["rev-parse", "HEAD"]);
+	if (!worktreeRoot || !baseHeadSha) return void 0;
+	const worktreePrefix = git$1(config.root, ["rev-parse", "--show-prefix"]) || "";
+	const seen = /* @__PURE__ */ new Set();
+	const transitions = [];
+	for (const candidate of collectMutationPaths(toolInput, operation)) {
+		const path = `${worktreePrefix}${normalizedProjectPath(candidate.path, config.root)}`;
+		if (!path || path === ".." || path.startsWith("../") || isExcludedPath(candidate.path, config)) continue;
+		const key = `${candidate.operation}\0${path}`;
+		if (seen.has(key)) continue;
+		seen.add(key);
+		const digest = candidate.operation === "delete" ? git$1(worktreeRoot, ["rev-parse", `HEAD:${path}`]) : git$1(worktreeRoot, [
+			"hash-object",
+			"--",
+			path
+		]);
+		if (!digest) continue;
+		transitions.push({
+			path,
+			operation: candidate.operation,
+			digest,
+			digestKind: "git-blob"
+		});
+	}
+	if (transitions.length === 0) return void 0;
+	const status = git$1(worktreeRoot, [
+		"status",
+		"--porcelain",
+		"--untracked-files=normal"
+	]);
+	return {
+		project: config.project_id,
+		worktreeId: credentialFreeWorktreeId(config.project_id, worktreeRoot),
+		baseHeadSha,
+		dirty: Boolean(status),
+		transitions
+	};
+}
 function isExcludedPath(path, config) {
 	const normalized = normalizedProjectPath(path, config.root);
 	return config.exclude_globs.some((glob) => globToRegExp(glob).test(normalized));
@@ -87,6 +182,7 @@ function captureToolEvent(toolName, toolInput, toolOutput, config, failed = fals
 	const profile = config.capture_profile;
 	const highValue = failed || HIGH_VALUE_TOOLS.test(name);
 	if (profile === "minimal" && !highValue) return null;
+	const provenance = !failed && MUTATION_TOOLS.test(name) ? captureWorktreeProvenance(name, toolInput, config) : void 0;
 	if (profile === "balanced" && !highValue && METADATA_ONLY_TOOLS.test(name)) return {
 		toolInput: metadataInput(toolInput),
 		toolOutput: outputMetadata(toolOutput),
@@ -95,7 +191,8 @@ function captureToolEvent(toolName, toolInput, toolOutput, config, failed = fals
 	return {
 		toolInput: truncate(toolInput, highValue ? 8e3 : 1e3),
 		toolOutput: truncate(toolOutput, highValue ? 8e3 : 1e3),
-		capture: "full"
+		capture: "full",
+		...provenance ? { provenance } : {}
 	};
 }
 //#endregion
@@ -191,7 +288,8 @@ function normalizeGitRemote(remote) {
 		if (!parsed.hostname || parsed.protocol === "file:") return void 0;
 		const segments = decodeURIComponent(parsed.pathname).replace(/^\/+/, "").replace(/\/+$/, "").replace(/\.git$/i, "").split("/").filter(Boolean);
 		if (segments.length < 2) return void 0;
-		return `${parsed.hostname.toLowerCase()}/${segments.map((segment) => segment.toLowerCase()).join("/")}`;
+		const hostname = parsed.hostname.toLowerCase();
+		return `${parsed.port ? `${hostname}:${parsed.port}` : hostname}/${(["github.com", "gitlab.com"].includes(hostname) ? segments.map((segment) => segment.toLowerCase()) : segments).join("/")}`;
 	} catch {
 		return;
 	}
@@ -207,7 +305,9 @@ function inferProjectId(root) {
 		"--all",
 		"upstream"
 	]);
-	return (remote ? normalizeGitRemote(remote) : void 0) ?? `local/${projectPathHash(root)}`;
+	const normalizedRemote = remote ? normalizeGitRemote(remote) : void 0;
+	if (remote && !normalizedRemote) throw new Error("configured Git remote cannot be normalized safely");
+	return normalizedRemote ?? `local/${projectPathHash(root)}`;
 }
 function readConfigFile(path) {
 	if (!existsSync(path)) return void 0;

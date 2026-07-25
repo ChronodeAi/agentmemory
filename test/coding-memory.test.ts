@@ -64,7 +64,19 @@ describe("coding memory lifecycle functions", () => {
     delete process.env["AGENTMEMORY_SLOTS"];
     sdk = mockSdk();
     kv = mockKV();
-    registerCodingMemoryFunctions(sdk as never, kv as never);
+    registerCodingMemoryFunctions(
+      sdk as never,
+      kv as never,
+      async (input) => ({
+        verified:
+          input.providerReceipt.startsWith("provider-receipt-") &&
+          input.packetId.length > 0 &&
+          input.project === project &&
+          input.sessionId === sessionId,
+        providerId: "test-provider",
+        receiptId: input.providerReceipt,
+      }),
+    );
     await kv.set(KV.sessions, sessionId, {
       id: sessionId,
       project,
@@ -119,7 +131,20 @@ describe("coding memory lifecycle functions", () => {
     });
   });
 
-  it("caps packets at 2,000 tokens and injects each source once per session", async () => {
+  it("rejects an unknown context class", async () => {
+    expect(
+      await sdk.trigger("mem::context-packet", {
+        project,
+        sessionId,
+        context_class: "automatic",
+      }),
+    ).toEqual({
+      success: false,
+      error: "context_class must be advisory or gate-critical",
+    });
+  });
+
+  it("caps packets at 2,000 tokens and suppresses sources only after acknowledgement", async () => {
     const first = await sdk.trigger("mem::context-packet", {
       project,
       sessionId,
@@ -130,22 +155,236 @@ describe("coding memory lifecycle functions", () => {
       context: string;
       tokens: number;
       sourceIds: string[];
+      packetId: string;
+      status: string;
+      sources: Array<{ source: string; status: string }>;
     };
 
     expect(first.success).toBe(true);
+    expect(first.status).toBe("degraded");
     expect(first.tokens).toBeLessThanOrEqual(2000);
     expect(first.sourceIds.filter((id) => id.startsWith("obs-"))).toHaveLength(5);
     expect(first.context).toContain("Verify recalled facts");
     expect(first.context).not.toContain("This must never leak");
+    expect(first.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source: "lessons", status: "ok" }),
+        expect.objectContaining({ source: "episodic", status: "ok" }),
+        expect.objectContaining({ source: "file_history", status: "ok" }),
+      ]),
+    );
 
-    const second = await sdk.trigger("mem::context-packet", {
+    const retryBeforeAcknowledgement = await sdk.trigger("mem::context-packet", {
       project,
       sessionId,
       files: ["src/index.ts"],
     }) as { success: boolean; sourceIds: string[] };
 
-    expect(second.success).toBe(true);
-    expect(second.sourceIds).toEqual([]);
+    expect(retryBeforeAcknowledgement.success).toBe(true);
+    expect(retryBeforeAcknowledgement.sourceIds).toContain("lesson-1");
+
+    const acknowledgement = await sdk.trigger("mem::context-acknowledge", {
+      project,
+      sessionId,
+      packetId: first.packetId,
+      providerReceipt: "provider-receipt-1",
+    }) as { success: boolean; acknowledged: boolean; idempotent: boolean };
+    const duplicate = await sdk.trigger("mem::context-acknowledge", {
+      project,
+      sessionId,
+      packetId: first.packetId,
+      providerReceipt: "provider-receipt-1",
+    }) as { success: boolean; acknowledged: boolean; idempotent: boolean };
+
+    expect(acknowledgement).toMatchObject({
+      success: true,
+      acknowledged: true,
+      idempotent: false,
+    });
+    expect(duplicate).toMatchObject({
+      success: true,
+      acknowledged: true,
+      idempotent: true,
+    });
+    expect(
+      await sdk.trigger("mem::context-acknowledge", {
+        project,
+        sessionId,
+        packetId: first.packetId,
+        providerReceipt: "different-receipt",
+      }),
+    ).toEqual({
+      success: false,
+      error: "acknowledgement does not match the recorded delivery",
+    });
+
+    const afterAcknowledgement = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+      files: ["src/index.ts"],
+    }) as { success: boolean; sourceIds: string[] };
+
+    expect(afterAcknowledgement.success).toBe(true);
+    expect(afterAcknowledgement.sourceIds).toEqual([]);
+    expect(
+      await sdk.trigger("mem::context-acknowledge", {
+        project,
+        sessionId,
+        packetId: (afterAcknowledgement as { packetId: string }).packetId,
+        providerReceipt: "provider-receipt-1",
+      }),
+    ).toEqual({
+      success: false,
+      acknowledged: false,
+      error: "provider delivery receipt has already been used",
+    });
+  });
+
+  it("rejects project/session-mismatched and invalid acknowledgements", async () => {
+    const packet = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+    }) as { packetId: string };
+
+    expect(
+      await sdk.trigger("mem::context-acknowledge", {
+        project: "github.com/chronodeai/other",
+        sessionId,
+        packetId: packet.packetId,
+        providerReceipt: "provider-receipt-1",
+      }),
+    ).toMatchObject({ success: false });
+    expect(
+      await sdk.trigger("mem::context-acknowledge", {
+        project,
+        sessionId,
+        packetId: "missing-packet",
+        providerReceipt: "provider-receipt-1",
+      }),
+    ).toEqual({ success: false, error: "context packet not found" });
+
+    const stored = await kv.get<{
+      packetId: string;
+      expiresAt: string;
+    }>(
+      KV.injectedSources(sessionId),
+      `packet:${packet.packetId}`,
+    );
+    await kv.set(
+      KV.injectedSources(sessionId),
+      `packet:${packet.packetId}`,
+      { ...stored!, expiresAt: new Date(Date.now() - 1_000).toISOString() },
+    );
+    expect(
+      await sdk.trigger("mem::context-acknowledge", {
+        project,
+        sessionId,
+        packetId: packet.packetId,
+        providerReceipt: "provider-receipt-1",
+      }),
+    ).toEqual({ success: false, error: "context packet has expired" });
+  });
+
+  it("fails closed when trusted provider receipt verification is unavailable", async () => {
+    const isolatedSdk = mockSdk();
+    registerCodingMemoryFunctions(isolatedSdk as never, kv as never);
+    const packet = await isolatedSdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+    }) as { packetId: string };
+
+    await expect(
+      isolatedSdk.trigger("mem::context-acknowledge", {
+        project,
+        sessionId,
+        packetId: packet.packetId,
+        providerReceipt: "invented-receipt",
+      }),
+    ).resolves.toEqual({
+      success: false,
+      acknowledged: false,
+      error:
+        "trusted provider delivery verification is unavailable; source suppression denied",
+    });
+  });
+
+  it("returns typed advisory degradation and gate-critical failure without suppression", async () => {
+    sdk.override("mem::search", async () => {
+      throw new Error("search backend unavailable");
+    });
+    sdk.override("mem::file-context", async () => ({
+      context: "",
+      sourceIds: [],
+      outcome: {
+        source: "file_history",
+        status: "failed",
+        error: "file index unavailable",
+      },
+    }));
+
+    const advisory = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+      files: ["src/index.ts"],
+      context_class: "advisory",
+    }) as {
+      success: boolean;
+      status: string;
+      completeness: { complete: boolean; failed: string[] };
+      sources: Array<{ source: string; status: string; error?: string }>;
+      sourceIds: string[];
+    };
+
+    expect(advisory.success).toBe(true);
+    expect(advisory.status).toBe("degraded");
+    expect(advisory.completeness.complete).toBe(false);
+    expect(advisory.completeness.failed).toEqual(
+      expect.arrayContaining(["episodic", "file_history"]),
+    );
+    expect(advisory.sources).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: "episodic",
+          status: "failed",
+          error: "search backend unavailable",
+        }),
+        expect.objectContaining({
+          source: "file_history",
+          status: "failed",
+          error: "file index unavailable",
+        }),
+      ]),
+    );
+
+    const gateCritical = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+      files: ["src/index.ts"],
+      context_class: "gate-critical",
+    }) as {
+      success: boolean;
+      status: string;
+      context: string;
+      packetId?: string;
+      sourceIds: string[];
+    };
+
+    expect(gateCritical).toMatchObject({
+      success: false,
+      status: "failed",
+      context: "",
+      sourceIds: [],
+    });
+    expect(gateCritical.packetId).toBeUndefined();
+
+    sdk.override("mem::search", async () => ({
+      results: [{ obsId: "retryable", observation: { title: "Retry", narrative: "still available" } }],
+    }));
+    const retry = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+    }) as { sourceIds: string[] };
+    expect(retry.sourceIds).toContain("retryable");
   });
 
   it("links commits idempotently and reports project health", async () => {

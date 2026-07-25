@@ -44,6 +44,20 @@ afterEach(async () => {
 });
 
 describe("iii runtime config", () => {
+  it("deployment entrypoints prefer injected secrets and never print them", () => {
+    const repositoryRoot = join(import.meta.dirname, "..");
+    for (const provider of ["coolify", "fly", "railway", "render"]) {
+      const entrypoint = readFileSync(
+        join(repositoryRoot, "deploy", provider, "entrypoint.sh"),
+        "utf8",
+      );
+      expect(entrypoint).toContain('if [ -n "${AGENTMEMORY_SECRET:-}" ]');
+      expect(entrypoint).toContain('SECRET="$AGENTMEMORY_SECRET"');
+      expect(entrypoint).not.toMatch(/echo\s+["']?AGENTMEMORY_SECRET=/);
+      expect(entrypoint).not.toContain("echo \"$SECRET\"");
+    }
+  });
+
   it("returns the source config for canonical ports", () => {
     const { source, runtime } = fixture();
     expect(

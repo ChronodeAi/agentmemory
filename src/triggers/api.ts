@@ -6,8 +6,16 @@ import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import type { ResilientProvider } from "../providers/resilient.js";
-import { VERSION } from "../version.js";
-import { timingSafeCompare } from "../auth.js";
+import {
+  API_CONTRACT_VERSION,
+  BACKEND_BUILD_ID,
+  VERSION,
+  VIEWER_BUILD_ID,
+} from "../version.js";
+import {
+  authorizeAdministrativeRequest,
+  authorizeProtectedRequest,
+} from "../auth.js";
 import { isSlotsEnabled, isReflectEnabled } from "../functions/slots.js";
 import { renderViewerDocument } from "../viewer/document.js";
 import { getBoundViewerPort, getViewerSkipped } from "../viewer/server.js";
@@ -52,15 +60,13 @@ function checkAuth(
   req: ApiRequest,
   secret: string | undefined,
 ): Response | null {
-  if (!secret) return null;
-  const auth = req.headers?.["authorization"] || req.headers?.["Authorization"];
-  if (
-    typeof auth !== "string" ||
-    !timingSafeCompare(auth, `Bearer ${secret}`)
-  ) {
-    return { status_code: 401, body: { error: "unauthorized" } };
-  }
-  return null;
+  const decision = authorizeProtectedRequest(req.headers, secret);
+  return decision.authorized
+    ? null
+    : {
+        status_code: decision.statusCode,
+        body: { error: decision.error },
+      };
 }
 
 function requireConfiguredSecret(
@@ -153,23 +159,91 @@ export function registerApiTriggers(
   secret?: string,
   metricsStore?: MetricsStore,
   provider?: ResilientProvider | { circuitState?: unknown },
+  adminSecret?: string,
 ): void {
+  type ApiTrigger = {
+    type: "http";
+    function_id: string;
+    config: {
+      api_path: string;
+      http_method: string;
+      middleware_function_ids?: string[];
+    };
+  };
+  const publicRoutes = new Set([
+    "GET /agentmemory/livez",
+  ]);
+  const rawRegisterTrigger = sdk.registerTrigger.bind(sdk);
+  const registerApiTrigger = (trigger: ApiTrigger): void => {
+    const route = `${trigger.config.http_method} ${trigger.config.api_path}`;
+    if (publicRoutes.has(route)) {
+      rawRegisterTrigger(trigger);
+      return;
+    }
+    const middleware = new Set(
+      trigger.config.middleware_function_ids ?? [],
+    );
+    middleware.add("middleware::api-auth");
+    rawRegisterTrigger({
+      ...trigger,
+      config: {
+        ...trigger.config,
+        middleware_function_ids: [...middleware],
+      },
+    });
+  };
+
   sdk.registerFunction(
     "middleware::api-auth",
     async (input: {
-      request?: { headers?: Record<string, string | undefined> };
+      request?: {
+        headers?: Record<string, string | undefined>;
+        body?: Record<string, unknown>;
+        query_params?: Record<string, unknown>;
+      };
     }) => {
-      if (!secret) return { action: "continue" };
-      const headers = input?.request?.headers || {};
-      const auth = headers["authorization"] || headers["Authorization"];
-      if (
-        typeof auth !== "string" ||
-        !timingSafeCompare(auth, `Bearer ${secret}`)
-      ) {
+      const request = input?.request;
+      const headers = request?.headers || {};
+      const decision = authorizeProtectedRequest(headers, secret);
+      const adminDecision = authorizeAdministrativeRequest(
+        headers,
+        adminSecret,
+      );
+      if (!decision.authorized && !adminDecision.authorized) {
         return {
           action: "respond",
-          response: { status_code: 401, body: { error: "unauthorized" } },
+          response: {
+            status_code:
+              decision.statusCode === 503 && adminDecision.statusCode === 503
+                ? 503
+                : 401,
+            body: {
+              error:
+                decision.statusCode === 503 && adminDecision.statusCode === 503
+                  ? "authentication_unavailable"
+                  : "unauthorized",
+            },
+          },
         };
+      }
+      const requestsGlobal =
+        request?.body?.scope === "global" ||
+        request?.query_params?.scope === "global";
+      if (requestsGlobal) {
+        if (!adminDecision.authorized) {
+          return {
+            action: "respond",
+            response: {
+              status_code: adminDecision.statusCode,
+              body: {
+                error:
+                  adminDecision.error === "authentication_unavailable"
+                    ? "global_authentication_unavailable"
+                    : "global_unauthorized",
+              },
+            },
+          };
+        }
       }
       return { action: "continue" };
     },
@@ -181,7 +255,7 @@ export function registerApiTriggers(
       body: { status: "ok", service: "agentmemory", viewerPort: getBoundViewerPort(), viewerSkipped: getViewerSkipped() },
     }),
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::liveness",
     config: { api_path: "/agentmemory/livez", http_method: "GET" },
@@ -243,6 +317,12 @@ export function registerApiTriggers(
         status_code: 200,
         body: {
           version: VERSION,
+          build: {
+            backend: BACKEND_BUILD_ID,
+            viewer: VIEWER_BUILD_ID,
+            apiContract: API_CONTRACT_VERSION,
+            compatibility: "compatible",
+          },
           provider: providerKind,
           embeddingProvider,
           flags,
@@ -250,7 +330,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::config-flags",
     config: {
@@ -261,19 +341,20 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction("api::health", 
-    async (req: ApiRequest): Promise<Response> => {
+    async (_req: ApiRequest): Promise<Response> => {
       const health = await getLatestHealth(kv);
       const functionMetrics = metricsStore ? await metricsStore.getAll() : [];
       const circuitBreaker =
         provider && "circuitState" in provider ? provider.circuitState : null;
 
-      const status = health?.status || "healthy";
+      const status = health?.status || "critical";
       const statusCode = status === "critical" ? 503 : 200;
 
       return {
         status_code: statusCode,
         body: {
           status,
+          readiness: health ? "evaluated" : "initializing",
           service: "agentmemory",
           version: VERSION,
           health: health || null,
@@ -285,7 +366,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::health",
     config: {
@@ -296,7 +377,7 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::observe",
     async (req: ApiRequest<HookPayload>): Promise<Response> => {
-      const body = (req.body ?? {}) as Record<string, unknown>;
+      const body = (req.body ?? {}) as unknown as Record<string, unknown>;
       const hookType = asNonEmptyString(body.hookType);
       const sessionId = asNonEmptyString(body.sessionId);
       const project = asNonEmptyString(body.project);
@@ -336,7 +417,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::observe",
     config: {
@@ -400,7 +481,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::context",
     config: {
@@ -429,6 +510,18 @@ export function registerApiTriggers(
           body: { error: "token_budget must be an integer from 1 to 2000" },
         };
       }
+      if (
+        body.context_class !== undefined &&
+        body.context_class !== "advisory" &&
+        body.context_class !== "gate-critical"
+      ) {
+        return {
+          status_code: 400,
+          body: {
+            error: "context_class must be advisory or gate-critical",
+          },
+        };
+      }
       const result = await sdk.trigger({
         function_id: "mem::context-packet",
         payload: {
@@ -439,16 +532,54 @@ export function registerApiTriggers(
             ? body.files.filter((file): file is string => typeof file === "string")
             : [],
           token_budget: tokenBudget,
+          context_class:
+            body.context_class === "gate-critical"
+              ? "gate-critical"
+              : "advisory",
         },
       });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::context-packet",
     config: {
       api_path: "/agentmemory/context-packet",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::context-acknowledge",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const sessionId = asNonEmptyString(body.sessionId);
+      const packetId = asNonEmptyString(body.packetId);
+      const providerReceipt = asNonEmptyString(body.providerReceipt);
+      if (!project || !sessionId || !packetId || !providerReceipt) {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "project, sessionId, packetId, and providerReceipt are required",
+          },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::context-acknowledge",
+        payload: { project, sessionId, packetId, providerReceipt },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::context-acknowledge",
+    config: {
+      api_path: "/agentmemory/context-acknowledge",
       http_method: "POST",
       middleware_function_ids: ["middleware::api-auth"],
     },
@@ -477,7 +608,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::commit-link",
     config: {
@@ -501,7 +632,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::project-health",
     config: {
@@ -529,7 +660,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::promotion-candidates",
     config: {
@@ -572,7 +703,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::promotion-decide",
     config: {
@@ -673,7 +804,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::search",
     config: {
@@ -712,7 +843,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::index-rebuild",
     config: {
@@ -744,7 +875,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::compress-file",
     config: { api_path: "/agentmemory/compress-file", http_method: "POST" },
@@ -765,7 +896,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::replay::load",
     config: { api_path: "/agentmemory/replay/load", http_method: "GET" },
@@ -782,7 +913,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { success: true, sessions } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::replay::sessions",
     config: { api_path: "/agentmemory/replay/sessions", http_method: "GET" },
@@ -828,7 +959,7 @@ export function registerApiTriggers(
       return { status_code: 202, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::replay::import",
     config: { api_path: "/agentmemory/replay/import-jsonl", http_method: "POST" },
@@ -926,7 +1057,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::session::start",
     config: {
@@ -980,7 +1111,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { success: true } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::session::end",
     config: {
@@ -1003,7 +1134,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::summarize",
     config: {
@@ -1085,7 +1216,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { commit: link } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::session::commit",
     config: {
@@ -1120,7 +1251,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { commit: link, sessions } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::session::by-commit",
     config: {
@@ -1147,7 +1278,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { commits: filtered } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::commits",
     config: {
@@ -1208,7 +1339,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { sessions: withSummary } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::sessions",
     config: { api_path: "/agentmemory/sessions", http_method: "GET" },
@@ -1241,7 +1372,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { observations: filtered } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::observations",
     config: { api_path: "/agentmemory/observations", http_method: "GET" },
@@ -1270,7 +1401,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::file-context",
     config: { api_path: "/agentmemory/file-context", http_method: "POST" },
@@ -1335,7 +1466,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::enrich",
     config: { api_path: "/agentmemory/enrich", http_method: "POST" },
@@ -1387,7 +1518,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::remember",
     config: { api_path: "/agentmemory/remember", http_method: "POST" },
@@ -1413,7 +1544,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::forget",
     config: { api_path: "/agentmemory/forget", http_method: "POST" },
@@ -1451,7 +1582,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::consolidate",
     config: { api_path: "/agentmemory/consolidate", http_method: "POST" },
@@ -1465,7 +1596,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::patterns",
     config: { api_path: "/agentmemory/patterns", http_method: "POST" },
@@ -1479,7 +1610,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::generate-rules",
     config: { api_path: "/agentmemory/generate-rules", http_method: "POST" },
@@ -1520,7 +1651,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::migrate",
     config: { api_path: "/agentmemory/migrate", http_method: "POST" },
@@ -1536,7 +1667,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::evict",
     config: { api_path: "/agentmemory/evict", http_method: "POST" },
@@ -1600,7 +1731,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::smart-search",
     config: { api_path: "/agentmemory/smart-search", http_method: "POST" },
@@ -1628,7 +1759,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::diagnostic-followup",
     config: {
@@ -1656,7 +1787,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::timeline",
     config: { api_path: "/agentmemory/timeline", http_method: "POST" },
@@ -1681,7 +1812,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::profile",
     config: { api_path: "/agentmemory/profile", http_method: "GET" },
@@ -1727,7 +1858,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::export",
     config: { api_path: "/agentmemory/export", http_method: "GET" },
@@ -1749,7 +1880,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::import",
     config: { api_path: "/agentmemory/import", http_method: "POST" },
@@ -1771,7 +1902,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::relations",
     config: { api_path: "/agentmemory/relations", http_method: "POST" },
@@ -1797,7 +1928,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::evolve",
     config: { api_path: "/agentmemory/evolve", http_method: "POST" },
@@ -1813,7 +1944,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::auto-forget",
     config: { api_path: "/agentmemory/auto-forget", http_method: "POST" },
@@ -1834,7 +1965,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::claude-bridge-read",
     config: { api_path: "/agentmemory/claude-bridge/read", http_method: "GET" },
@@ -1855,7 +1986,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::claude-bridge-sync",
     config: {
@@ -1895,7 +2026,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-query",
     config: { api_path: "/agentmemory/graph/query", http_method: "POST" },
@@ -1913,7 +2044,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-stats",
     config: { api_path: "/agentmemory/graph/stats", http_method: "GET" },
@@ -1939,7 +2070,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-snapshot-rebuild",
     config: { api_path: "/agentmemory/graph/snapshot-rebuild", http_method: "POST" },
@@ -1964,7 +2095,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-reset",
     config: { api_path: "/agentmemory/graph/reset", http_method: "POST" },
@@ -1991,7 +2122,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-extract",
     config: { api_path: "/agentmemory/graph/extract", http_method: "POST" },
@@ -2056,7 +2187,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-build",
     config: { api_path: "/agentmemory/graph/build", http_method: "POST" },
@@ -2090,7 +2221,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::consolidate-pipeline",
     config: {
@@ -2119,7 +2250,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::team-share",
     config: { api_path: "/agentmemory/team/share", http_method: "POST" },
@@ -2139,7 +2270,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::team-feed",
     config: { api_path: "/agentmemory/team/feed", http_method: "GET" },
@@ -2157,7 +2288,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::team-profile",
     config: { api_path: "/agentmemory/team/profile", http_method: "GET" },
@@ -2175,7 +2306,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { entries, success: true } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::audit",
     config: { api_path: "/agentmemory/audit", http_method: "GET" },
@@ -2197,7 +2328,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::governance-delete",
     config: {
@@ -2222,7 +2353,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::governance-bulk",
     config: {
@@ -2243,7 +2374,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::snapshots",
     config: { api_path: "/agentmemory/snapshots", http_method: "GET" },
@@ -2262,7 +2393,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::snapshot-create",
     config: { api_path: "/agentmemory/snapshot/create", http_method: "POST" },
@@ -2283,7 +2414,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::snapshot-restore",
     config: { api_path: "/agentmemory/snapshot/restore", http_method: "POST" },
@@ -2367,7 +2498,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::memories",
     config: { api_path: "/agentmemory/memories", http_method: "GET" },
@@ -2388,7 +2519,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { memory } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::memory-by-id",
     config: { api_path: "/agentmemory/memories/:id", http_method: "GET" },
@@ -2402,7 +2533,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { semantic } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::semantic-list",
     config: { api_path: "/agentmemory/semantic", http_method: "GET" },
@@ -2416,7 +2547,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { procedural } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::procedural-list",
     config: { api_path: "/agentmemory/procedural", http_method: "GET" },
@@ -2430,7 +2561,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { relations } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::relations-list",
     config: { api_path: "/agentmemory/relations", http_method: "GET" },
@@ -2473,7 +2604,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::vision-search",
     config: { api_path: "/agentmemory/vision-search", http_method: "POST" },
@@ -2505,7 +2636,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::vision-embed",
     config: { api_path: "/agentmemory/vision-embed", http_method: "POST" },
@@ -2520,7 +2651,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::slot-list", payload: { project } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-list",
     config: { api_path: "/agentmemory/slots", http_method: "GET" },
@@ -2540,7 +2671,7 @@ export function registerApiTriggers(
     }
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-get",
     config: { api_path: "/agentmemory/slot", http_method: "GET" },
@@ -2591,7 +2722,7 @@ export function registerApiTriggers(
     }
     return { status_code: 201, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-create",
     config: { api_path: "/agentmemory/slot", http_method: "POST" },
@@ -2615,7 +2746,7 @@ export function registerApiTriggers(
     }
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-append",
     config: { api_path: "/agentmemory/slot/append", http_method: "POST" },
@@ -2641,7 +2772,7 @@ export function registerApiTriggers(
     }
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-replace",
     config: { api_path: "/agentmemory/slot/replace", http_method: "POST" },
@@ -2661,7 +2792,7 @@ export function registerApiTriggers(
     }
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-delete",
     config: { api_path: "/agentmemory/slot", http_method: "DELETE" },
@@ -2683,7 +2814,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::slot-reflect", payload });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-reflect",
     config: { api_path: "/agentmemory/slot/reflect", http_method: "POST" },
@@ -2711,7 +2842,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-create",
     config: { api_path: "/agentmemory/actions", http_method: "POST" },
@@ -2737,7 +2868,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-update",
     config: { api_path: "/agentmemory/actions/update", http_method: "POST" },
@@ -2755,7 +2886,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-list",
     config: { api_path: "/agentmemory/actions", http_method: "GET" },
@@ -2773,7 +2904,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-get",
     config: { api_path: "/agentmemory/actions/get", http_method: "GET" },
@@ -2796,7 +2927,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-edge",
     config: { api_path: "/agentmemory/actions/edges", http_method: "POST" },
@@ -2815,7 +2946,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::frontier",
     config: { api_path: "/agentmemory/frontier", http_method: "GET" },
@@ -2832,7 +2963,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::next",
     config: { api_path: "/agentmemory/next", http_method: "GET" },
@@ -2851,7 +2982,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::lease-acquire",
     config: { api_path: "/agentmemory/leases/acquire", http_method: "POST" },
@@ -2870,7 +3001,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::lease-release",
     config: { api_path: "/agentmemory/leases/release", http_method: "POST" },
@@ -2889,14 +3020,16 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::lease-renew",
     config: { api_path: "/agentmemory/leases/renew", http_method: "POST" },
   });
 
   sdk.registerFunction("api::routine-create",
-    async (req: ApiRequest): Promise<Response> => {
+    async (
+      req: ApiRequest<{ name: string; steps: unknown[] }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
       if (!req.body?.name || !req.body?.steps) {
@@ -2909,7 +3042,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::routine-create",
     config: { api_path: "/agentmemory/routines", http_method: "POST" },
@@ -2925,7 +3058,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::routine-list",
     config: { api_path: "/agentmemory/routines", http_method: "GET" },
@@ -2944,7 +3077,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::routine-run",
     config: { api_path: "/agentmemory/routines/run", http_method: "POST" },
@@ -2962,7 +3095,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::routine-status",
     config: { api_path: "/agentmemory/routines/status", http_method: "GET" },
@@ -2987,7 +3120,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::signal-send",
     config: { api_path: "/agentmemory/signals/send", http_method: "POST" },
@@ -3011,7 +3144,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::signal-read",
     config: { api_path: "/agentmemory/signals", http_method: "GET" },
@@ -3036,7 +3169,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::checkpoint-create",
     config: { api_path: "/agentmemory/checkpoints", http_method: "POST" },
@@ -3060,7 +3193,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::checkpoint-resolve",
     config: { api_path: "/agentmemory/checkpoints/resolve", http_method: "POST" },
@@ -3077,7 +3210,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::checkpoint-list",
     config: { api_path: "/agentmemory/checkpoints", http_method: "GET" },
@@ -3098,7 +3231,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-register",
     config: { api_path: "/agentmemory/mesh/peers", http_method: "POST" },
@@ -3114,7 +3247,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-list",
     config: { api_path: "/agentmemory/mesh/peers", http_method: "GET" },
@@ -3132,7 +3265,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-sync",
     config: { api_path: "/agentmemory/mesh/sync", http_method: "POST" },
@@ -3148,7 +3281,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-receive",
     config: { api_path: "/agentmemory/mesh/receive", http_method: "POST" },
@@ -3197,7 +3330,7 @@ export function registerApiTriggers(
       return { status_code: 200, body };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-export",
     config: { api_path: "/agentmemory/mesh/export", http_method: "GET" },
@@ -3224,7 +3357,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::flow-compress",
     config: { api_path: "/agentmemory/flow/compress", http_method: "POST" },
@@ -3239,7 +3372,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::branch-detect",
     config: { api_path: "/agentmemory/branch/detect", http_method: "GET" },
@@ -3254,7 +3387,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::branch-worktrees",
     config: { api_path: "/agentmemory/branch/worktrees", http_method: "GET" },
@@ -3269,7 +3402,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::branch-sessions",
     config: { api_path: "/agentmemory/branch/sessions", http_method: "GET" },
@@ -3299,7 +3432,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::viewer",
     config: { api_path: "/agentmemory/viewer", http_method: "GET" },
@@ -3313,7 +3446,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-create", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-create", config: { api_path: "/agentmemory/sentinels", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-create", config: { api_path: "/agentmemory/sentinels", http_method: "POST" } });
 
   sdk.registerFunction("api::sentinel-trigger",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3323,7 +3456,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-trigger", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-trigger", config: { api_path: "/agentmemory/sentinels/trigger", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-trigger", config: { api_path: "/agentmemory/sentinels/trigger", http_method: "POST" } });
 
   sdk.registerFunction("api::sentinel-check",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3331,7 +3464,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-check", payload: {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-check", config: { api_path: "/agentmemory/sentinels/check", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-check", config: { api_path: "/agentmemory/sentinels/check", http_method: "POST" } });
 
   sdk.registerFunction("api::sentinel-cancel",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3341,7 +3474,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-cancel", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-cancel", config: { api_path: "/agentmemory/sentinels/cancel", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-cancel", config: { api_path: "/agentmemory/sentinels/cancel", http_method: "POST" } });
 
   sdk.registerFunction("api::sentinel-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3350,7 +3483,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-list", payload: { status: params.status, type: params.type } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-list", config: { api_path: "/agentmemory/sentinels", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-list", config: { api_path: "/agentmemory/sentinels", http_method: "GET" } });
 
   sdk.registerFunction("api::sketch-create",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3360,7 +3493,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-create", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-create", config: { api_path: "/agentmemory/sketches", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-create", config: { api_path: "/agentmemory/sketches", http_method: "POST" } });
 
   sdk.registerFunction("api::sketch-add",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3370,7 +3503,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-add", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-add", config: { api_path: "/agentmemory/sketches/add", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-add", config: { api_path: "/agentmemory/sketches/add", http_method: "POST" } });
 
   sdk.registerFunction("api::sketch-promote",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3380,7 +3513,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-promote", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-promote", config: { api_path: "/agentmemory/sketches/promote", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-promote", config: { api_path: "/agentmemory/sketches/promote", http_method: "POST" } });
 
   sdk.registerFunction("api::sketch-discard",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3390,7 +3523,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-discard", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-discard", config: { api_path: "/agentmemory/sketches/discard", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-discard", config: { api_path: "/agentmemory/sketches/discard", http_method: "POST" } });
 
   sdk.registerFunction("api::sketch-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3399,7 +3532,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-list", payload: { status: params.status, project: params.project } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-list", config: { api_path: "/agentmemory/sketches", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-list", config: { api_path: "/agentmemory/sketches", http_method: "GET" } });
 
   sdk.registerFunction("api::sketch-gc",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3407,7 +3540,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-gc", payload: {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-gc", config: { api_path: "/agentmemory/sketches/gc", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-gc", config: { api_path: "/agentmemory/sketches/gc", http_method: "POST" } });
 
   sdk.registerFunction("api::crystallize",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3422,7 +3555,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::crystallize", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::crystallize", config: { api_path: "/agentmemory/crystals/create", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::crystallize", config: { api_path: "/agentmemory/crystals/create", http_method: "POST" } });
 
   sdk.registerFunction("api::crystal-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3464,7 +3597,7 @@ export function registerApiTriggers(
     });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::crystal-list", config: { api_path: "/agentmemory/crystals", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::crystal-list", config: { api_path: "/agentmemory/crystals", http_method: "GET" } });
 
   sdk.registerFunction("api::auto-crystallize",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3476,7 +3609,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::auto-crystallize", payload: body || {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::auto-crystallize", config: { api_path: "/agentmemory/crystals/auto", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::auto-crystallize", config: { api_path: "/agentmemory/crystals/auto", http_method: "POST" } });
 
   sdk.registerFunction("api::diagnose",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3485,7 +3618,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::diagnose", payload: body || {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::diagnose", config: { api_path: "/agentmemory/diagnostics", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::diagnose", config: { api_path: "/agentmemory/diagnostics", http_method: "POST" } });
 
   sdk.registerFunction("api::heal",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3494,7 +3627,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::heal", payload: body || {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::heal", config: { api_path: "/agentmemory/diagnostics/heal", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::heal", config: { api_path: "/agentmemory/diagnostics/heal", http_method: "POST" } });
 
   sdk.registerFunction("api::facet-tag",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3504,7 +3637,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-tag", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-tag", config: { api_path: "/agentmemory/facets", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-tag", config: { api_path: "/agentmemory/facets", http_method: "POST" } });
 
   sdk.registerFunction("api::facet-untag",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3514,7 +3647,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-untag", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-untag", config: { api_path: "/agentmemory/facets/remove", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-untag", config: { api_path: "/agentmemory/facets/remove", http_method: "POST" } });
 
   sdk.registerFunction("api::facet-query",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3523,7 +3656,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-query", payload: body || {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-query", config: { api_path: "/agentmemory/facets/query", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-query", config: { api_path: "/agentmemory/facets/query", http_method: "POST" } });
 
   sdk.registerFunction("api::facet-get",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3533,7 +3666,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-get", payload: { targetId: params.targetId } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-get", config: { api_path: "/agentmemory/facets", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-get", config: { api_path: "/agentmemory/facets", http_method: "GET" } });
 
   sdk.registerFunction("api::facet-stats",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3542,7 +3675,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-stats", payload: { targetType: params.targetType } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-stats", config: { api_path: "/agentmemory/facets/stats", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-stats", config: { api_path: "/agentmemory/facets/stats", http_method: "GET" } });
 
   sdk.registerFunction("api::verify",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3552,7 +3685,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::verify", payload: { id: body.id } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::verify", config: { api_path: "/agentmemory/verify", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::verify", config: { api_path: "/agentmemory/verify", http_method: "POST" } });
 
   sdk.registerFunction("api::cascade-update",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3564,7 +3697,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::cascade-update", payload: { supersededMemoryId: body.supersededMemoryId } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::cascade-update", config: { api_path: "/agentmemory/cascade-update", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::cascade-update", config: { api_path: "/agentmemory/cascade-update", http_method: "POST" } });
 
   sdk.registerFunction("api::lesson-save",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3593,7 +3726,7 @@ export function registerApiTriggers(
     const statusCode = result?.action === "created" ? 201 : 200;
     return { status_code: statusCode, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::lesson-save", config: { api_path: "/agentmemory/lessons", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::lesson-save", config: { api_path: "/agentmemory/lessons", http_method: "POST" } });
 
   sdk.registerFunction("api::lesson-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3628,7 +3761,7 @@ export function registerApiTriggers(
     } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::lesson-list", config: { api_path: "/agentmemory/lessons", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::lesson-list", config: { api_path: "/agentmemory/lessons", http_method: "GET" } });
 
   sdk.registerFunction("api::lesson-search",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3648,7 +3781,7 @@ export function registerApiTriggers(
     });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::lesson-search", config: { api_path: "/agentmemory/lessons/search", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::lesson-search", config: { api_path: "/agentmemory/lessons/search", http_method: "POST" } });
 
   sdk.registerFunction("api::lesson-strengthen",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3679,7 +3812,7 @@ export function registerApiTriggers(
     });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::lesson-strengthen", config: { api_path: "/agentmemory/lessons/strengthen", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::lesson-strengthen", config: { api_path: "/agentmemory/lessons/strengthen", http_method: "POST" } });
 
   sdk.registerFunction("api::obsidian-export", async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3696,7 +3829,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::obsidian-export", payload: { vaultDir, types } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::obsidian-export", config: { api_path: "/agentmemory/obsidian/export", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::obsidian-export", config: { api_path: "/agentmemory/obsidian/export", http_method: "POST" } });
 
   sdk.registerFunction("api::reflect",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3715,7 +3848,7 @@ export function registerApiTriggers(
     } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::reflect", config: { api_path: "/agentmemory/reflect", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::reflect", config: { api_path: "/agentmemory/reflect", http_method: "POST" } });
 
   sdk.registerFunction("api::insight-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3749,7 +3882,7 @@ export function registerApiTriggers(
     } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::insight-list", config: { api_path: "/agentmemory/insights", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::insight-list", config: { api_path: "/agentmemory/insights", http_method: "GET" } });
 
   sdk.registerFunction("api::insight-search",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3771,5 +3904,5 @@ export function registerApiTriggers(
     } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::insight-search", config: { api_path: "/agentmemory/insights/search", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::insight-search", config: { api_path: "/agentmemory/insights/search", http_method: "POST" } });
 }

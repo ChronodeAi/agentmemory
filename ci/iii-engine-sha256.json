@@ -1,0 +1,22 @@
+{
+  "version": "0.11.2",
+  "base_url": "https://github.com/iii-hq/iii/releases/download/iii/v0.11.2",
+  "assets": {
+    "linux-x64": {
+      "name": "iii-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "9c83c47788b4ef4beeb65dd9bf37e94f993770cd3db874464c3ce1cdc92352cd"
+    },
+    "linux-arm64": {
+      "name": "iii-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "e0d35ee54a6b6c8a46576ab661e1711d11eb4dafeb1be8e1dbd1cc0ccb48b615"
+    },
+    "darwin-x64": {
+      "name": "iii-x86_64-apple-darwin.tar.gz",
+      "sha256": "2b67e5f18833c415f4cb16a9e13b0e953555e0ca138682bf24894abe8b80b836"
+    },
+    "darwin-arm64": {
+      "name": "iii-aarch64-apple-darwin.tar.gz",
+      "sha256": "e7834c44fefb2b5343d327102a941419245f7fff447f95373857a04b033fb1bd"
+    }
+  }
+}

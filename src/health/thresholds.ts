@@ -30,6 +30,15 @@ export function evaluateHealth(
   let critical = false;
   let degraded = false;
 
+  if (snapshot.kvConnectivity?.status !== "ok") {
+    alerts.push("kv_unavailable");
+    critical = true;
+  }
+  if (snapshot.workerProbeStatus === "error") {
+    alerts.push("worker_probe_failed");
+    critical = true;
+  }
+
   if (
     snapshot.connectionState === "disconnected" ||
     snapshot.connectionState === "failed"

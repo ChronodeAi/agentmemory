@@ -28,7 +28,22 @@ type ContextHandler = (data: {
   sessionId: string;
   project: string;
   budget?: number;
-}) => Promise<{ context: string; blocks: number; tokens: number }>;
+}) => Promise<{
+  context: string;
+  blocks: number;
+  tokens: number;
+  status: "ok" | "degraded";
+  completeness: {
+    complete: boolean;
+    unavailable: string[];
+    failed: string[];
+  };
+  sources: Array<{
+    source: string;
+    status: "ok" | "unavailable" | "failed";
+    itemCount: number;
+  }>;
+}>;
 
 function wireContext(kv: ReturnType<typeof mockKV>, budget = 4000) {
   let handler: ContextHandler | undefined;
@@ -106,6 +121,15 @@ describe("mem::context — lessons auto-injection (#457)", () => {
     });
 
     expect(result.context).not.toContain("Lessons Learned");
+    expect(result.status).toBe("degraded");
+    expect(result.completeness.complete).toBe(false);
+    expect(result.sources).toContainEqual(
+      expect.objectContaining({
+        source: "lessons",
+        status: "unavailable",
+        itemCount: 0,
+      }),
+    );
   });
 
   it("injects project-scoped lessons without implicit global lessons", async () => {

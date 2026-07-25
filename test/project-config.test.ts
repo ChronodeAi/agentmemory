@@ -43,6 +43,9 @@ describe("canonical project configuration", () => {
     expect(
       normalizeGitRemote("git@github.com:ChronodeAi/Memetics.git"),
     ).toBe("github.com/chronodeai/memetics");
+    expect(
+      normalizeGitRemote("ssh://git@Code.Example:2222/Team/CaseSensitive.git"),
+    ).toBe("code.example:2222/Team/CaseSensitive");
   });
 
   it("uses the normalized remote and a stable hashed path fallback", () => {
@@ -53,6 +56,13 @@ describe("canonical project configuration", () => {
     const local = gitProject();
     expect(inferProjectId(local)).toMatch(/^local\/[a-f0-9]{24}$/);
     expect(inferProjectId(local)).toBe(inferProjectId(local));
+  });
+
+  it("fails closed when a configured remote cannot be normalized", () => {
+    const root = gitProject("not-a-valid-remote");
+    expect(() => inferProjectId(root)).toThrow(
+      "configured Git remote cannot be normalized safely",
+    );
   });
 
   it("preserves process-environment precedence over the manifest", () => {

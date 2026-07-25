@@ -1,0 +1,4209 @@
+{
+  "schema_version": 1,
+  "control_id": "G-ICM-01",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "public_route_allowlist": [
+    "GET /agentmemory/livez"
+  ],
+  "counts": {
+    "registered_api_functions": 136,
+    "http_routes": 135,
+    "public_routes": 1,
+    "protected_routes": 134,
+    "missing_auth_routes": 0,
+    "mcp_tools": 59,
+    "mcp_transport_routes": 6,
+    "mcp_resources": 6,
+    "mcp_prompts": 3,
+    "mcp_standalone_fallback_tools": 7,
+    "hooks": 13,
+    "host_hook_manifests": 5,
+    "host_hook_events": 44,
+    "viewer_ui_rest_expressions": 26,
+    "provider_adapters": 15,
+    "host_connectors": 18
+  },
+  "rest": [
+    {
+      "surface_id": "REST:GET:/agentmemory/actions",
+      "method": "GET",
+      "path": "/agentmemory/actions",
+      "function_id": "api::action-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2889"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/actions",
+      "method": "POST",
+      "path": "/agentmemory/actions",
+      "function_id": "api::action-create",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2845"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/actions/edges",
+      "method": "POST",
+      "path": "/agentmemory/actions/edges",
+      "function_id": "api::action-edge",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2930"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/actions/get",
+      "method": "GET",
+      "path": "/agentmemory/actions/get",
+      "function_id": "api::action-get",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2907"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/actions/update",
+      "method": "POST",
+      "path": "/agentmemory/actions/update",
+      "function_id": "api::action-update",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2871"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/audit",
+      "method": "GET",
+      "path": "/agentmemory/audit",
+      "function_id": "api::audit",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2309"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/auto-forget",
+      "method": "POST",
+      "path": "/agentmemory/auto-forget",
+      "function_id": "api::auto-forget",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1947"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/branch/detect",
+      "method": "GET",
+      "path": "/agentmemory/branch/detect",
+      "function_id": "api::branch-detect",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3375"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/branch/sessions",
+      "method": "GET",
+      "path": "/agentmemory/branch/sessions",
+      "function_id": "api::branch-sessions",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3405"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/branch/worktrees",
+      "method": "GET",
+      "path": "/agentmemory/branch/worktrees",
+      "function_id": "api::branch-worktrees",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3390"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/cascade-update",
+      "method": "POST",
+      "path": "/agentmemory/cascade-update",
+      "function_id": "api::cascade-update",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3700"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/checkpoints",
+      "method": "GET",
+      "path": "/agentmemory/checkpoints",
+      "function_id": "api::checkpoint-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3213"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/checkpoints",
+      "method": "POST",
+      "path": "/agentmemory/checkpoints",
+      "function_id": "api::checkpoint-create",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3172"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/checkpoints/resolve",
+      "method": "POST",
+      "path": "/agentmemory/checkpoints/resolve",
+      "function_id": "api::checkpoint-resolve",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3196"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/claude-bridge/read",
+      "method": "GET",
+      "path": "/agentmemory/claude-bridge/read",
+      "function_id": "api::claude-bridge-read",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1968"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/claude-bridge/sync",
+      "method": "POST",
+      "path": "/agentmemory/claude-bridge/sync",
+      "function_id": "api::claude-bridge-sync",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1989"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/commit-link",
+      "method": "POST",
+      "path": "/agentmemory/commit-link",
+      "function_id": "api::commit-link",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:611"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/commits",
+      "method": "GET",
+      "path": "/agentmemory/commits",
+      "function_id": "api::commits",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1281"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/compress-file",
+      "method": "POST",
+      "path": "/agentmemory/compress-file",
+      "function_id": "api::compress-file",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:878"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/config/flags",
+      "method": "GET",
+      "path": "/agentmemory/config/flags",
+      "function_id": "api::config-flags",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:333"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/consolidate",
+      "method": "POST",
+      "path": "/agentmemory/consolidate",
+      "function_id": "api::consolidate",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1585"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/consolidate-pipeline",
+      "method": "POST",
+      "path": "/agentmemory/consolidate-pipeline",
+      "function_id": "api::consolidate-pipeline",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2224"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/context",
+      "method": "POST",
+      "path": "/agentmemory/context",
+      "function_id": "api::context",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:484"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/context-acknowledge",
+      "method": "POST",
+      "path": "/agentmemory/context-acknowledge",
+      "function_id": "api::context-acknowledge",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:578"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/context-packet",
+      "method": "POST",
+      "path": "/agentmemory/context-packet",
+      "function_id": "api::context-packet",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:544"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/crystals",
+      "method": "GET",
+      "path": "/agentmemory/crystals",
+      "function_id": "api::crystal-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3600"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/crystals/auto",
+      "method": "POST",
+      "path": "/agentmemory/crystals/auto",
+      "function_id": "api::auto-crystallize",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3612"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/crystals/create",
+      "method": "POST",
+      "path": "/agentmemory/crystals/create",
+      "function_id": "api::crystallize",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3558"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/diagnostics",
+      "method": "POST",
+      "path": "/agentmemory/diagnostics",
+      "function_id": "api::diagnose",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3621"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/diagnostics/followup",
+      "method": "GET",
+      "path": "/agentmemory/diagnostics/followup",
+      "function_id": "api::diagnostic-followup",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1762"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/diagnostics/heal",
+      "method": "POST",
+      "path": "/agentmemory/diagnostics/heal",
+      "function_id": "api::heal",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3630"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/enrich",
+      "method": "POST",
+      "path": "/agentmemory/enrich",
+      "function_id": "api::enrich",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1469"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/evict",
+      "method": "POST",
+      "path": "/agentmemory/evict",
+      "function_id": "api::evict",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1670"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/evolve",
+      "method": "POST",
+      "path": "/agentmemory/evolve",
+      "function_id": "api::evolve",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1931"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/export",
+      "method": "GET",
+      "path": "/agentmemory/export",
+      "function_id": "api::export",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1861"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/facets",
+      "method": "GET",
+      "path": "/agentmemory/facets",
+      "function_id": "api::facet-get",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3669"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/facets",
+      "method": "POST",
+      "path": "/agentmemory/facets",
+      "function_id": "api::facet-tag",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3640"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/facets/query",
+      "method": "POST",
+      "path": "/agentmemory/facets/query",
+      "function_id": "api::facet-query",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3659"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/facets/remove",
+      "method": "POST",
+      "path": "/agentmemory/facets/remove",
+      "function_id": "api::facet-untag",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3650"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/facets/stats",
+      "method": "GET",
+      "path": "/agentmemory/facets/stats",
+      "function_id": "api::facet-stats",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3678"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/file-context",
+      "method": "POST",
+      "path": "/agentmemory/file-context",
+      "function_id": "api::file-context",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1404"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/flow/compress",
+      "method": "POST",
+      "path": "/agentmemory/flow/compress",
+      "function_id": "api::flow-compress",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3360"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/forget",
+      "method": "POST",
+      "path": "/agentmemory/forget",
+      "function_id": "api::forget",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1547"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/frontier",
+      "method": "GET",
+      "path": "/agentmemory/frontier",
+      "function_id": "api::frontier",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2949"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/generate-rules",
+      "method": "POST",
+      "path": "/agentmemory/generate-rules",
+      "function_id": "api::generate-rules",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1613"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/governance/bulk-delete",
+      "method": "POST",
+      "path": "/agentmemory/governance/bulk-delete",
+      "function_id": "api::governance-bulk",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2356"
+    },
+    {
+      "surface_id": "REST:DELETE:/agentmemory/governance/memories",
+      "method": "DELETE",
+      "path": "/agentmemory/governance/memories",
+      "function_id": "api::governance-delete",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2331"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/build",
+      "method": "POST",
+      "path": "/agentmemory/graph/build",
+      "function_id": "api::graph-build",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2190"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/extract",
+      "method": "POST",
+      "path": "/agentmemory/graph/extract",
+      "function_id": "api::graph-extract",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2125"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/query",
+      "method": "POST",
+      "path": "/agentmemory/graph/query",
+      "function_id": "api::graph-query",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2029"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/reset",
+      "method": "POST",
+      "path": "/agentmemory/graph/reset",
+      "function_id": "api::graph-reset",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2098"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/snapshot-rebuild",
+      "method": "POST",
+      "path": "/agentmemory/graph/snapshot-rebuild",
+      "function_id": "api::graph-snapshot-rebuild",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2073"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/graph/stats",
+      "method": "GET",
+      "path": "/agentmemory/graph/stats",
+      "function_id": "api::graph-stats",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2047"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/health",
+      "method": "GET",
+      "path": "/agentmemory/health",
+      "function_id": "api::health",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:369"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/import",
+      "method": "POST",
+      "path": "/agentmemory/import",
+      "function_id": "api::import",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1883"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/index/rebuild",
+      "method": "POST",
+      "path": "/agentmemory/index/rebuild",
+      "function_id": "api::index-rebuild",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:846"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/insights",
+      "method": "GET",
+      "path": "/agentmemory/insights",
+      "function_id": "api::insight-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3885"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/insights/search",
+      "method": "POST",
+      "path": "/agentmemory/insights/search",
+      "function_id": "api::insight-search",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3907"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/leases/acquire",
+      "method": "POST",
+      "path": "/agentmemory/leases/acquire",
+      "function_id": "api::lease-acquire",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2985"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/leases/release",
+      "method": "POST",
+      "path": "/agentmemory/leases/release",
+      "function_id": "api::lease-release",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3004"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/leases/renew",
+      "method": "POST",
+      "path": "/agentmemory/leases/renew",
+      "function_id": "api::lease-renew",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3023"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/lessons",
+      "method": "GET",
+      "path": "/agentmemory/lessons",
+      "function_id": "api::lesson-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3764"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/lessons",
+      "method": "POST",
+      "path": "/agentmemory/lessons",
+      "function_id": "api::lesson-save",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3729"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/lessons/search",
+      "method": "POST",
+      "path": "/agentmemory/lessons/search",
+      "function_id": "api::lesson-search",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3784"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/lessons/strengthen",
+      "method": "POST",
+      "path": "/agentmemory/lessons/strengthen",
+      "function_id": "api::lesson-strengthen",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3815"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/livez",
+      "method": "GET",
+      "path": "/agentmemory/livez",
+      "function_id": "api::liveness",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "public-health",
+      "source": "src/triggers/api.ts:258"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/memories",
+      "method": "GET",
+      "path": "/agentmemory/memories",
+      "function_id": "api::memories",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2501"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/memories/:id",
+      "method": "GET",
+      "path": "/agentmemory/memories/:id",
+      "function_id": "api::memory-by-id",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2522"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/mesh/export",
+      "method": "GET",
+      "path": "/agentmemory/mesh/export",
+      "function_id": "api::mesh-export",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3333"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/mesh/peers",
+      "method": "GET",
+      "path": "/agentmemory/mesh/peers",
+      "function_id": "api::mesh-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3250"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/mesh/peers",
+      "method": "POST",
+      "path": "/agentmemory/mesh/peers",
+      "function_id": "api::mesh-register",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3234"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/mesh/receive",
+      "method": "POST",
+      "path": "/agentmemory/mesh/receive",
+      "function_id": "api::mesh-receive",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3284"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/mesh/sync",
+      "method": "POST",
+      "path": "/agentmemory/mesh/sync",
+      "function_id": "api::mesh-sync",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3268"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/migrate",
+      "method": "POST",
+      "path": "/agentmemory/migrate",
+      "function_id": "api::migrate",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1654"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/next",
+      "method": "GET",
+      "path": "/agentmemory/next",
+      "function_id": "api::next",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2966"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/observations",
+      "method": "GET",
+      "path": "/agentmemory/observations",
+      "function_id": "api::observations",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1375"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/observe",
+      "method": "POST",
+      "path": "/agentmemory/observe",
+      "function_id": "api::observe",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:420"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/obsidian/export",
+      "method": "POST",
+      "path": "/agentmemory/obsidian/export",
+      "function_id": "api::obsidian-export",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3832"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/patterns",
+      "method": "POST",
+      "path": "/agentmemory/patterns",
+      "function_id": "api::patterns",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1599"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/procedural",
+      "method": "GET",
+      "path": "/agentmemory/procedural",
+      "function_id": "api::procedural-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2550"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/profile",
+      "method": "GET",
+      "path": "/agentmemory/profile",
+      "function_id": "api::profile",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1815"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/project-health",
+      "method": "GET",
+      "path": "/agentmemory/project-health",
+      "function_id": "api::project-health",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:635"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/promotion-candidates",
+      "method": "GET",
+      "path": "/agentmemory/promotion-candidates",
+      "function_id": "api::promotion-candidates",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:663"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/promotion-decide",
+      "method": "POST",
+      "path": "/agentmemory/promotion-decide",
+      "function_id": "api::promotion-decide",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:706"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/reflect",
+      "method": "POST",
+      "path": "/agentmemory/reflect",
+      "function_id": "api::reflect",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3851"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/relations",
+      "method": "GET",
+      "path": "/agentmemory/relations",
+      "function_id": "api::relations-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2564"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/relations",
+      "method": "POST",
+      "path": "/agentmemory/relations",
+      "function_id": "api::relations",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1905"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/remember",
+      "method": "POST",
+      "path": "/agentmemory/remember",
+      "function_id": "api::remember",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1521"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/replay/import-jsonl",
+      "method": "POST",
+      "path": "/agentmemory/replay/import-jsonl",
+      "function_id": "api::replay::import",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:962"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/replay/load",
+      "method": "GET",
+      "path": "/agentmemory/replay/load",
+      "function_id": "api::replay::load",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:899"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/replay/sessions",
+      "method": "GET",
+      "path": "/agentmemory/replay/sessions",
+      "function_id": "api::replay::sessions",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:916"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/routines",
+      "method": "GET",
+      "path": "/agentmemory/routines",
+      "function_id": "api::routine-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3061"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/routines",
+      "method": "POST",
+      "path": "/agentmemory/routines",
+      "function_id": "api::routine-create",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3045"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/routines/run",
+      "method": "POST",
+      "path": "/agentmemory/routines/run",
+      "function_id": "api::routine-run",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3080"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/routines/status",
+      "method": "GET",
+      "path": "/agentmemory/routines/status",
+      "function_id": "api::routine-status",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3098"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/search",
+      "method": "POST",
+      "path": "/agentmemory/search",
+      "function_id": "api::search",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:807"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/semantic",
+      "method": "GET",
+      "path": "/agentmemory/semantic",
+      "function_id": "api::semantic-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2536"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/sentinels",
+      "method": "GET",
+      "path": "/agentmemory/sentinels",
+      "function_id": "api::sentinel-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3486"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sentinels",
+      "method": "POST",
+      "path": "/agentmemory/sentinels",
+      "function_id": "api::sentinel-create",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3449"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sentinels/cancel",
+      "method": "POST",
+      "path": "/agentmemory/sentinels/cancel",
+      "function_id": "api::sentinel-cancel",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3477"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sentinels/check",
+      "method": "POST",
+      "path": "/agentmemory/sentinels/check",
+      "function_id": "api::sentinel-check",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3467"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sentinels/trigger",
+      "method": "POST",
+      "path": "/agentmemory/sentinels/trigger",
+      "function_id": "api::sentinel-trigger",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3459"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/session/by-commit",
+      "method": "GET",
+      "path": "/agentmemory/session/by-commit",
+      "function_id": "api::session::by-commit",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1254"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/session/commit",
+      "method": "POST",
+      "path": "/agentmemory/session/commit",
+      "function_id": "api::session::commit",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1219"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/session/end",
+      "method": "POST",
+      "path": "/agentmemory/session/end",
+      "function_id": "api::session::end",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1114"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/session/start",
+      "method": "POST",
+      "path": "/agentmemory/session/start",
+      "function_id": "api::session::start",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1060"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/sessions",
+      "method": "GET",
+      "path": "/agentmemory/sessions",
+      "function_id": "api::sessions",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1342"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/signals",
+      "method": "GET",
+      "path": "/agentmemory/signals",
+      "function_id": "api::signal-read",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3147"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/signals/send",
+      "method": "POST",
+      "path": "/agentmemory/signals/send",
+      "function_id": "api::signal-send",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3123"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/sketches",
+      "method": "GET",
+      "path": "/agentmemory/sketches",
+      "function_id": "api::sketch-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3535"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches",
+      "method": "POST",
+      "path": "/agentmemory/sketches",
+      "function_id": "api::sketch-create",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3496"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches/add",
+      "method": "POST",
+      "path": "/agentmemory/sketches/add",
+      "function_id": "api::sketch-add",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3506"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches/discard",
+      "method": "POST",
+      "path": "/agentmemory/sketches/discard",
+      "function_id": "api::sketch-discard",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3526"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches/gc",
+      "method": "POST",
+      "path": "/agentmemory/sketches/gc",
+      "function_id": "api::sketch-gc",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3543"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches/promote",
+      "method": "POST",
+      "path": "/agentmemory/sketches/promote",
+      "function_id": "api::sketch-promote",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3516"
+    },
+    {
+      "surface_id": "REST:DELETE:/agentmemory/slot",
+      "method": "DELETE",
+      "path": "/agentmemory/slot",
+      "function_id": "api::slot-delete",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2795"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/slot",
+      "method": "GET",
+      "path": "/agentmemory/slot",
+      "function_id": "api::slot-get",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2674"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/slot",
+      "method": "POST",
+      "path": "/agentmemory/slot",
+      "function_id": "api::slot-create",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2725"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/slot/append",
+      "method": "POST",
+      "path": "/agentmemory/slot/append",
+      "function_id": "api::slot-append",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2749"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/slot/reflect",
+      "method": "POST",
+      "path": "/agentmemory/slot/reflect",
+      "function_id": "api::slot-reflect",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2817"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/slot/replace",
+      "method": "POST",
+      "path": "/agentmemory/slot/replace",
+      "function_id": "api::slot-replace",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2775"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/slots",
+      "method": "GET",
+      "path": "/agentmemory/slots",
+      "function_id": "api::slot-list",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2654"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/smart-search",
+      "method": "POST",
+      "path": "/agentmemory/smart-search",
+      "function_id": "api::smart-search",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1734"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/snapshot/create",
+      "method": "POST",
+      "path": "/agentmemory/snapshot/create",
+      "function_id": "api::snapshot-create",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2396"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/snapshot/restore",
+      "method": "POST",
+      "path": "/agentmemory/snapshot/restore",
+      "function_id": "api::snapshot-restore",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2417"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/snapshots",
+      "method": "GET",
+      "path": "/agentmemory/snapshots",
+      "function_id": "api::snapshots",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2377"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/summarize",
+      "method": "POST",
+      "path": "/agentmemory/summarize",
+      "function_id": "api::summarize",
+      "middleware": [
+        "middleware::api-auth"
+      ],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1137"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/team/feed",
+      "method": "GET",
+      "path": "/agentmemory/team/feed",
+      "function_id": "api::team-feed",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2273"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/team/profile",
+      "method": "GET",
+      "path": "/agentmemory/team/profile",
+      "function_id": "api::team-profile",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2291"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/team/share",
+      "method": "POST",
+      "path": "/agentmemory/team/share",
+      "function_id": "api::team-share",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2253"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/timeline",
+      "method": "POST",
+      "path": "/agentmemory/timeline",
+      "function_id": "api::timeline",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1790"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/verify",
+      "method": "POST",
+      "path": "/agentmemory/verify",
+      "function_id": "api::verify",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3688"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/viewer",
+      "method": "GET",
+      "path": "/agentmemory/viewer",
+      "function_id": "api::viewer",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:3435"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/vision-embed",
+      "method": "POST",
+      "path": "/agentmemory/vision-embed",
+      "function_id": "api::vision-embed",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2639"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/vision-search",
+      "method": "POST",
+      "path": "/agentmemory/vision-search",
+      "function_id": "api::vision-search",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:2607"
+    }
+  ],
+  "mcp_transport": [
+    {
+      "surface_id": "MCP:HTTP:GET:/agentmemory/mcp/prompts",
+      "method": "GET",
+      "path": "/agentmemory/mcp/prompts",
+      "function_id": "mcp::prompts::list",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:GET:/agentmemory/mcp/resources",
+      "method": "GET",
+      "path": "/agentmemory/mcp/resources",
+      "function_id": "mcp::resources::list",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:GET:/agentmemory/mcp/tools",
+      "method": "GET",
+      "path": "/agentmemory/mcp/tools",
+      "function_id": "mcp::tools::list",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:POST:/agentmemory/mcp/call",
+      "method": "POST",
+      "path": "/agentmemory/mcp/call",
+      "function_id": "mcp::tools::call",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:POST:/agentmemory/mcp/prompts/get",
+      "method": "POST",
+      "path": "/agentmemory/mcp/prompts/get",
+      "function_id": "mcp::prompts::get",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:POST:/agentmemory/mcp/resources/read",
+      "method": "POST",
+      "path": "/agentmemory/mcp/resources/read",
+      "function_id": "mcp::resources::read",
+      "auth_control": "required"
+    }
+  ],
+  "mcp_tools": [
+    {
+      "surface_id": "MCP:TOOL:memory_action_create",
+      "name": "memory_action_create",
+      "required": [
+        "title"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_action_update",
+      "name": "memory_action_update",
+      "required": [
+        "actionId"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_audit",
+      "name": "memory_audit",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_checkpoint",
+      "name": "memory_checkpoint",
+      "required": [
+        "operation"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_claude_bridge_sync",
+      "name": "memory_claude_bridge_sync",
+      "required": [
+        "direction"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_commit_link",
+      "name": "memory_commit_link",
+      "required": [
+        "project",
+        "sha"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_commit_lookup",
+      "name": "memory_commit_lookup",
+      "required": [
+        "sha"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_commits",
+      "name": "memory_commits",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_compress_file",
+      "name": "memory_compress_file",
+      "required": [
+        "filePath",
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_consolidate",
+      "name": "memory_consolidate",
+      "required": [],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_context_acknowledge",
+      "name": "memory_context_acknowledge",
+      "required": [
+        "packetId",
+        "project",
+        "providerReceipt",
+        "sessionId"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_context_packet",
+      "name": "memory_context_packet",
+      "required": [
+        "project",
+        "sessionId"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_crystallize",
+      "name": "memory_crystallize",
+      "required": [
+        "actionIds",
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_diagnose",
+      "name": "memory_diagnose",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_export",
+      "name": "memory_export",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_facet_query",
+      "name": "memory_facet_query",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_facet_tag",
+      "name": "memory_facet_tag",
+      "required": [
+        "dimension",
+        "targetId",
+        "targetType",
+        "value"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_file_history",
+      "name": "memory_file_history",
+      "required": [
+        "files"
+      ],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_frontier",
+      "name": "memory_frontier",
+      "required": [],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_governance_delete",
+      "name": "memory_governance_delete",
+      "required": [
+        "memoryIds"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_graph_query",
+      "name": "memory_graph_query",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_heal",
+      "name": "memory_heal",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_insight_list",
+      "name": "memory_insight_list",
+      "required": [],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_lease",
+      "name": "memory_lease",
+      "required": [
+        "actionId",
+        "agentId",
+        "operation"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_lesson_recall",
+      "name": "memory_lesson_recall",
+      "required": [
+        "query"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_lesson_save",
+      "name": "memory_lesson_save",
+      "required": [
+        "content"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_mesh_sync",
+      "name": "memory_mesh_sync",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_next",
+      "name": "memory_next",
+      "required": [],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_obsidian_export",
+      "name": "memory_obsidian_export",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_patterns",
+      "name": "memory_patterns",
+      "required": [],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_profile",
+      "name": "memory_profile",
+      "required": [
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_project_health",
+      "name": "memory_project_health",
+      "required": [
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_promotion_candidates",
+      "name": "memory_promotion_candidates",
+      "required": [
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_promotion_decide",
+      "name": "memory_promotion_decide",
+      "required": [
+        "action",
+        "candidateId",
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_recall",
+      "name": "memory_recall",
+      "required": [
+        "query"
+      ],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_reflect",
+      "name": "memory_reflect",
+      "required": [],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_relations",
+      "name": "memory_relations",
+      "required": [
+        "memoryId"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_routine_run",
+      "name": "memory_routine_run",
+      "required": [
+        "routineId"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_save",
+      "name": "memory_save",
+      "required": [
+        "content"
+      ],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sentinel_create",
+      "name": "memory_sentinel_create",
+      "required": [
+        "name",
+        "type"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sentinel_trigger",
+      "name": "memory_sentinel_trigger",
+      "required": [
+        "sentinelId"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sessions",
+      "name": "memory_sessions",
+      "required": [],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_signal_read",
+      "name": "memory_signal_read",
+      "required": [
+        "agentId"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_signal_send",
+      "name": "memory_signal_send",
+      "required": [
+        "content",
+        "from"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sketch_create",
+      "name": "memory_sketch_create",
+      "required": [
+        "title"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sketch_promote",
+      "name": "memory_sketch_promote",
+      "required": [
+        "sketchId"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_append",
+      "name": "memory_slot_append",
+      "required": [
+        "label",
+        "project",
+        "text"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_create",
+      "name": "memory_slot_create",
+      "required": [
+        "label"
+      ],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_delete",
+      "name": "memory_slot_delete",
+      "required": [
+        "label",
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_get",
+      "name": "memory_slot_get",
+      "required": [
+        "label",
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_list",
+      "name": "memory_slot_list",
+      "required": [
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_replace",
+      "name": "memory_slot_replace",
+      "required": [
+        "content",
+        "label",
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_smart_search",
+      "name": "memory_smart_search",
+      "required": [
+        "query"
+      ],
+      "project_parameter": true,
+      "scope_parameter": true
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_snapshot_create",
+      "name": "memory_snapshot_create",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_team_feed",
+      "name": "memory_team_feed",
+      "required": [],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_team_share",
+      "name": "memory_team_share",
+      "required": [
+        "itemId",
+        "itemType"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_timeline",
+      "name": "memory_timeline",
+      "required": [
+        "anchor"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_verify",
+      "name": "memory_verify",
+      "required": [
+        "id"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_vision_search",
+      "name": "memory_vision_search",
+      "required": [
+        "project"
+      ],
+      "project_parameter": true,
+      "scope_parameter": false
+    }
+  ],
+  "mcp_resources": [
+    "agentmemory://graph/stats",
+    "agentmemory://memories/latest",
+    "agentmemory://project/{name}/profile",
+    "agentmemory://project/{name}/recent",
+    "agentmemory://status",
+    "agentmemory://team/{id}/profile"
+  ],
+  "mcp_prompts": [
+    "detect_patterns",
+    "recall_context",
+    "session_handoff"
+  ],
+  "mcp_standalone_fallback_tools": [
+    "memory_audit",
+    "memory_export",
+    "memory_governance_delete",
+    "memory_recall",
+    "memory_save",
+    "memory_sessions",
+    "memory_smart_search"
+  ],
+  "hooks": [
+    "src/hooks/notification.ts",
+    "src/hooks/post-commit.ts",
+    "src/hooks/post-tool-failure.ts",
+    "src/hooks/post-tool-use.ts",
+    "src/hooks/pre-compact.ts",
+    "src/hooks/pre-tool-use.ts",
+    "src/hooks/prompt-submit.ts",
+    "src/hooks/session-end.ts",
+    "src/hooks/session-start.ts",
+    "src/hooks/stop.ts",
+    "src/hooks/subagent-start.ts",
+    "src/hooks/subagent-stop.ts",
+    "src/hooks/task-completed.ts"
+  ],
+  "host_hook_manifests": [
+    {
+      "manifest": "plugin/hooks/hooks.json",
+      "events": [
+        "Notification",
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PreCompact",
+        "PreToolUse",
+        "SessionEnd",
+        "SessionStart",
+        "Stop",
+        "SubagentStart",
+        "SubagentStop",
+        "TaskCompleted",
+        "UserPromptSubmit"
+      ],
+      "event_count": 12
+    },
+    {
+      "manifest": "plugin/hooks/hooks.codex.json",
+      "events": [
+        "PostToolUse",
+        "PostToolUseFailure",
+        "PreCompact",
+        "PreToolUse",
+        "SessionEnd",
+        "SessionStart",
+        "Stop",
+        "SubagentStart",
+        "SubagentStop",
+        "TaskCompleted",
+        "UserPromptSubmit"
+      ],
+      "event_count": 11
+    },
+    {
+      "manifest": "plugin/hooks/hooks.copilot.json",
+      "events": [
+        "agentStop",
+        "notification",
+        "postToolUse",
+        "postToolUseFailure",
+        "preCompact",
+        "preToolUse",
+        "sessionEnd",
+        "sessionStart",
+        "subagentStart",
+        "subagentStop",
+        "userPromptSubmitted"
+      ],
+      "event_count": 11
+    },
+    {
+      "manifest": "integrations/hermes/plugin.yaml",
+      "events": [
+        "on_memory_write",
+        "on_pre_compress",
+        "on_session_end",
+        "prefetch",
+        "sync_turn",
+        "system_prompt_block"
+      ],
+      "event_count": 6
+    },
+    {
+      "manifest": "integrations/openclaw/plugin.yaml",
+      "events": [
+        "on_post_tool_use",
+        "on_pre_llm_call",
+        "on_session_end",
+        "on_session_start"
+      ],
+      "event_count": 4
+    }
+  ],
+  "viewer": {
+    "server_paths": [
+      "/",
+      "/agentmemory/viewer",
+      "/agentmemory/viewer/"
+    ],
+    "generic_rest_proxy": true,
+    "ui_rest_expressions": [
+      "actions",
+      "audit?limit=100",
+      "audit?limit=200",
+      "audit?limit=5",
+      "config/flags",
+      "crystals?scope=global",
+      "frontier",
+      "governance/memories",
+      "graph/build",
+      "graph/query",
+      "graph/stats",
+      "health",
+      "lessons?scope=global",
+      "memories?latest=true&limit=2000",
+      "memories?latest=true&limit=500",
+      "observations?sessionId=",
+      "procedural",
+      "profile?project=",
+      "relations",
+      "replay/import-jsonl",
+      "replay/load?sessionId=",
+      "replay/sessions",
+      "semantic",
+      "session/end",
+      "sessions?scope=global",
+      "summarize"
+    ]
+  },
+  "provider_adapters": [
+    {
+      "name": "AgentSDKProvider",
+      "source": "src/providers/agent-sdk.ts:37"
+    },
+    {
+      "name": "AnthropicProvider",
+      "source": "src/providers/anthropic.ts:4"
+    },
+    {
+      "name": "ClipEmbeddingProvider",
+      "source": "src/providers/embedding/clip.ts:24"
+    },
+    {
+      "name": "CohereEmbeddingProvider",
+      "source": "src/providers/embedding/cohere.ts:7"
+    },
+    {
+      "name": "FallbackChainProvider",
+      "source": "src/providers/fallback-chain.ts:19"
+    },
+    {
+      "name": "GeminiEmbeddingProvider",
+      "source": "src/providers/embedding/gemini.ts:9"
+    },
+    {
+      "name": "LocalEmbeddingProvider",
+      "source": "src/providers/embedding/local.ts:13"
+    },
+    {
+      "name": "MinimaxProvider",
+      "source": "src/providers/minimax.ts:19"
+    },
+    {
+      "name": "NoopProvider",
+      "source": "src/providers/noop.ts:10"
+    },
+    {
+      "name": "OpenAIEmbeddingProvider",
+      "source": "src/providers/embedding/openai.ts:76"
+    },
+    {
+      "name": "OpenAIProvider",
+      "source": "src/providers/openai.ts:47"
+    },
+    {
+      "name": "OpenRouterEmbeddingProvider",
+      "source": "src/providers/embedding/openrouter.ts:7"
+    },
+    {
+      "name": "OpenRouterProvider",
+      "source": "src/providers/openrouter.ts:4"
+    },
+    {
+      "name": "ResilientProvider",
+      "source": "src/providers/resilient.ts:4"
+    },
+    {
+      "name": "VoyageEmbeddingProvider",
+      "source": "src/providers/embedding/voyage.ts:7"
+    }
+  ],
+  "host_connectors": [
+    "antigravity",
+    "claudeCode",
+    "cline",
+    "codex",
+    "continueDev",
+    "copilotCli",
+    "cursor",
+    "droid",
+    "geminiCli",
+    "hermes",
+    "kiro",
+    "openclaw",
+    "opencode",
+    "openhuman",
+    "pi",
+    "qwen",
+    "warp",
+    "zed"
+  ],
+  "surfaces": [
+    {
+      "surface_id": "REST:GET:/agentmemory/actions",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2889",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/actions",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2845",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/actions/edges",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2930",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/actions/get",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2907",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/actions/update",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2871",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/audit",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2309",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/auto-forget",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1947",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/branch/detect",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3375",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/branch/sessions",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3405",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/branch/worktrees",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3390",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/cascade-update",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3700",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/checkpoints",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3213",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/checkpoints",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3172",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/checkpoints/resolve",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3196",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/claude-bridge/read",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1968",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/claude-bridge/sync",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1989",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/commit-link",
+      "type": "rest",
+      "source": "src/triggers/api.ts:611",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/commits",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1281",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/compress-file",
+      "type": "rest",
+      "source": "src/triggers/api.ts:878",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/config/flags",
+      "type": "rest",
+      "source": "src/triggers/api.ts:333",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/consolidate",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1585",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/consolidate-pipeline",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2224",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/context",
+      "type": "rest",
+      "source": "src/triggers/api.ts:484",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/context-acknowledge",
+      "type": "rest",
+      "source": "src/triggers/api.ts:578",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/context-packet",
+      "type": "rest",
+      "source": "src/triggers/api.ts:544",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/crystals",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3600",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/crystals/auto",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3612",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/crystals/create",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3558",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/diagnostics",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3621",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/diagnostics/followup",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1762",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/diagnostics/heal",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3630",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/enrich",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1469",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/evict",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1670",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/evolve",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1931",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/export",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1861",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/facets",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3669",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/facets",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3640",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/facets/query",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3659",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/facets/remove",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3650",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/facets/stats",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3678",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/file-context",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1404",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/flow/compress",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3360",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/forget",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1547",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/frontier",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2949",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/generate-rules",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1613",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/governance/bulk-delete",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2356",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:DELETE:/agentmemory/governance/memories",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2331",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/build",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2190",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/extract",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2125",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/query",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2029",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/reset",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2098",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/graph/snapshot-rebuild",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2073",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/graph/stats",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2047",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/health",
+      "type": "rest",
+      "source": "src/triggers/api.ts:369",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/import",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1883",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/index/rebuild",
+      "type": "rest",
+      "source": "src/triggers/api.ts:846",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/insights",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3885",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/insights/search",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3907",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/leases/acquire",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2985",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/leases/release",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3004",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/leases/renew",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3023",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/lessons",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3764",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/lessons",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3729",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/lessons/search",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3784",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/lessons/strengthen",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3815",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/livez",
+      "type": "rest",
+      "source": "src/triggers/api.ts:258",
+      "auth_control": "public-health"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/memories",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2501",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/memories/:id",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2522",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/mesh/export",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3333",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/mesh/peers",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3250",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/mesh/peers",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3234",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/mesh/receive",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3284",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/mesh/sync",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3268",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/migrate",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1654",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/next",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2966",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/observations",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1375",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/observe",
+      "type": "rest",
+      "source": "src/triggers/api.ts:420",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/obsidian/export",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3832",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/patterns",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1599",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/procedural",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2550",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/profile",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1815",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/project-health",
+      "type": "rest",
+      "source": "src/triggers/api.ts:635",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/promotion-candidates",
+      "type": "rest",
+      "source": "src/triggers/api.ts:663",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/promotion-decide",
+      "type": "rest",
+      "source": "src/triggers/api.ts:706",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/reflect",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3851",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/relations",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2564",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/relations",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1905",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/remember",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1521",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/replay/import-jsonl",
+      "type": "rest",
+      "source": "src/triggers/api.ts:962",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/replay/load",
+      "type": "rest",
+      "source": "src/triggers/api.ts:899",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/replay/sessions",
+      "type": "rest",
+      "source": "src/triggers/api.ts:916",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/routines",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3061",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/routines",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3045",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/routines/run",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3080",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/routines/status",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3098",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/search",
+      "type": "rest",
+      "source": "src/triggers/api.ts:807",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/semantic",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2536",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/sentinels",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3486",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sentinels",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3449",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sentinels/cancel",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3477",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sentinels/check",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3467",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sentinels/trigger",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3459",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/session/by-commit",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1254",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/session/commit",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1219",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/session/end",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1114",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/session/start",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1060",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/sessions",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1342",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/signals",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3147",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/signals/send",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3123",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/sketches",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3535",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3496",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches/add",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3506",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches/discard",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3526",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches/gc",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3543",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/sketches/promote",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3516",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:DELETE:/agentmemory/slot",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2795",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/slot",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2674",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/slot",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2725",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/slot/append",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2749",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/slot/reflect",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2817",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/slot/replace",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2775",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/slots",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2654",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/smart-search",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1734",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/snapshot/create",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2396",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/snapshot/restore",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2417",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/snapshots",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2377",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/summarize",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1137",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/team/feed",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2273",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/team/profile",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2291",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/team/share",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2253",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/timeline",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1790",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/verify",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3688",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:GET:/agentmemory/viewer",
+      "type": "rest",
+      "source": "src/triggers/api.ts:3435",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/vision-embed",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2639",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/vision-search",
+      "type": "rest",
+      "source": "src/triggers/api.ts:2607",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:GET:/agentmemory/mcp/prompts",
+      "type": "mcp-transport",
+      "source": "src/mcp/server.ts",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:GET:/agentmemory/mcp/resources",
+      "type": "mcp-transport",
+      "source": "src/mcp/server.ts",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:GET:/agentmemory/mcp/tools",
+      "type": "mcp-transport",
+      "source": "src/mcp/server.ts",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:POST:/agentmemory/mcp/call",
+      "type": "mcp-transport",
+      "source": "src/mcp/server.ts",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:POST:/agentmemory/mcp/prompts/get",
+      "type": "mcp-transport",
+      "source": "src/mcp/server.ts",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:HTTP:POST:/agentmemory/mcp/resources/read",
+      "type": "mcp-transport",
+      "source": "src/mcp/server.ts",
+      "auth_control": "required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_action_create",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_action_update",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_audit",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_checkpoint",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_claude_bridge_sync",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_commit_link",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_commit_lookup",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_commits",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_compress_file",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_consolidate",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_context_acknowledge",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_context_packet",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_crystallize",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_diagnose",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_export",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_facet_query",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_facet_tag",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_file_history",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_frontier",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_governance_delete",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_graph_query",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_heal",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_insight_list",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_lease",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_lesson_recall",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_lesson_save",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_mesh_sync",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_next",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_obsidian_export",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_patterns",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_profile",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_project_health",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_promotion_candidates",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_promotion_decide",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_recall",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_reflect",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_relations",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_routine_run",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_save",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sentinel_create",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sentinel_trigger",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sessions",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_signal_read",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_signal_send",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sketch_create",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_sketch_promote",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_append",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_create",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_delete",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_get",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_list",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_slot_replace",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_smart_search",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_snapshot_create",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_team_feed",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_team_share",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_timeline",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_verify",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_vision_search",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:RESOURCE:agentmemory://graph/stats",
+      "type": "mcp-resource",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:RESOURCE:agentmemory://memories/latest",
+      "type": "mcp-resource",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:RESOURCE:agentmemory://project/{name}/profile",
+      "type": "mcp-resource",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:RESOURCE:agentmemory://project/{name}/recent",
+      "type": "mcp-resource",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:RESOURCE:agentmemory://status",
+      "type": "mcp-resource",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:RESOURCE:agentmemory://team/{id}/profile",
+      "type": "mcp-resource",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:PROMPT:detect_patterns",
+      "type": "mcp-prompt",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:PROMPT:recall_context",
+      "type": "mcp-prompt",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:PROMPT:session_handoff",
+      "type": "mcp-prompt",
+      "source": "src/mcp/server.ts",
+      "auth_control": "transport-required"
+    },
+    {
+      "surface_id": "MCP:STANDALONE-FALLBACK:memory_audit",
+      "type": "mcp-standalone-fallback",
+      "source": "src/mcp/standalone.ts",
+      "auth_control": "local-process"
+    },
+    {
+      "surface_id": "MCP:STANDALONE-FALLBACK:memory_export",
+      "type": "mcp-standalone-fallback",
+      "source": "src/mcp/standalone.ts",
+      "auth_control": "local-process"
+    },
+    {
+      "surface_id": "MCP:STANDALONE-FALLBACK:memory_governance_delete",
+      "type": "mcp-standalone-fallback",
+      "source": "src/mcp/standalone.ts",
+      "auth_control": "local-process"
+    },
+    {
+      "surface_id": "MCP:STANDALONE-FALLBACK:memory_recall",
+      "type": "mcp-standalone-fallback",
+      "source": "src/mcp/standalone.ts",
+      "auth_control": "local-process"
+    },
+    {
+      "surface_id": "MCP:STANDALONE-FALLBACK:memory_save",
+      "type": "mcp-standalone-fallback",
+      "source": "src/mcp/standalone.ts",
+      "auth_control": "local-process"
+    },
+    {
+      "surface_id": "MCP:STANDALONE-FALLBACK:memory_sessions",
+      "type": "mcp-standalone-fallback",
+      "source": "src/mcp/standalone.ts",
+      "auth_control": "local-process"
+    },
+    {
+      "surface_id": "MCP:STANDALONE-FALLBACK:memory_smart_search",
+      "type": "mcp-standalone-fallback",
+      "source": "src/mcp/standalone.ts",
+      "auth_control": "local-process"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/notification.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/post-commit.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/post-tool-failure.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/post-tool-use.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/pre-compact.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/pre-tool-use.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/prompt-submit.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/session-end.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/session-start.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/stop.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/subagent-start.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/subagent-stop.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:PACKAGED:src/hooks/task-completed.ts",
+      "type": "packaged-hook",
+      "source": "tsdown.config.ts",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "CONNECTOR:antigravity",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:claudeCode",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:cline",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:codex",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:continueDev",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:copilotCli",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:cursor",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:droid",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:geminiCli",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:hermes",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:kiro",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:openclaw",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:opencode",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:openhuman",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:pi",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:qwen",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:warp",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "CONNECTOR:zed",
+      "type": "host-connector",
+      "source": "src/cli/connect/index.ts",
+      "auth_control": "connector-specific"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:Notification",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:PostToolUse",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:PostToolUseFailure",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:PreCompact",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:PreToolUse",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:SessionEnd",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:SessionStart",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:Stop",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:SubagentStart",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:SubagentStop",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:TaskCompleted",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.json:UserPromptSubmit",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:PostToolUse",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:PostToolUseFailure",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:PreCompact",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:PreToolUse",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:SessionEnd",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:SessionStart",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:Stop",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:SubagentStart",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:SubagentStop",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:TaskCompleted",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.codex.json:UserPromptSubmit",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.codex.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:agentStop",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:notification",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:postToolUse",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:postToolUseFailure",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:preCompact",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:preToolUse",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:sessionEnd",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:sessionStart",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:subagentStart",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:subagentStop",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:plugin/hooks/hooks.copilot.json:userPromptSubmitted",
+      "type": "host-hook-event",
+      "source": "plugin/hooks/hooks.copilot.json",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/hermes/plugin.yaml:on_memory_write",
+      "type": "host-hook-event",
+      "source": "integrations/hermes/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/hermes/plugin.yaml:on_pre_compress",
+      "type": "host-hook-event",
+      "source": "integrations/hermes/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/hermes/plugin.yaml:on_session_end",
+      "type": "host-hook-event",
+      "source": "integrations/hermes/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/hermes/plugin.yaml:prefetch",
+      "type": "host-hook-event",
+      "source": "integrations/hermes/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/hermes/plugin.yaml:sync_turn",
+      "type": "host-hook-event",
+      "source": "integrations/hermes/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/hermes/plugin.yaml:system_prompt_block",
+      "type": "host-hook-event",
+      "source": "integrations/hermes/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/openclaw/plugin.yaml:on_post_tool_use",
+      "type": "host-hook-event",
+      "source": "integrations/openclaw/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/openclaw/plugin.yaml:on_pre_llm_call",
+      "type": "host-hook-event",
+      "source": "integrations/openclaw/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/openclaw/plugin.yaml:on_session_end",
+      "type": "host-hook-event",
+      "source": "integrations/openclaw/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "HOOK:HOST:integrations/openclaw/plugin.yaml:on_session_start",
+      "type": "host-hook-event",
+      "source": "integrations/openclaw/plugin.yaml",
+      "auth_control": "service-secret"
+    },
+    {
+      "surface_id": "VIEWER:REST:actions",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:audit?limit=100",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:audit?limit=200",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:audit?limit=5",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:config/flags",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:crystals?scope=global",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:frontier",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:governance/memories",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:graph/build",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:graph/query",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:graph/stats",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:health",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "public-health"
+    },
+    {
+      "surface_id": "VIEWER:REST:lessons?scope=global",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:memories?latest=true&limit=2000",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:memories?latest=true&limit=500",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:observations?sessionId=",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:procedural",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:profile?project=",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:relations",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:replay/import-jsonl",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:replay/load?sessionId=",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:replay/sessions",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:semantic",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:session/end",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:sessions?scope=global",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST:summarize",
+      "type": "viewer-rest-call",
+      "source": "src/viewer/index.html",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "VIEWER:REST-PROXY:*",
+      "type": "viewer-rest-proxy",
+      "source": "src/viewer/server.ts",
+      "auth_control": "viewer-session"
+    },
+    {
+      "surface_id": "PROVIDER:AgentSDKProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/agent-sdk.ts:37",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:AnthropicProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/anthropic.ts:4",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:ClipEmbeddingProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/embedding/clip.ts:24",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:CohereEmbeddingProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/embedding/cohere.ts:7",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:FallbackChainProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/fallback-chain.ts:19",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:GeminiEmbeddingProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/embedding/gemini.ts:9",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:LocalEmbeddingProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/embedding/local.ts:13",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:MinimaxProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/minimax.ts:19",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:NoopProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/noop.ts:10",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:OpenAIEmbeddingProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/embedding/openai.ts:76",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:OpenAIProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/openai.ts:47",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:OpenRouterEmbeddingProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/embedding/openrouter.ts:7",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:OpenRouterProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/openrouter.ts:4",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:ResilientProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/resilient.ts:4",
+      "auth_control": "processing-policy"
+    },
+    {
+      "surface_id": "PROVIDER:VoyageEmbeddingProvider",
+      "type": "provider-adapter",
+      "source": "src/providers/embedding/voyage.ts:7",
+      "auth_control": "processing-policy"
+    }
+  ]
+}

@@ -1,5 +1,9 @@
 import { describe, it, expect } from "vitest";
-import { stripPrivateData } from "../src/functions/privacy.js";
+import {
+  sanitizePrivateData,
+  stripPrivateData,
+} from "../src/functions/privacy.js";
+import { logger } from "../src/logger.js";
 
 describe("stripPrivateData", () => {
   it("strips private tags", () => {
@@ -118,5 +122,67 @@ describe("stripPrivateData", () => {
     expect(stripPrivateData(input)).toBe("[REDACTED_SECRET]");
     expect(stripPrivateData(input)).toBe("[REDACTED_SECRET]");
     expect(stripPrivateData(input)).toBe("[REDACTED_SECRET]");
+  });
+
+  it("redacts structured sensitive keys regardless of value length", () => {
+    expect(
+      sanitizePrivateData({
+        nested: { password: "short", safe: "visible" },
+        authorization: "anything",
+      }),
+    ).toEqual({
+      nested: { password: "[REDACTED_SECRET]", safe: "visible" },
+      authorization: "[REDACTED_SECRET]",
+    });
+  });
+
+  it("redacts environment-style secret keys recursively", () => {
+    expect(
+      sanitizePrivateData({
+        env: {
+          OPENAI_API_KEY: "arbitrary-short-value",
+          client_secret: "another-value",
+          access_token: "opaque-value",
+        },
+        safe: "keep-me",
+      }),
+    ).toEqual({
+      env: {
+        OPENAI_API_KEY: "[REDACTED_SECRET]",
+        client_secret: "[REDACTED_SECRET]",
+        access_token: "[REDACTED_SECRET]",
+      },
+      safe: "keep-me",
+    });
+  });
+
+  it("uses the same redaction for structured log fields and messages", () => {
+    const writes: string[] = [];
+    const originalWrite = process.stderr.write;
+    process.stderr.write = ((chunk: string) => {
+      writes.push(String(chunk));
+      return true;
+    }) as typeof process.stderr.write;
+    try {
+      logger.info("Authorization: Bearer abcdefghijklmnopqrstuvwxyz", {
+        env: { OPENAI_API_KEY: "short-value" },
+      });
+    } finally {
+      process.stderr.write = originalWrite;
+    }
+    expect(writes.join("")).not.toContain("abcdefghijklmnopqrstuvwxyz");
+    expect(writes.join("")).not.toContain("short-value");
+    expect(writes.join("")).toContain("[REDACTED_SECRET]");
+  });
+
+  it("redacts PEM blocks and unterminated private tags", () => {
+    expect(
+      stripPrivateData(
+        "-----BEGIN PRIVATE KEY-----\nsynthetic\n-----END PRIVATE KEY-----",
+      ),
+    ).toBe("[REDACTED_SECRET]");
+    expect(stripPrivateData("prefix <private>synthetic")).toBe(
+      "prefix [REDACTED]",
+    );
   });
 });

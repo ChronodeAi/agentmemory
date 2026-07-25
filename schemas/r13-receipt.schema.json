@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentmemory.dev/schemas/r13-receipt.schema.json",
+  "title": "Agentmemory R-13 Evidence Receipt",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "risk_id",
+    "run_id",
+    "source_sha",
+    "source_tree_sha256",
+    "source_worktree_dirty",
+    "environment",
+    "limits",
+    "tests",
+    "process",
+    "result",
+    "artifact_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "risk_id": { "const": "R-13" },
+    "run_id": { "type": "string", "minLength": 1 },
+    "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+    "source_tree_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "source_worktree_dirty": { "type": "boolean" },
+    "environment": { "type": "object" },
+    "limits": { "type": "object" },
+    "tests": { "type": "object" },
+    "process": { "type": "object" },
+    "result": {
+      "type": "string",
+      "enum": ["pass", "fail", "preflight-pass", "preflight-fail"]
+    },
+    "artifact_sha256": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[0-9a-f]{64}$"
+      }
+    }
+  },
+  "additionalProperties": true
+}

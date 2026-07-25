@@ -12,6 +12,7 @@ type Pipeline = (
 
 export class LocalEmbeddingProvider implements EmbeddingProvider {
   readonly name = "local";
+  readonly processingLocation = "local" as const;
   readonly dimensions = 384;
   private extractor: Awaited<ReturnType<Pipeline>> | null = null;
 

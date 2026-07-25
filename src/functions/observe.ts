@@ -4,6 +4,7 @@ import type {
   FactLedgerEntry,
   RawObservation,
   HookPayload,
+  Session,
 } from "../types.js";
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
@@ -16,6 +17,24 @@ import { getSearchIndex, vectorIndexAddGuarded } from "./search.js";
 import { getAgentId } from "../config.js";
 import { logger } from "../logger.js";
 import { saveImageToDisk } from "../utils/image-store.js";
+
+const CAPTURE_CONCURRENCY_LIMIT = 256;
+const captureAdmission = {
+  active: 0,
+  rejected: 0,
+};
+
+export function getCaptureAdmissionMetrics(): {
+  active: number;
+  limit: number;
+  rejected: number;
+} {
+  return {
+    active: captureAdmission.active,
+    limit: CAPTURE_CONCURRENCY_LIMIT,
+    rejected: captureAdmission.rejected,
+  };
+}
 
 export function extractImage(d: unknown): string | undefined {
   if (!d) return undefined;
@@ -130,7 +149,31 @@ export function registerObserveFunction(
 
       const pendingImageData = extractedImage;
 
-      return withKeyedLock(`obs:${payload.sessionId}`, async () => {
+      if (captureAdmission.active >= CAPTURE_CONCURRENCY_LIMIT) {
+        captureAdmission.rejected += 1;
+        return {
+          success: false,
+          retryable: true,
+          error: "capture_capacity_exceeded",
+        };
+      }
+      captureAdmission.active += 1;
+      try {
+        return await withKeyedLock(`obs:${payload.sessionId}`, async () => {
+        const existingSession = await kv.get<Session>(
+          KV.sessions,
+          payload.sessionId,
+        );
+        if (
+          existingSession &&
+          (existingSession.project !== payload.project ||
+            existingSession.cwd !== payload.cwd)
+        ) {
+          return {
+            success: false,
+            error: "session project or cwd does not match observation",
+          };
+        }
         if (maxObservationsPerSession && maxObservationsPerSession > 0) {
           let existing = await kv.list<CompressedObservation>(
             KV.observations(payload.sessionId),
@@ -204,13 +247,6 @@ export function registerObserveFunction(
         // undefined). Env AGENT_ID only fires when no session row
         // exists yet — otherwise an unscoped session would get
         // retroactively scoped by a later AGENT_ID export.
-        const existingSession = await kv.get<{
-          agentId?: string;
-          observationCount?: number;
-          firstPrompt?: string;
-          childAgentIds?: string[];
-          externalProcessing?: boolean;
-        }>(KV.sessions, payload.sessionId);
         const inheritedAgentId = existingSession
           ? existingSession.agentId
           : getAgentId();
@@ -450,7 +486,10 @@ export function registerObserveFunction(
           compress: shouldAutoCompress ? "llm" : "synthetic",
         });
         return { observationId: obsId };
-      });
+        });
+      } finally {
+        captureAdmission.active -= 1;
+      }
     },
   );
 }

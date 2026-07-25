@@ -65,6 +65,7 @@ async function main() {
         tool_input: captured.toolInput,
         tool_output: captured.toolOutput,
         capture: captured.capture,
+        ...(captured.provenance ? { provenance: captured.provenance } : {}),
         ...(imageData ? { image_data: imageData } : {}),
       },
     }),

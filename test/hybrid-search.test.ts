@@ -1,7 +1,9 @@
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, vi } from "vitest";
 import { HybridSearch } from "../src/state/hybrid-search.js";
 import { SearchIndex } from "../src/state/search-index.js";
+import { VectorIndex } from "../src/state/vector-index.js";
 import type { CompressedObservation, EmbeddingProvider } from "../src/types.js";
+import { KV } from "../src/state/schema.js";
 
 function makeObs(
   overrides: Partial<CompressedObservation> = {},
@@ -179,5 +181,64 @@ describe("HybridSearch", () => {
     expect(results[0].observation.id).toBe("mem_abc");
     expect(results[0].observation.narrative).toBe("Test memory for search");
     expect(results[0].observation.concepts).toEqual(["test", "search"]);
+  });
+
+  it("uses BM25 with zero external embedding calls for a strict project", async () => {
+    const obs = makeObs({ id: "obs_1", sessionId: "ses_strict" });
+    bm25.add(obs);
+    await kv.set(KV.observations("ses_strict"), "obs_1", obs);
+    await kv.set(KV.sessions, "ses_strict", {
+      id: "ses_strict",
+      project: "strict/project",
+      cwd: "/tmp/strict-project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 1,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    const vector = new VectorIndex();
+    vector.add("obs_1", "ses_strict", new Float32Array([1, 0]));
+    const externalRecorder = vi.fn(async () => new Float32Array([1, 0]));
+    const provider: EmbeddingProvider = {
+      name: "external-recorder",
+      dimensions: 2,
+      embed: externalRecorder,
+      embedBatch: async (texts) => Promise.all(texts.map(externalRecorder)),
+    };
+    const hybrid = new HybridSearch(bm25, vector, provider, kv as never);
+
+    const results = await hybrid.search("auth", 20, {
+      project: "strict/project",
+      sessionId: "ses_strict",
+      processingLocation: "external",
+    });
+
+    expect(results).toHaveLength(1);
+    expect(results[0].bm25Score).toBeGreaterThan(0);
+    expect(results[0].vectorScore).toBe(0);
+    expect(externalRecorder).not.toHaveBeenCalled();
+  });
+
+  it("uses BM25 only when project processing context is absent", async () => {
+    const obs = makeObs({ id: "obs_1", sessionId: "ses_1" });
+    bm25.add(obs);
+    await kv.set(KV.observations("ses_1"), "obs_1", obs);
+    const vector = new VectorIndex();
+    vector.add("obs_1", "ses_1", new Float32Array([1, 0]));
+    const externalRecorder = vi.fn(async () => new Float32Array([1, 0]));
+    const provider: EmbeddingProvider = {
+      name: "external-recorder",
+      dimensions: 2,
+      embed: externalRecorder,
+      embedBatch: async (texts) => Promise.all(texts.map(externalRecorder)),
+    };
+    const hybrid = new HybridSearch(bm25, vector, provider, kv as never);
+
+    const results = await hybrid.search("auth");
+
+    expect(results).toHaveLength(1);
+    expect(results[0].vectorScore).toBe(0);
+    expect(externalRecorder).not.toHaveBeenCalled();
   });
 });

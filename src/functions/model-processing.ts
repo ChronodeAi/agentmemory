@@ -7,11 +7,29 @@ import type { Session } from "../types.js";
 export const EXTERNAL_PROCESSING_DISABLED_ERROR =
   "external_processing_disabled_for_strict_project; configure a local provider and AGENTMEMORY_LOCAL_PROCESSING=true";
 
+export type ProviderProcessingLocation = "local" | "external";
+
+export interface ProviderAttemptContext {
+  project: string;
+  sessionId?: string;
+  provider: string;
+  purpose: string;
+  dataClass: string;
+  sourceProvenance: string;
+  processingLocation: ProviderProcessingLocation;
+}
+
+export interface ProviderAttemptDecision extends ProviderAttemptContext {
+  policyDecision: "allow" | "deny";
+  policyMode?: "local" | "external";
+}
+
 export interface ModelProcessingPolicy {
   allowed: boolean;
   error?: string;
   mode?: "local" | "external";
   session?: Session;
+  attempt?: ProviderAttemptDecision;
 }
 
 export function localModelProcessingEnabled(): boolean {
@@ -79,6 +97,43 @@ export async function modelProcessingForProject(
   return {
     allowed: false,
     error: "project_processing_policy_unavailable",
+  };
+}
+
+export function providerProcessingLocation(
+  provider: { processingLocation?: ProviderProcessingLocation },
+): ProviderProcessingLocation {
+  return provider.processingLocation === "local" ? "local" : "external";
+}
+
+export async function modelProcessingForProviderAttempt(
+  kv: StateKV,
+  context: ProviderAttemptContext,
+  cwd = process.cwd(),
+): Promise<ModelProcessingPolicy> {
+  const policy = context.sessionId
+    ? await modelProcessingForSession(kv, context.sessionId)
+    : await modelProcessingForProject(kv, context.project, cwd);
+  const projectMatches =
+    !policy.session || policy.session.project === context.project;
+  const locationAllowed =
+    policy.mode !== "local" || context.processingLocation === "local";
+  const allowed = policy.allowed && projectMatches && locationAllowed;
+  const error = !projectMatches
+    ? "project scope does not match session"
+    : !locationAllowed
+      ? EXTERNAL_PROCESSING_DISABLED_ERROR
+      : policy.error;
+
+  return {
+    ...policy,
+    allowed,
+    error: allowed ? undefined : error,
+    attempt: {
+      ...context,
+      policyDecision: allowed ? "allow" : "deny",
+      policyMode: policy.mode,
+    },
   };
 }
 

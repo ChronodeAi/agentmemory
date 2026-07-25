@@ -3,6 +3,7 @@ import type { HealthSnapshot } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
+import { getCaptureAdmissionMetrics } from "../functions/observe.js";
 
 export function registerHealthMonitor(
   sdk: ISdk,
@@ -11,9 +12,14 @@ export function registerHealthMonitor(
   let connectionState = "connected";
   let prevCpuUsage = process.cpuUsage();
   let prevCpuTime = Date.now();
+  let healthyStreak = 0;
+  let recovering = false;
 
-  if (typeof sdk.on === "function") {
-    sdk.on("connection_state", (state?: unknown) => {
+  const eventSdk = sdk as ISdk & {
+    on?: (event: string, listener: (state?: unknown) => void) => void;
+  };
+  if (typeof eventSdk.on === "function") {
+    eventSdk.on("connection_state", (state?: unknown) => {
       connectionState = state as string;
     });
   }
@@ -37,13 +43,16 @@ export function registerHealthMonitor(
     const eventLoopLagMs = performance.now() - startMark;
 
     let workers: HealthSnapshot["workers"] = [];
+    let workerProbeStatus: "ok" | "error" = "ok";
     try {
       const result = await sdk.trigger<
         unknown,
         { workers?: HealthSnapshot["workers"] }
       >({ function_id: "engine::workers::list", payload: {} });
       if (result?.workers) workers = result.workers;
-    } catch {}
+    } catch {
+      workerProbeStatus = "error";
+    }
 
     const KV_PROBE_TIMEOUT = 5000;
     let kvConnectivity: { status: string; latencyMs?: number; error?: string };
@@ -66,6 +75,7 @@ export function registerHealthMonitor(
     const snapshot: HealthSnapshot = {
       connectionState,
       workers,
+      workerProbeStatus,
       memory: {
         heapUsed: mem.heapUsed,
         heapTotal: mem.heapTotal,
@@ -80,13 +90,28 @@ export function registerHealthMonitor(
       eventLoopLagMs,
       uptimeSeconds: uptime,
       kvConnectivity,
+      captureAdmission: getCaptureAdmissionMetrics(),
       status: "healthy",
       alerts: [],
     };
 
     const evaluated = evaluateHealth(snapshot);
-    snapshot.status = evaluated.status;
-    snapshot.alerts = evaluated.alerts;
+    if (evaluated.status === "healthy") {
+      healthyStreak += 1;
+      if (recovering && healthyStreak < 3) {
+        snapshot.status = "degraded";
+        snapshot.alerts = ["recovery_window"];
+      } else {
+        snapshot.status = "healthy";
+        snapshot.alerts = evaluated.alerts;
+        recovering = false;
+      }
+    } else {
+      healthyStreak = 0;
+      recovering = true;
+      snapshot.status = evaluated.status;
+      snapshot.alerts = evaluated.alerts;
+    }
     snapshot.notes = evaluated.notes;
 
     await kv.set(KV.health, "latest", snapshot).catch(() => {});

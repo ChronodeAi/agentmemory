@@ -14,10 +14,14 @@ Prove the Universal Coding Memory Optimization at unit, integration, system, adv
 - Codex and Claude disposable configuration homes.
 - Two or more synthetic repositories with identical basenames, worktrees, remote aliases, committed and uncommitted changes.
 - Codebase Memory 0.9.1 canonical test index plus temporary alias.
-- Concurrent multi-agent harness at a declared concurrency selected and accepted before execution.
+- Four-agent concurrent harness with maximum capture queue depth 256, zero
+  dropped events, p95 below two seconds, and p99 below five seconds.
 - Compatible and incompatible backend/viewer build pairs.
 - Five-session Memetics canary operated explicit-only; automatic gate-critical injection disabled.
-- Declared developer and CI resource profiles for the canonical `npm test` command.
+- Canonical developer and CI profiles on macOS and Ubuntu with Node 20 and 22.
+  Each profile runs all 140 governed `*.test.ts` files five consecutive times
+  with one Vitest worker, a 30-minute per-run limit, and peak process-tree RSS
+  at or below the lower of 4 GiB or 50% of host RAM.
 
 No secret values from fixtures may appear in reports.
 
@@ -46,6 +50,12 @@ No secret values from fixtures may appear in reports.
 | T-ROLLBACK | Connector/config restore, migration rollback, service rollback, reindex alias rollback, retained audit truth |
 | T-RUNNER | Canonical `npm test`, bounded workers, memory ceiling, deterministic completion on declared developer/CI profiles |
 
+The canonical profile includes `test/integration.test.ts`; integration is not a
+separate optional denominator. It starts an isolated authenticated service,
+uses synthetic state and credentials, and fails when mandatory authentication
+setup is absent. Skipping an integration or authentication assertion fails the
+receipt.
+
 ## 4. Human-labelled retrieval and answer-quality evaluation
 
 Build a frozen benchmark from representative project questions and adversarial fixtures. For each query, independent reviewers label eligible current sources, stale/conflicting sources, project ownership, and expected answer facts.
@@ -57,11 +67,17 @@ Build a frozen benchmark from representative project questions and adversarial f
 
 ## 5. Load, backpressure, and soak
 
-- Declare concurrency, agent mix, event rate, hook types, host profile, and dataset size before the run.
+- Use four agents and pin agent mix, event rate, hook types, host profile, and
+  dataset manifest in the receipt before the run.
 - Measure context-injecting and telemetry hook latency separately.
-- Pass when p95 is below two seconds, no unbounded queue exists, no secret/cross-project leakage occurs, and loss/drop behavior matches the accepted capture policy.
+- Pass when p95 is below two seconds, p99 is below five seconds, maximum capture
+  queue depth is 256, no event is dropped, disk/log growth is at most 512 MiB
+  over 30 minutes, process-tree RSS stays at or below the lower of 4 GiB or 50%
+  of host RAM, and no secret/cross-project leakage occurs.
 - Run sustained service health through normal, pressure, backend failure, recovery, viewer mismatch, and slot-list conditions.
-- The soak duration and consecutive-success health window require Test Architect/Release Owner acceptance; no value is invented here.
+- The service fault run collects at 30-second intervals and requires three
+  consecutive successful probes before recovery to healthy. These are proposed
+  acceptance values pending Test Architect and Release Owner review.
 
 ## 6. Canary
 

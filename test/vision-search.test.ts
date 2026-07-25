@@ -233,4 +233,52 @@ describe("vision-search", () => {
     expect(res.success).toBe(false);
     expect(res.error).toMatch(/required/);
   });
+
+  it("makes zero external vision calls for a strict project", async () => {
+    await kv.set(KV.sessions, "strict-session", {
+      id: "strict-session",
+      project: "strict/project",
+      cwd: "/tmp/strict-project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 0,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    await seedRef(LOGIN_REF);
+    const textRecorder = vi.spyOn(fakeProvider, "embed");
+    const imageRecorder = vi.spyOn(fakeProvider, "embedImage");
+
+    const searchResult = await visionSearch({
+      queryText: "raw strict query",
+      project: "strict/project",
+      sessionId: "strict-session",
+    });
+    const embedResult = await visionEmbed({
+      imageRef: LOGIN_REF,
+      project: "strict/project",
+      sessionId: "strict-session",
+    });
+
+    expect(searchResult).toMatchObject({
+      success: false,
+      processing: {
+        provider: "fake-clip",
+        purpose: "vision_query_embedding",
+        policyDecision: "deny",
+        processingLocation: "external",
+      },
+    });
+    expect(embedResult).toMatchObject({
+      success: false,
+      processing: {
+        provider: "fake-clip",
+        purpose: "vision_embedding",
+        policyDecision: "deny",
+        processingLocation: "external",
+      },
+    });
+    expect(textRecorder).not.toHaveBeenCalled();
+    expect(imageRecorder).not.toHaveBeenCalled();
+  });
 });

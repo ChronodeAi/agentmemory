@@ -162,9 +162,12 @@ export function normalizeGitRemote(remote: string): string | undefined {
       .replace(/\.git$/i, "");
     const segments = path.split("/").filter(Boolean);
     if (segments.length < 2) return undefined;
-    return `${parsed.hostname.toLowerCase()}/${segments
-      .map((segment) => segment.toLowerCase())
-      .join("/")}`;
+    const hostname = parsed.hostname.toLowerCase();
+    const host = parsed.port ? `${hostname}:${parsed.port}` : hostname;
+    const normalizedSegments = ["github.com", "gitlab.com"].includes(hostname)
+      ? segments.map((segment) => segment.toLowerCase())
+      : segments;
+    return `${host}/${normalizedSegments.join("/")}`;
   } catch {
     return undefined;
   }
@@ -175,6 +178,9 @@ export function inferProjectId(root: string): string {
     git(root, ["remote", "get-url", "origin"]) ??
     git(root, ["remote", "get-url", "--all", "upstream"]);
   const normalizedRemote = remote ? normalizeGitRemote(remote) : undefined;
+  if (remote && !normalizedRemote) {
+    throw new Error("configured Git remote cannot be normalized safely");
+  }
   return normalizedRemote ?? `local/${projectPathHash(root)}`;
 }
 

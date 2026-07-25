@@ -84,6 +84,7 @@ describe("Smart Search Function", () => {
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
   let searchResults: HybridSearchResult[];
+  let searchFn: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     sdk = mockSdk();
@@ -121,13 +122,14 @@ describe("Smart Search Function", () => {
     await kv.set("mem:obs:ses_1", "obs_1", obs1);
     await kv.set("mem:obs:ses_1", "obs_2", obs2);
 
-    const searchFn = async (_query: string, _limit: number) => searchResults;
+    searchFn = vi.fn(async () => searchResults);
     registerSmartSearchFunction(sdk as never, kv as never, searchFn);
   });
 
   it("compact mode returns CompactSearchResult array", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       query: "auth",
+      project: PROJECT,
     })) as { mode: string; results: CompactSearchResult[] };
 
     expect(result.mode).toBe("compact");
@@ -138,6 +140,14 @@ describe("Smart Search Function", () => {
     expect(result.results[0]).toHaveProperty("score");
     expect(result.results[0]).toHaveProperty("timestamp");
     expect(result.results[0]).not.toHaveProperty("narrative");
+    expect(searchFn).toHaveBeenCalledWith(
+      "auth",
+      expect.any(Number),
+      expect.objectContaining({
+        project: PROJECT,
+        sourceProvenance: "smart_search_query",
+      }),
+    );
   });
 
   it("expand mode returns full observations for given IDs", async () => {

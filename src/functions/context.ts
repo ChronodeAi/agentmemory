@@ -19,6 +19,45 @@ import {
 } from "./slots.js";
 import { getAgentId, isAgentScopeIsolated } from "../config.js";
 
+type ContextSourceStatus = "ok" | "unavailable" | "failed";
+
+interface ContextSourceOutcome {
+  source: "slots" | "profile" | "lessons" | "session_history";
+  status: ContextSourceStatus;
+  itemCount: number;
+  error?: string;
+}
+
+async function readContextSource<T>(
+  source: ContextSourceOutcome["source"],
+  fallback: T,
+  read: () => Promise<T>,
+  itemCount: (value: T) => number,
+): Promise<{ value: T; outcome: ContextSourceOutcome }> {
+  try {
+    const value = await read();
+    const count = itemCount(value);
+    return {
+      value,
+      outcome: {
+        source,
+        status: count > 0 ? "ok" : "unavailable",
+        itemCount: count,
+      },
+    };
+  } catch (error) {
+    return {
+      value: fallback,
+      outcome: {
+        source,
+        status: "failed",
+        itemCount: 0,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
 function estimateTokens(text: string): number {
   return Math.ceil(text.length / 3);
 }
@@ -70,15 +109,48 @@ export function registerContextFunction(
         );
       }
 
-      const [pinnedSlots, profile, lessons] = await Promise.all([
+      const [slotsRead, profileRead, lessonsRead] = await Promise.all([
         isSlotsEnabled()
-          ? listPinnedSlots(kv, data.project).catch(() => [] as MemorySlot[])
-          : Promise.resolve([] as MemorySlot[]),
-        kv
-          .get<ProjectProfile>(KV.profiles, data.project)
-          .catch(() => null),
-        kv.list<Lesson>(KV.lessons).catch(() => [] as Lesson[]),
+          ? readContextSource(
+              "slots",
+              [] as MemorySlot[],
+              () => listPinnedSlots(kv, data.project),
+              (items) => items.length,
+            )
+          : Promise.resolve({
+              value: [] as MemorySlot[],
+              outcome: {
+                source: "slots" as const,
+                status: "unavailable" as const,
+                itemCount: 0,
+                error: "slots are disabled",
+              },
+            }),
+        readContextSource(
+          "profile",
+          null as ProjectProfile | null,
+          () => kv.get<ProjectProfile>(KV.profiles, data.project),
+          (value) => (value ? 1 : 0),
+        ),
+        readContextSource(
+          "lessons",
+          [] as Lesson[],
+          () => kv.list<Lesson>(KV.lessons),
+          (items) =>
+            items.filter(
+              (lesson) =>
+                !lesson.deleted && lesson.project === data.project,
+            ).length,
+        ),
       ]);
+      const pinnedSlots = slotsRead.value;
+      const profile = profileRead.value;
+      const lessons = lessonsRead.value;
+      const sourceOutcomes: ContextSourceOutcome[] = [
+        slotsRead.outcome,
+        profileRead.outcome,
+        lessonsRead.outcome,
+      ];
 
       const slotContent = renderPinnedContext(pinnedSlots);
       if (slotContent) {
@@ -162,7 +234,21 @@ export function registerContextFunction(
         });
       }
 
-      const allSessions = await kv.list<Session>(KV.sessions);
+      const sessionsRead = await readContextSource(
+        "session_history",
+        [] as Session[],
+        () => kv.list<Session>(KV.sessions),
+        (items) =>
+          items.filter(
+            (session) =>
+              session.project === data.project &&
+              session.id !== data.sessionId &&
+              (filterAgentId === undefined ||
+                session.agentId === filterAgentId),
+          ).length,
+      );
+      sourceOutcomes.push(sessionsRead.outcome);
+      const allSessions = sessionsRead.value;
       const sessions = allSessions
         .filter(
           (s) =>
@@ -253,9 +339,34 @@ export function registerContextFunction(
         void recordAccessBatch(kv, accessedIds);
       }
 
+      const incompleteSources = sourceOutcomes.filter(
+        (outcome) => outcome.status !== "ok",
+      );
+      const status = incompleteSources.length > 0 ? "degraded" : "ok";
+      const completeness = {
+        complete: incompleteSources.length === 0,
+        available: sourceOutcomes
+          .filter((outcome) => outcome.status === "ok")
+          .map((outcome) => outcome.source),
+        unavailable: sourceOutcomes
+          .filter((outcome) => outcome.status === "unavailable")
+          .map((outcome) => outcome.source),
+        failed: sourceOutcomes
+          .filter((outcome) => outcome.status === "failed")
+          .map((outcome) => outcome.source),
+      };
       if (selected.length === 0) {
         logger.info("No context available", { project: data.project });
-        return { context: "", blocks: 0, tokens: 0 };
+        return {
+          success: true,
+          status,
+          contextClass: "advisory",
+          context: "",
+          blocks: 0,
+          tokens: 0,
+          sources: sourceOutcomes,
+          completeness,
+        };
       }
 
       const result = `${header}\n${selected.join("\n\n")}\n${footer}`;
@@ -263,7 +374,16 @@ export function registerContextFunction(
         blocks: selected.length,
         tokens: usedTokens,
       });
-      return { context: result, blocks: selected.length, tokens: usedTokens };
+      return {
+        success: true,
+        status,
+        contextClass: "advisory",
+        context: result,
+        blocks: selected.length,
+        tokens: usedTokens,
+        sources: sourceOutcomes,
+        completeness,
+      };
     },
   );
 }

@@ -41,17 +41,12 @@ railway volume add --service agentmemory --mount /data  # attach persistent volu
 railway redeploy                                        # restart with the volume
 ```
 
-## Capture the HMAC secret
+## Configure the HMAC secret
 
-After the first deploy succeeds, open the service's **Deploy Logs**:
-
-```bash
-railway logs --service agentmemory | grep AGENTMEMORY_SECRET=
-```
-
-You will see exactly one line of the form `AGENTMEMORY_SECRET=<64 hex chars>`.
-Copy it into your client environment. The secret is never printed again
-on subsequent boots.
+Generate a strong value locally and add it as the Railway
+`AGENTMEMORY_SECRET` service variable. Secrets are never written to deployment
+logs. An injected service variable takes precedence over the persistent secret
+file, which remains a server-side fallback for existing deployments.
 
 ## Verify the deployment
 
@@ -93,15 +88,15 @@ This is the heavier path; option A is what most users will want.
 ## Rotate the HMAC secret
 
 ```bash
-railway ssh --service agentmemory
-rm /data/.hmac
-exit
+# Generate a new value locally, then replace the Railway service variable.
+railway variables --set "AGENTMEMORY_SECRET=<new-secret>"
 railway redeploy --service agentmemory
-railway logs --service agentmemory | grep AGENTMEMORY_SECRET=
 ```
 
 Update every client with the new secret. Old tokens stop working
-immediately.
+when the redeploy completes. The entrypoint never prints the value. If the
+service intentionally uses the file fallback instead, replace `/data/.hmac`
+through an authenticated maintenance shell before restarting.
 
 ## Back up `/data`
 

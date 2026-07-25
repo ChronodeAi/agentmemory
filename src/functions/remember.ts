@@ -8,6 +8,7 @@ import { deleteAccessLog } from "./access-tracker.js";
 import { recordAudit } from "./audit.js";
 import { getSearchIndex, vectorIndexAddGuarded, vectorIndexRemove, flushIndexSave } from "./search.js";
 import { getAgentId } from "../config.js";
+import { stripPrivateData } from "./privacy.js";
 import { logger } from "../logger.js";
 import { requireProjectReadScope } from "../project-scope.js";
 
@@ -51,6 +52,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       const memType = validTypes.has(data.type || "")
         ? (data.type as Memory["type"])
         : "fact";
+      const content = stripPrivateData(data.content);
 
       const now = new Date().toISOString();
       // Normalize project early so every subsequent comparison and storage
@@ -65,7 +67,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
         let supersededId: string | undefined;
         let supersededVersion = 1;
         let supersededMemory: Memory | undefined;
-        const lowerContent = data.content.toLowerCase();
+        const lowerContent = content.toLowerCase();
         for (const existing of existingMemories) {
           if (existing.isLatest === false) continue;
           // Supersession and semantic reinforcement are scope-local. Legacy
@@ -99,8 +101,8 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           createdAt: now,
           updatedAt: now,
           type: memType,
-          title: data.content.slice(0, 80),
-          content: data.content,
+          title: content.slice(0, 80),
+          content,
           concepts: data.concepts || [],
           files: data.files || [],
           sessionIds: [],

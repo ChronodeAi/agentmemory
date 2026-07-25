@@ -218,6 +218,7 @@ async function main() {
 
   const kv = new StateKV(sdk);
   const secret = getEnvVar("AGENTMEMORY_SECRET");
+  const adminSecret = getEnvVar("AGENTMEMORY_ADMIN_SECRET");
   const metricsStore = new MetricsStore(kv);
   const dedupMap = new DedupMap();
 
@@ -364,16 +365,16 @@ async function main() {
     graphWeight,
   );
 
-  registerSmartSearchFunction(sdk, kv, (query, limit) =>
-    hybridSearch.search(query, limit),
+  registerSmartSearchFunction(sdk, kv, (query, limit, processingContext) =>
+    hybridSearch.search(query, limit, processingContext),
   );
   registerCodingMemoryFunctions(sdk, kv);
   registerPromotionFunctions(sdk, kv);
   registerRecentSearchesSweepFunction(sdk, kv);
 
-  registerApiTriggers(sdk, kv, secret, metricsStore, provider);
+  registerApiTriggers(sdk, kv, secret, metricsStore, provider, adminSecret);
   registerEventTriggers(sdk, kv);
-  registerMcpEndpoints(sdk, kv, secret);
+  registerMcpEndpoints(sdk, kv, secret, adminSecret);
 
   const healthMonitor = registerHealthMonitor(sdk, kv);
 
@@ -520,7 +521,7 @@ async function main() {
     `Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   bootLog(
-    `REST API: 134 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
+    `REST API: 135 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
   );
   bootLog(
     `MCP surface (opt-in via \`npx @agentmemory/mcp\`): ${getAllTools().length} tools · 6 resources · 3 prompts`,

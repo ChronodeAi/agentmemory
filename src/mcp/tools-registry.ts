@@ -3,7 +3,10 @@ export type McpToolDef = {
   description: string;
   inputSchema: {
     type: "object";
-    properties: Record<string, { type: string; description: string }>;
+    properties: Record<
+      string,
+      { type: string; description: string; enum?: string[] }
+    >;
     required?: string[];
   };
 };
@@ -1027,8 +1030,36 @@ export const CODING_MEMORY_TOOLS: McpToolDef[] = [
           type: "number",
           description: "Maximum packet tokens (default and hard maximum 2000)",
         },
+        context_class: {
+          type: "string",
+          enum: ["advisory", "gate-critical"],
+          description:
+            "Advisory returns typed degradation; gate-critical fails closed when a required source is unavailable or failed",
+        },
       },
       required: ["project", "sessionId"],
+    },
+  },
+  {
+    name: "memory_context_acknowledge",
+    description:
+      "Submit provider delivery evidence for a generated context packet. Sources are suppressed only after a configured trusted verifier accepts the receipt; otherwise this fails closed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Canonical project ID" },
+        sessionId: { type: "string", description: "Current session ID" },
+        packetId: {
+          type: "string",
+          description: "Packet identifier returned by memory_context_packet",
+        },
+        providerReceipt: {
+          type: "string",
+          description:
+            "Provider delivery receipt evaluated by the configured trusted verifier",
+        },
+      },
+      required: ["project", "sessionId", "packetId", "providerReceipt"],
     },
   },
   {

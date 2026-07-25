@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   EXTERNAL_PROCESSING_DISABLED_ERROR,
+  modelProcessingForProviderAttempt,
   modelProcessingForProject,
   modelProcessingForSession,
 } from "../src/functions/model-processing.js";
@@ -83,5 +84,41 @@ describe("model processing policy", () => {
     await expect(
       modelProcessingForSession(kv as never, "strict-session"),
     ).resolves.toMatchObject({ allowed: true, mode: "local" });
+  });
+
+  it("denies external attempts in local mode with receipt-safe context", async () => {
+    vi.stubEnv("AGENTMEMORY_LOCAL_PROCESSING", "true");
+    const kv = mockKV();
+    await kv.set(
+      KV.sessions,
+      "strict-session",
+      session("strict-session", "github.com/example/strict", "strict"),
+    );
+
+    const decision = await modelProcessingForProviderAttempt(kv as never, {
+      project: "github.com/example/strict",
+      sessionId: "strict-session",
+      provider: "external-recorder",
+      purpose: "query_embedding",
+      dataClass: "query_text",
+      sourceProvenance: "hybrid_search_query",
+      processingLocation: "external",
+    });
+
+    expect(decision).toMatchObject({
+      allowed: false,
+      error: EXTERNAL_PROCESSING_DISABLED_ERROR,
+      attempt: {
+        project: "github.com/example/strict",
+        provider: "external-recorder",
+        purpose: "query_embedding",
+        policyDecision: "deny",
+        policyMode: "local",
+        dataClass: "query_text",
+        sourceProvenance: "hybrid_search_query",
+        processingLocation: "external",
+      },
+    });
+    expect(JSON.stringify(decision.attempt)).not.toContain("raw secret query");
   });
 });

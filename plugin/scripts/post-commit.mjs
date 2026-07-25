@@ -1,12 +1,41 @@
 #!/usr/bin/env node
 import { execFile, execFileSync } from "node:child_process";
+import { isAbsolute, join, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "dotenv";
 import { parse as parse$1 } from "yaml";
+//#region src/hooks/_capture.ts
+function credentialFreeWorktreeId(project, worktreeRoot) {
+	return `wt_${createHash("sha256").update(project).update("\0").update(resolve(worktreeRoot)).digest("hex").slice(0, 32)}`;
+}
+function parseCommitTransitions(status) {
+	const transitions = [];
+	for (const line of status.split("\n")) {
+		if (!line) continue;
+		const [rawStatus, firstPath, secondPath] = line.split("	");
+		if (!rawStatus || !firstPath) continue;
+		const code = rawStatus[0];
+		if ((code === "R" || code === "C") && secondPath) {
+			transitions.push({
+				operation: code === "R" ? "rename" : "copy",
+				previousPath: firstPath,
+				path: secondPath
+			});
+			continue;
+		}
+		const operation = code === "A" ? "write" : code === "D" ? "delete" : "edit";
+		transitions.push({
+			operation,
+			path: firstPath
+		});
+	}
+	return transitions;
+}
+//#endregion
 //#region src/project-config.ts
 const PRIVACY_ORDER = {
 	standard: 0,
@@ -99,7 +128,8 @@ function normalizeGitRemote(remote) {
 		if (!parsed.hostname || parsed.protocol === "file:") return void 0;
 		const segments = decodeURIComponent(parsed.pathname).replace(/^\/+/, "").replace(/\/+$/, "").replace(/\.git$/i, "").split("/").filter(Boolean);
 		if (segments.length < 2) return void 0;
-		return `${parsed.hostname.toLowerCase()}/${segments.map((segment) => segment.toLowerCase()).join("/")}`;
+		const hostname = parsed.hostname.toLowerCase();
+		return `${parsed.port ? `${hostname}:${parsed.port}` : hostname}/${(["github.com", "gitlab.com"].includes(hostname) ? segments.map((segment) => segment.toLowerCase()) : segments).join("/")}`;
 	} catch {
 		return;
 	}
@@ -115,7 +145,9 @@ function inferProjectId(root) {
 		"--all",
 		"upstream"
 	]);
-	return (remote ? normalizeGitRemote(remote) : void 0) ?? `local/${projectPathHash(root)}`;
+	const normalizedRemote = remote ? normalizeGitRemote(remote) : void 0;
+	if (remote && !normalizedRemote) throw new Error("configured Git remote cannot be normalized safely");
+	return normalizedRemote ?? `local/${projectPathHash(root)}`;
 }
 function readConfigFile(path) {
 	if (!existsSync(path)) return void 0;
@@ -282,6 +314,69 @@ async function git(args, cwd) {
 		return null;
 	}
 }
+async function collectCommitLinkage(cwd, sha, sessionId, project = resolveProject(cwd)) {
+	const branch = await git([
+		"rev-parse",
+		"--abbrev-ref",
+		"HEAD"
+	], cwd);
+	const message = await git([
+		"log",
+		"-1",
+		"--pretty=%B",
+		sha
+	], cwd);
+	const author = await git([
+		"log",
+		"-1",
+		"--pretty=%an <%ae>",
+		sha
+	], cwd);
+	const authoredAt = await git([
+		"log",
+		"-1",
+		"--pretty=%aI",
+		sha
+	], cwd);
+	const worktreeRoot = await git(["rev-parse", "--show-toplevel"], cwd);
+	const baseHeadSha = await git(["rev-parse", `${sha}^`], cwd);
+	const parsedTransitions = parseCommitTransitions(await git([
+		"diff-tree",
+		"--root",
+		"--no-commit-id",
+		"--name-status",
+		"-r",
+		"-M",
+		sha
+	], cwd) || "");
+	const fileTransitions = await Promise.all(parsedTransitions.map(async (transition) => {
+		const blobPath = transition.operation === "delete" ? transition.previousPath || transition.path : transition.path;
+		const digest = await git(["rev-parse", transition.operation === "delete" ? `${sha}^:${blobPath}` : `${sha}:${blobPath}`], cwd);
+		return {
+			...transition,
+			...digest ? {
+				digest,
+				digestKind: "git-blob"
+			} : {}
+		};
+	}));
+	const files = fileTransitions.length > 0 ? fileTransitions.map((transition) => transition.path) : void 0;
+	return {
+		sessionId,
+		project,
+		sha,
+		commitSha: sha,
+		baseHeadSha: baseHeadSha || void 0,
+		worktreeId: worktreeRoot ? credentialFreeWorktreeId(project, worktreeRoot) : void 0,
+		branch: branch || void 0,
+		repo: project,
+		message: message || void 0,
+		author: author || void 0,
+		authoredAt: authoredAt || void 0,
+		files,
+		fileTransitions: fileTransitions.length > 0 ? fileTransitions : void 0
+	};
+}
 async function main() {
 	let input = "";
 	for await (const chunk of process.stdin) input += chunk;
@@ -302,53 +397,7 @@ async function main() {
 	const project = resolveProject(cwd);
 	const sha = process.env["AGENTMEMORY_COMMIT_SHA"] || await git(["rev-parse", "HEAD"], cwd);
 	if (!sha) return;
-	const branch = await git([
-		"rev-parse",
-		"--abbrev-ref",
-		"HEAD"
-	], cwd);
-	const repo = await git([
-		"config",
-		"--get",
-		"remote.origin.url"
-	], cwd);
-	const message = await git([
-		"log",
-		"-1",
-		"--pretty=%B",
-		sha
-	], cwd);
-	const author = await git([
-		"log",
-		"-1",
-		"--pretty=%an <%ae>",
-		sha
-	], cwd);
-	const authoredAt = await git([
-		"log",
-		"-1",
-		"--pretty=%aI",
-		sha
-	], cwd);
-	const filesRaw = await git([
-		"diff-tree",
-		"--no-commit-id",
-		"--name-only",
-		"-r",
-		sha
-	], cwd);
-	const files = filesRaw ? filesRaw.split("\n").filter(Boolean) : void 0;
-	const body = {
-		sessionId,
-		project,
-		sha,
-		branch: branch || void 0,
-		repo: repo || void 0,
-		message: message || void 0,
-		author: author || void 0,
-		authoredAt: authoredAt || void 0,
-		files
-	};
+	const body = await collectCommitLinkage(cwd, sha, sessionId, project);
 	try {
 		await fetch(`${REST_URL}/agentmemory/session/commit`, {
 			method: "POST",
@@ -358,8 +407,9 @@ async function main() {
 		});
 	} catch {}
 }
-main().catch(() => process.exit(0));
+const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
+if (import.meta.url === invokedPath) main().catch(() => process.exit(0));
 //#endregion
-export {};
+export { collectCommitLinkage };
 
 //# sourceMappingURL=post-commit.mjs.map

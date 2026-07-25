@@ -176,6 +176,7 @@ export type ProviderType = "agent-sdk" | "anthropic" | "gemini" | "openrouter" |
 
 export interface MemoryProvider {
   name: string;
+  readonly processingLocation?: "local" | "external";
   compress(systemPrompt: string, userPrompt: string): Promise<string>;
   summarize(systemPrompt: string, userPrompt: string): Promise<string>;
   describeImage?(imageData: string, mimeType: string, prompt: string): Promise<string>;
@@ -226,6 +227,7 @@ export interface FunctionMetrics {
 export interface HealthSnapshot {
   connectionState: string;
   workers: Array<{ id: string; name: string; status: string }>;
+  workerProbeStatus?: "ok" | "error";
   memory: {
     heapUsed: number;
     heapTotal: number;
@@ -236,6 +238,7 @@ export interface HealthSnapshot {
   eventLoopLagMs: number;
   uptimeSeconds: number;
   kvConnectivity?: { status: string; latencyMs?: number; error?: string };
+  captureAdmission?: { active: number; limit: number; rejected: number };
   status: "healthy" | "degraded" | "critical";
   alerts: string[];
   notes?: string[];
@@ -262,6 +265,7 @@ export interface MemorySlot {
 
 export interface EmbeddingProvider {
   name: string;
+  readonly processingLocation?: "local" | "external";
   dimensions: number;
   embed(text: string): Promise<Float32Array>;
   embedBatch(texts: string[]): Promise<Float32Array[]>;

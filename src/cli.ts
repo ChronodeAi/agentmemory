@@ -1879,6 +1879,11 @@ async function runDoctor() {
   // Passive server checks (informational).
   const passive = await passiveServerChecks();
   const passivePassed = passive.filter((c) => c.ok).length;
+  const criticalPassiveFailures = passive.filter(
+    (c) =>
+      !c.ok &&
+      (c.name === "Server reachable" || c.name === "Health status"),
+  ).length;
   p.note(formatChecks(passive), `server: ${passivePassed}/${passive.length} passing`);
 
   // Doctor v2 interactive catalog.
@@ -1892,10 +1897,11 @@ async function runDoctor() {
     const lines = dryRunPlan(ctx, results);
     p.note(lines.join("\n"), "dry-run plan");
     p.outro("Dry-run complete. Re-run without --dry-run to apply.");
+    if (criticalPassiveFailures > 0) process.exit(1);
     return;
   }
 
-  let failed = 0;
+  let failed = criticalPassiveFailures;
   let fixed = 0;
   let skipped = 0;
   let quit = false;
@@ -1957,7 +1963,8 @@ async function runDoctor() {
     }
   }
 
-  const summary = `${diagnostics.length} checks · ${failed} failing · ${fixed} fixed · ${skipped} skipped`;
+  const totalChecks = diagnostics.length + criticalPassiveFailures;
+  const summary = `${totalChecks} checks · ${failed} failing · ${fixed} fixed · ${skipped} skipped`;
   if (quit) {
     p.outro(`Quit early. ${summary}`);
     process.exit(1);

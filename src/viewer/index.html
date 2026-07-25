@@ -973,6 +973,8 @@
     .activity-feed-title { font-weight: 600; color: var(--ink); font-family: var(--font-display); font-size: 13px; }
     .activity-feed-meta { font-size: 10px; color: var(--ink-faint); font-family: var(--font-mono); margin-top: 2px; }
   </style>
+  <meta name="agentmemory-viewer-build" content="__AGENTMEMORY_VIEWER_BUILD__">
+  <meta name="agentmemory-api-contract" content="__AGENTMEMORY_API_CONTRACT__">
 </head>
 <body>
   <div class="app-header">
@@ -1033,6 +1035,8 @@
   </footer>
 
   <script nonce="__AGENTMEMORY_VIEWER_NONCE__">
+    var VIEWER_BUILD_ID = '__AGENTMEMORY_VIEWER_BUILD__';
+    var VIEWER_API_CONTRACT = Number('__AGENTMEMORY_API_CONTRACT__');
     var params = new URLSearchParams(window.location.search);
     var paramPort = params.get('port');
     var locPort = window.location.port;
@@ -1393,8 +1397,14 @@
       var d = state.dashboard;
       var h = d.health || {};
       var snap = h.health || {};
-      var healthStatus = h.status || snap.status || (d.loaded ? 'unavailable' : 'unknown');
-      var connectionStatus = snap.connectionState || (d.loaded ? 'unavailable' : 'unknown');
+      var remoteBuild = h.build || {};
+      var compatible = !remoteBuild.viewer ||
+        (remoteBuild.viewer === VIEWER_BUILD_ID &&
+          remoteBuild.apiContract === VIEWER_API_CONTRACT);
+      var healthStatus = compatible
+        ? (h.status || snap.status || (d.loaded ? 'unavailable' : 'initializing'))
+        : 'incompatible';
+      var connectionStatus = snap.connectionState || (d.loaded ? 'unavailable' : 'initializing');
       var dotClass = healthStatus === 'healthy' ? 'healthy' : healthStatus === 'degraded' ? 'degraded' : healthStatus === 'critical' ? 'critical' : '';
       var activeSessions = d.sessions.filter(function(s) { return s.status === 'active'; }).length;
       var gs = d.graphStats || {};

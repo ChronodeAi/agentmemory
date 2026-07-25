@@ -98,7 +98,8 @@ function normalizeGitRemote(remote) {
 		if (!parsed.hostname || parsed.protocol === "file:") return void 0;
 		const segments = decodeURIComponent(parsed.pathname).replace(/^\/+/, "").replace(/\/+$/, "").replace(/\.git$/i, "").split("/").filter(Boolean);
 		if (segments.length < 2) return void 0;
-		return `${parsed.hostname.toLowerCase()}/${segments.map((segment) => segment.toLowerCase()).join("/")}`;
+		const hostname = parsed.hostname.toLowerCase();
+		return `${parsed.port ? `${hostname}:${parsed.port}` : hostname}/${(["github.com", "gitlab.com"].includes(hostname) ? segments.map((segment) => segment.toLowerCase()) : segments).join("/")}`;
 	} catch {
 		return;
 	}
@@ -114,7 +115,9 @@ function inferProjectId(root) {
 		"--all",
 		"upstream"
 	]);
-	return (remote ? normalizeGitRemote(remote) : void 0) ?? `local/${projectPathHash(root)}`;
+	const normalizedRemote = remote ? normalizeGitRemote(remote) : void 0;
+	if (remote && !normalizedRemote) throw new Error("configured Git remote cannot be normalized safely");
+	return normalizedRemote ?? `local/${projectPathHash(root)}`;
 }
 function readConfigFile(path) {
 	if (!existsSync(path)) return void 0;

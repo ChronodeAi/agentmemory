@@ -70,6 +70,7 @@ export const KV = {
     `mem:slots:project:${createHash("sha256").update(project).digest("hex").slice(0, 24)}`,
   globalSlots: "mem:slots:global",
   injectedSources: (sessionId: string) => `mem:injected-sources:${sessionId}`,
+  contextDeliveryReceipts: "mem:context-delivery-receipts",
   factLedger: (sessionId: string) => `mem:fact-ledger:${sessionId}`,
   projectMetrics: (project: string) =>
     `mem:project-metrics:${createHash("sha256").update(project).digest("hex").slice(0, 24)}`,

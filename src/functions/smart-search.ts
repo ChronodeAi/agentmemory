@@ -24,6 +24,7 @@ import {
   requireProjectReadScope,
   type ProjectReadScope,
 } from "../project-scope.js";
+import type { HybridSearchProcessingContext } from "../state/hybrid-search.js";
 
 // #771: smart-search followup-rate diagnostic. Stored per session as
 // the most recent search payload, used to detect whether the next
@@ -98,7 +99,11 @@ function hasRetrievalEvidence(result: HybridSearchResult): boolean {
 export function registerSmartSearchFunction(
   sdk: ISdk,
   kv: StateKV,
-  searchFn: (query: string, limit: number) => Promise<HybridSearchResult[]>,
+  searchFn: (
+    query: string,
+    limit: number,
+    processingContext?: HybridSearchProcessingContext,
+  ) => Promise<HybridSearchResult[]>,
 ): void {
   sdk.registerFunction("mem::smart-search",
     async (data: {
@@ -234,7 +239,18 @@ export function registerSmartSearchFunction(
         : limit;
 
       const [hybridResults, lessons] = await Promise.all([
-        searchFn(data.query, overFetchLimit),
+        searchFn(
+          data.query,
+          overFetchLimit,
+          projectScope.kind === "project"
+            ? {
+                project: projectScope.project,
+                sessionId: data.sessionId,
+                dataClass: "query_text",
+                sourceProvenance: "smart_search_query",
+              }
+            : undefined,
+        ),
         includeLessons
           ? recallLessons(sdk, data.query, lessonLimit, projectScope)
           : Promise.resolve([]),
