@@ -6,7 +6,7 @@ import {
   jaccardSimilarity,
 } from "../state/schema.js";
 import type { Lesson } from "../types.js";
-import { recordAudit } from "./audit.js";
+import { recordAudit, safeAudit } from "./audit.js";
 import { requireProjectReadScope } from "../project-scope.js";
 
 function reinforceLesson(lesson: Lesson): void {
@@ -72,11 +72,9 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
         }
         await kv.set(KV.lessons, existing.id, existing);
 
-        try {
-          await recordAudit(kv, "lesson_strengthen", "mem::lesson-save", [
-            existing.id,
-          ]);
-        } catch {}
+        await safeAudit(kv, "lesson_strengthen", "mem::lesson-save", [
+          existing.id,
+        ]);
 
         return {
           success: true,
@@ -110,9 +108,7 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
 
       await kv.set(KV.lessons, lesson.id, lesson);
 
-      try {
-        await recordAudit(kv, "lesson_save", "mem::lesson-save", [lesson.id]);
-      } catch {}
+      await safeAudit(kv, "lesson_save", "mem::lesson-save", [lesson.id]);
 
       return { success: true, action: "created", lesson };
     },
@@ -170,12 +166,13 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
 
       scored.sort((a, b) => b.score - a.score);
 
-      try {
-        await recordAudit(kv, "lesson_recall", "mem::lesson-recall", [], {
-          query: data.query,
-          resultCount: scored.length,
-        });
-      } catch {}
+      await safeAudit(kv, "lesson_recall", "mem::lesson-recall", [], {
+        query: data.query,
+        resultCount: scored.length,
+        project:
+          projectScope.kind === "project" ? projectScope.project : undefined,
+        scope: projectScope.kind,
+      });
 
       return {
         success: true,
@@ -245,11 +242,9 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
 
       await kv.set(KV.lessons, lesson.id, lesson);
 
-      try {
-        await recordAudit(kv, "lesson_strengthen", "mem::lesson-strengthen", [
-          lesson.id,
-        ]);
-      } catch {}
+      await safeAudit(kv, "lesson_strengthen", "mem::lesson-strengthen", [
+        lesson.id,
+      ]);
 
       return { success: true, lesson };
     },

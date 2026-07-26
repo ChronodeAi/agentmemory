@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -257,19 +257,135 @@ loadAgentmemoryEnvironment();
 function resolveProject(cwd) {
 	return resolveProjectConfig(typeof cwd === "string" && cwd.trim() ? cwd : process.cwd()).project_id;
 }
+randomBytes(32);
+const PROJECT_CAPABILITY_TOKEN_VERSION = "amcap1";
+const PROJECT_CAPABILITY_PROJECT_HEADER = "x-agentmemory-project";
+function hmac(value, secret) {
+	return createHmac("sha256", secret).update(value).digest("base64url");
+}
+function createProjectCapabilityToken(claims, signingSecret) {
+	if (!signingSecret) throw new Error("project capability signing secret is required");
+	const normalized = {
+		version: 1,
+		audience: claims.audience.trim(),
+		project: claims.project.trim(),
+		expiresAt: claims.expiresAt,
+		...claims.issuedAt !== void 0 ? { issuedAt: claims.issuedAt } : {},
+		...claims.capabilityId ? { capabilityId: claims.capabilityId.trim() } : {}
+	};
+	if (!normalized.audience || !normalized.project || !Number.isSafeInteger(normalized.expiresAt)) throw new Error("invalid project capability claims");
+	const signed = `${PROJECT_CAPABILITY_TOKEN_VERSION}.${Buffer.from(JSON.stringify(normalized)).toString("base64url")}`;
+	return `${signed}.${hmac(signed, signingSecret)}`;
+}
+function isStrictCapabilityMode(value = process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"]) {
+	return ![
+		"false",
+		"0",
+		"off"
+	].includes((value ?? "").trim().toLowerCase());
+}
+//#endregion
+//#region src/hooks/_auth.ts
+const CAPABILITY_TTL_SECONDS = 300;
+function secretFromEnvironmentOrFile(environmentName, fileEnvironmentName, defaultFileName) {
+	const direct = process.env[environmentName]?.trim();
+	if (direct) return direct;
+	const configuredPath = process.env[fileEnvironmentName]?.trim() || join(homedir(), ".agentmemory", defaultFileName);
+	const path = configuredPath.startsWith("~/") ? join(homedir(), configuredPath.slice(2)) : configuredPath;
+	if (!existsSync(path)) return "";
+	try {
+		return readFileSync(path, "utf8").trim();
+	} catch {
+		return "";
+	}
+}
+function projectCapabilitySigningSecret() {
+	return secretFromEnvironmentOrFile("AGENTMEMORY_PROJECT_CAPABILITY_SECRET", "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE", "project-capability-secret");
+}
+function projectCapability(project) {
+	const normalizedProject = project.trim();
+	if (!normalizedProject) throw new Error("project scope is required");
+	const configuredToken = process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"]?.trim();
+	if (configuredToken) return configuredToken;
+	const signingSecret = projectCapabilitySigningSecret();
+	if (signingSecret) {
+		const issuedAt = Math.floor(Date.now() / 1e3);
+		return createProjectCapabilityToken({
+			version: 1,
+			audience: process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"]?.trim() || "agentmemory",
+			project: normalizedProject,
+			issuedAt,
+			expiresAt: issuedAt + CAPABILITY_TTL_SECONDS
+		}, signingSecret);
+	}
+	if (!isStrictCapabilityMode()) return process.env["AGENTMEMORY_SECRET"]?.trim() || "";
+	throw new Error("project capability credentials are unavailable");
+}
+function projectAuthHeaders(project) {
+	const normalizedProject = project.trim();
+	const projectToken = projectCapability(normalizedProject);
+	return {
+		"Content-Type": "application/json",
+		[PROJECT_CAPABILITY_PROJECT_HEADER]: normalizedProject,
+		...projectToken ? { Authorization: `Bearer ${projectToken}` } : {}
+	};
+}
+//#endregion
+//#region src/hooks/_observe-delivery.ts
+const MAX_ATTEMPTS = 2;
+const REQUEST_TIMEOUT_MS = 250;
+const RETRY_DELAY_MS = 50;
+function authHeaders(payload) {
+	return projectAuthHeaders(typeof payload["project"] === "string" ? payload["project"] : "");
+}
+function responseError(status, body) {
+	const reason = typeof body?.["error"] === "string" ? body["error"] : `observe request failed with HTTP ${status}`;
+	const error = new Error(reason);
+	error.retryable = status === 429 || status === 503 || body?.["retryable"] === true;
+	return error;
+}
+function delay(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function isResponseBody(value) {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+async function deliverObservation(payload) {
+	const restUrl = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
+	let lastError;
+	for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) try {
+		const response = await fetch(`${restUrl}/agentmemory/observe`, {
+			method: "POST",
+			headers: authHeaders(payload),
+			body: JSON.stringify(payload),
+			signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+		});
+		const parsedBody = await response.json().catch(() => null);
+		if (!isResponseBody(parsedBody)) {
+			const error = /* @__PURE__ */ new Error(`observe endpoint returned invalid JSON object with HTTP ${response.status}`);
+			error.retryable = response.ok || response.status === 429 || response.status === 503;
+			throw error;
+		}
+		const body = parsedBody;
+		if (response.ok && body?.["success"] !== false) return;
+		throw responseError(response.status, body);
+	} catch (error) {
+		lastError = error;
+		if (!(!(error instanceof Error) || error.retryable !== false) || attempt === MAX_ATTEMPTS) break;
+		await delay(RETRY_DELAY_MS * attempt);
+	}
+	throw lastError instanceof Error ? lastError : /* @__PURE__ */ new Error("observation delivery failed");
+}
+function reportObservationDeliveryFailure(error) {
+	const message = error instanceof Error ? error.message : "observation delivery failed";
+	process.stderr.write(`[agentmemory] ${message}\n`);
+}
 //#endregion
 //#region src/hooks/task-completed.ts
 function isSdkChildContext(payload) {
 	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
-}
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-function authHeaders() {
-	const h = { "Content-Type": "application/json" };
-	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-	return h;
 }
 async function main() {
 	let input = "";
@@ -282,29 +398,22 @@ async function main() {
 	}
 	if (!data || typeof data !== "object") return;
 	if (isSdkChildContext(data)) return;
-	const sessionId = data.session_id || "unknown";
-	fetch(`${REST_URL}/agentmemory/observe`, {
-		method: "POST",
-		headers: authHeaders(),
-		body: JSON.stringify({
-			hookType: "task_completed",
-			sessionId,
-			project: resolveProject(data.cwd),
-			cwd: data.cwd || process.cwd(),
-			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-			data: {
-				task_id: data.task_id,
-				task_subject: data.task_subject,
-				task_description: typeof data.task_description === "string" ? data.task_description.slice(0, 2e3) : "",
-				teammate_name: data.teammate_name,
-				team_name: data.team_name
-			}
-		}),
-		signal: AbortSignal.timeout(2e3)
-	}).catch(() => {});
-	setTimeout(() => process.exit(0), 500).unref();
+	await deliverObservation({
+		hookType: "task_completed",
+		sessionId: data.session_id || "unknown",
+		project: resolveProject(data.cwd),
+		cwd: data.cwd || process.cwd(),
+		timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+		data: {
+			task_id: data.task_id,
+			task_subject: data.task_subject,
+			task_description: typeof data.task_description === "string" ? data.task_description.slice(0, 2e3) : "",
+			teammate_name: data.teammate_name,
+			team_name: data.team_name
+		}
+	});
 }
-main().catch(() => process.exit(0));
+main().catch(reportObservationDeliveryFailure);
 //#endregion
 export {};
 

@@ -211,8 +211,14 @@ function getMergedEnv(
 export function getEnvVar(key: string): string | undefined {
   const env = getMergedEnv();
   const value = resolveEnvValue(env[key]);
-  if (key === "AGENTMEMORY_SECRET" && !hasRealValue(value)) {
-    const secretFile = resolveEnvValue(env["AGENTMEMORY_SECRET_FILE"]);
+  const secretFileKey = {
+    AGENTMEMORY_SECRET: "AGENTMEMORY_SECRET_FILE",
+    AGENTMEMORY_PROJECT_CAPABILITY_SECRET:
+      "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE",
+    AGENTMEMORY_CONTEXT_ACK_SECRET: "AGENTMEMORY_CONTEXT_ACK_SECRET_FILE",
+  }[key];
+  if (secretFileKey && !hasRealValue(value)) {
+    const secretFile = resolveEnvValue(env[secretFileKey]);
     if (hasRealValue(secretFile)) {
       try {
         const path = secretFile.startsWith("~/")

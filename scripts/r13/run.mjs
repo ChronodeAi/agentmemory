@@ -125,7 +125,7 @@ function sourceState() {
   };
 }
 
-function sanitizedEnvironment(home, port, secret) {
+function sanitizedEnvironment(home, port, secret, capabilitySecret) {
   const env = { ...process.env };
   for (const key of Object.keys(env)) {
     if (
@@ -142,6 +142,7 @@ function sanitizedEnvironment(home, port, secret) {
     CI: "1",
     NO_COLOR: "1",
     AGENTMEMORY_SECRET: secret,
+    AGENTMEMORY_PROJECT_CAPABILITY_SECRET: capabilitySecret,
     AGENTMEMORY_URL: `http://127.0.0.1:${port}`,
     AGENTMEMORY_INJECT_CONTEXT: "false",
   };
@@ -243,6 +244,28 @@ function fileSha(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
 }
 
+const governedArtifacts = [
+  "stderr.log",
+  "stdout.log",
+  "telemetry.jsonl",
+  "tracked-tests.txt",
+  "vitest.json",
+  "worker-pids.txt",
+];
+
+function writeReceipt(receiptDir, receipt) {
+  for (const artifact of governedArtifacts) {
+    const path = join(receiptDir, artifact);
+    if (existsSync(path)) receipt.artifact_sha256[artifact] = fileSha(path);
+  }
+  const receiptPath = join(receiptDir, "receipt.json");
+  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
+  writeFileSync(
+    join(receiptDir, "receipt.sha256"),
+    `${fileSha(receiptPath)}  receipt.json\n`,
+  );
+}
+
 function resultFiles(vitestJson) {
   const parsed = JSON.parse(readFileSync(vitestJson, "utf8"));
   const files = (parsed.testResults ?? [])
@@ -262,7 +285,14 @@ function resultFiles(vitestJson) {
   };
 }
 
-function commonReceipt(runId, tests, qualifiedNode, source) {
+function commonReceipt(
+  runId,
+  tests,
+  qualifiedNode,
+  source,
+  secret,
+  capabilitySecret,
+) {
   return {
     schema_version: 1,
     risk_id: "R-13",
@@ -270,6 +300,7 @@ function commonReceipt(runId, tests, qualifiedNode, source) {
     source_sha: source.head,
     source_tree_sha256: source.treeSha256,
     source_worktree_dirty: source.dirty,
+    qualification_waivers: [],
     environment: {
       platform: platform(),
       release: release(),
@@ -277,6 +308,9 @@ function commonReceipt(runId, tests, qualifiedNode, source) {
       node: process.version,
       npm: npmVersion(),
       qualified_node_profile: qualifiedNode,
+      mandatory_auth_configured: Boolean(secret),
+      mandatory_project_capability_auth_configured:
+        Boolean(capabilitySecret),
     },
     limits: {
       timeout_ms: timeoutMs,
@@ -298,15 +332,31 @@ async function runOnce(index) {
   const source = sourceState();
   const qualifiedNode = isAcceptedNode(process.version);
   const allowUnqualified = process.env.R13_ALLOW_UNQUALIFIED_NODE === "1";
+  const allowDirty = process.env.R13_ALLOW_DIRTY_TREE === "1";
   const secret = process.env.AGENTMEMORY_SECRET ?? "";
+  const capabilitySecret =
+    process.env.AGENTMEMORY_PROJECT_CAPABILITY_SECRET ?? "";
   const runId = `${Date.now()}-${index}-${randomBytes(4).toString("hex")}`;
   const receiptBase =
     process.env.R13_RECEIPT_DIR ?? join(root, ".r13-receipts");
   const receiptDir = join(receiptBase, runId);
   mkdirSync(receiptDir, { recursive: true });
   writeFileSync(join(receiptDir, "tracked-tests.txt"), `${tests.join("\n")}\n`);
-  const receipt = commonReceipt(runId, tests, qualifiedNode, source);
+  const receipt = commonReceipt(
+    runId,
+    tests,
+    qualifiedNode,
+    source,
+    secret,
+    capabilitySecret,
+  );
   const failures = [];
+  if (!qualifiedNode && allowUnqualified) {
+    receipt.qualification_waivers.push("unqualified-node-profile");
+  }
+  if (source.dirty && allowDirty) {
+    receipt.qualification_waivers.push("dirty-source");
+  }
   const expectedTests = expectedTestManifest();
   const observedManifestSha = sha256(`${tests.join("\n")}\n`);
   const observedContentSha = testContentSha(tests);
@@ -326,10 +376,13 @@ async function runOnce(index) {
     );
   }
   if (!secret) failures.push("MISSING_MANDATORY_AUTH");
+  if (!capabilitySecret) {
+    failures.push("MISSING_PROJECT_CAPABILITY_AUTH");
+  }
   if (!qualifiedNode && !allowUnqualified) {
     failures.push(`unsupported Node profile ${process.version}`);
   }
-  if (source.dirty && process.env.R13_ALLOW_DIRTY_TREE !== "1") {
+  if (source.dirty && !allowDirty) {
     failures.push(
       "source worktree is dirty; commit the candidate or set R13_ALLOW_DIRTY_TREE=1 for a provisional run",
     );
@@ -338,10 +391,7 @@ async function runOnce(index) {
   if (preflightOnly || failures.length > 0) {
     receipt.result = failures.length === 0 ? "preflight-pass" : "preflight-fail";
     receipt.failures = failures;
-    writeFileSync(
-      join(receiptDir, "receipt.json"),
-      `${JSON.stringify(receipt, null, 2)}\n`,
-    );
+    writeReceipt(receiptDir, receipt);
     if (failures.length > 0) {
       throw new Error(failures.join("; "));
     }
@@ -356,8 +406,11 @@ async function runOnce(index) {
   const home = mkdtempSync(join(tmpdir(), "agentmemory-r13-"));
   writePreferences(home);
   const engine = installEngine(home);
+  if (!engine.verified) {
+    receipt.qualification_waivers.push("unverified-iii-provenance");
+  }
   const port = Number(process.env.R13_PORT ?? 4311 + index * 100);
-  const env = sanitizedEnvironment(home, port, secret);
+  const env = sanitizedEnvironment(home, port, secret, capabilitySecret);
   const vitestJson = join(receiptDir, "vitest.json");
   const workerPids = join(receiptDir, "worker-pids.txt");
   const stdoutPath = join(receiptDir, "stdout.log");
@@ -517,7 +570,12 @@ async function runOnce(index) {
       mandatory_auth_tests: requiredAuthTests,
       missing_auth_tests: missingAuthTests,
     };
-    receipt.result = failures.length === 0 ? "pass" : "fail";
+    receipt.result =
+      failures.length > 0
+        ? "fail"
+        : receipt.qualification_waivers.length > 0
+          ? "provisional-pass"
+          : "pass";
     receipt.failures = failures;
   } finally {
     clearInterval(telemetry);
@@ -531,25 +589,16 @@ async function runOnce(index) {
     if (process.env.R13_KEEP_HOME !== "1") rmSync(home, { recursive: true, force: true });
   }
 
-  for (const artifact of [
-    "stderr.log",
-    "stdout.log",
-    "telemetry.jsonl",
-    "tracked-tests.txt",
-    "vitest.json",
-    "worker-pids.txt",
-  ]) {
-    const path = join(receiptDir, artifact);
-    if (existsSync(path)) receipt.artifact_sha256[artifact] = fileSha(path);
-  }
-  const receiptPath = join(receiptDir, "receipt.json");
-  writeFileSync(receiptPath, `${JSON.stringify(receipt, null, 2)}\n`);
-  writeFileSync(join(receiptDir, "receipt.sha256"), `${fileSha(receiptPath)}  receipt.json\n`);
+  writeReceipt(receiptDir, receipt);
 
-  if (receipt.result !== "pass") {
+  if (receipt.result !== "pass" && receipt.result !== "provisional-pass") {
     throw new Error(`R-13 failed: ${failures.join("; ")}`);
   }
-  console.log(`R-13 passed: ${relative(root, receiptDir)}`);
+  console.log(
+    receipt.result === "pass"
+      ? `R-13 passed: ${relative(root, receiptDir)}`
+      : `R-13 provisional pass (${receipt.qualification_waivers.join(", ")}): ${relative(root, receiptDir)}`,
+  );
 }
 
 for (let index = 0; index < repeat; index += 1) {

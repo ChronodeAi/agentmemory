@@ -5,9 +5,12 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerMcpEndpoints } from "../src/mcp/server.js";
+import { createProjectCapabilityToken } from "../src/auth.js";
 import type { Session, SessionSummary, Memory } from "../src/types.js";
 
 const SECRET = "mcp-prompts-test-secret";
+const ADMIN_SECRET = "mcp-prompts-admin-secret";
+const CAPABILITY_SECRET = "mcp-prompts-capability-secret";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -60,9 +63,28 @@ function mockSdk() {
 }
 
 function makeReq(body?: unknown, headers?: Record<string, string>) {
+  const project =
+    body &&
+    typeof body === "object" &&
+    "arguments" in body &&
+    body.arguments &&
+    typeof body.arguments === "object" &&
+    "project" in body.arguments &&
+    typeof body.arguments.project === "string"
+      ? body.arguments.project
+      : "/test";
+  const capability = createProjectCapabilityToken(
+    {
+      version: 1,
+      audience: "agentmemory",
+      project,
+      expiresAt: Math.floor(Date.now() / 1000) + 60,
+    },
+    CAPABILITY_SECRET,
+  );
   return {
     body,
-    headers: headers || { authorization: `Bearer ${SECRET}` },
+    headers: headers || { authorization: `Bearer ${capability}` },
     query_params: {},
   };
 }
@@ -74,7 +96,14 @@ describe("MCP Prompts", () => {
   beforeEach(() => {
     sdk = mockSdk();
     kv = mockKV();
-    registerMcpEndpoints(sdk as never, kv as never, SECRET);
+    registerMcpEndpoints(
+      sdk as never,
+      kv as never,
+      SECRET,
+      ADMIN_SECRET,
+      CAPABILITY_SECRET,
+      true,
+    );
   });
 
   it("lists 3 prompts", async () => {
@@ -113,7 +142,10 @@ describe("MCP Prompts", () => {
     const result = (await fn(
       makeReq({
         name: "recall_context",
-        arguments: { task_description: "implement auth" },
+        arguments: {
+          task_description: "implement auth",
+          project: "/test",
+        },
       }),
     )) as {
       status_code: number;
@@ -154,7 +186,7 @@ describe("MCP Prompts", () => {
     const result = (await fn(
       makeReq({
         name: "session_handoff",
-        arguments: { session_id: "ses_1" },
+        arguments: { session_id: "ses_1", project: "/test" },
       }),
     )) as {
       status_code: number;
@@ -191,7 +223,7 @@ describe("MCP Prompts", () => {
     const result = (await fn(
       makeReq({
         name: "recall_context",
-        arguments: {},
+        arguments: { project: "/test" },
       }),
     )) as { status_code: number };
 
@@ -203,7 +235,7 @@ describe("MCP Prompts", () => {
     const result = (await fn(
       makeReq({
         name: "nonexistent_prompt",
-        arguments: {},
+        arguments: { project: "/test" },
       }),
     )) as { status_code: number };
 
@@ -215,7 +247,7 @@ describe("MCP Prompts", () => {
     const result = (await fn(
       makeReq({
         name: "recall_context",
-        arguments: { task_description: 42 },
+        arguments: { task_description: 42, project: "/test" },
       }),
     )) as { status_code: number };
 

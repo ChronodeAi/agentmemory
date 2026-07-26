@@ -225,20 +225,33 @@ export interface FunctionMetrics {
 }
 
 export interface HealthSnapshot {
+  collectedAt?: string;
+  expiresAt?: string;
   connectionState: string;
   workers: Array<{ id: string; name: string; status: string }>;
-  workerProbeStatus?: "ok" | "error";
+  workerProbeStatus?: "ok" | "error" | "empty" | "invalid";
+  slotBackend?: { status: "ok" | "error"; error?: string };
   memory: {
     heapUsed: number;
     heapTotal: number;
     rss: number;
     external: number;
+    systemTotal?: number;
   };
   cpu: { userMicros: number; systemMicros: number; percent: number };
   eventLoopLagMs: number;
   uptimeSeconds: number;
   kvConnectivity?: { status: string; latencyMs?: number; error?: string };
-  captureAdmission?: { active: number; limit: number; rejected: number };
+  captureAdmission?: {
+    active: number;
+    limit: number;
+    accepted?: number;
+    completed?: number;
+    failed?: number;
+    rejected: number;
+    failedSinceLastCollection?: number;
+    rejectedSinceLastCollection?: number;
+  };
   status: "healthy" | "degraded" | "critical";
   alerts: string[];
   notes?: string[];
@@ -410,6 +423,7 @@ export type GraphNodeType =
 
 export interface GraphNode {
   id: string;
+  project?: string;
   type: GraphNodeType;
   name: string;
   properties: Record<string, unknown>;
@@ -440,6 +454,7 @@ export type GraphEdgeType =
 
 export interface GraphEdge {
   id: string;
+  project?: string;
   type: GraphEdgeType;
   sourceNodeId: string;
   targetNodeId: string;
@@ -640,7 +655,8 @@ export interface AuditEntry {
     | "slot_replace"
     | "slot_create"
     | "slot_delete"
-    | "slot_reflect";
+    | "slot_reflect"
+    | "session_close";
   userId?: string;
   functionId: string;
   targetIds: string[];

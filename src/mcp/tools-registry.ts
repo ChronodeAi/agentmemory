@@ -280,6 +280,16 @@ export const CORE_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         sha: { type: "string", description: "Full git commit SHA" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+        },
       },
       required: ["sha"],
     },
@@ -291,6 +301,16 @@ export const CORE_TOOLS: McpToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+        },
         branch: { type: "string", description: "Filter by branch name" },
         repo: { type: "string", description: "Filter by remote URL" },
         limit: { type: "number", description: "Max results (default 100, max 500)" },
@@ -322,6 +342,16 @@ export const V040_TOOLS: McpToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        project: {
+          type: "string",
+          description: "Canonical project ID for a project-scoped query",
+        },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description:
+            "Explicit administrative cross-project scope; requires admin authorization",
+        },
         startNodeId: {
           type: "string",
           description: "Starting node ID for traversal",
@@ -332,6 +362,8 @@ export const V040_TOOLS: McpToolDef[] = [
           description: "Max BFS depth (default 3, max 5)",
         },
         query: { type: "string", description: "Search nodes by name" },
+        limit: { type: "number", description: "Maximum nodes to return" },
+        offset: { type: "number", description: "Pagination offset" },
       },
     },
   },

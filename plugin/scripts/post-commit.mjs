@@ -3,7 +3,7 @@ import { execFile, execFileSync } from "node:child_process";
 import { isAbsolute, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { parse } from "dotenv";
@@ -34,6 +34,125 @@ function parseCommitTransitions(status) {
 		});
 	}
 	return transitions;
+}
+randomBytes(32);
+const PROJECT_CAPABILITY_TOKEN_VERSION = "amcap1";
+const PROJECT_CAPABILITY_PROJECT_HEADER = "x-agentmemory-project";
+function hmac(value, secret) {
+	return createHmac("sha256", secret).update(value).digest("base64url");
+}
+function createProjectCapabilityToken(claims, signingSecret) {
+	if (!signingSecret) throw new Error("project capability signing secret is required");
+	const normalized = {
+		version: 1,
+		audience: claims.audience.trim(),
+		project: claims.project.trim(),
+		expiresAt: claims.expiresAt,
+		...claims.issuedAt !== void 0 ? { issuedAt: claims.issuedAt } : {},
+		...claims.capabilityId ? { capabilityId: claims.capabilityId.trim() } : {}
+	};
+	if (!normalized.audience || !normalized.project || !Number.isSafeInteger(normalized.expiresAt)) throw new Error("invalid project capability claims");
+	const signed = `${PROJECT_CAPABILITY_TOKEN_VERSION}.${Buffer.from(JSON.stringify(normalized)).toString("base64url")}`;
+	return `${signed}.${hmac(signed, signingSecret)}`;
+}
+function isStrictCapabilityMode(value = process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"]) {
+	return ![
+		"false",
+		"0",
+		"off"
+	].includes((value ?? "").trim().toLowerCase());
+}
+//#endregion
+//#region src/hooks/_auth.ts
+const CAPABILITY_TTL_SECONDS = 300;
+function secretFromEnvironmentOrFile(environmentName, fileEnvironmentName, defaultFileName) {
+	const direct = process.env[environmentName]?.trim();
+	if (direct) return direct;
+	const configuredPath = process.env[fileEnvironmentName]?.trim() || join(homedir(), ".agentmemory", defaultFileName);
+	const path = configuredPath.startsWith("~/") ? join(homedir(), configuredPath.slice(2)) : configuredPath;
+	if (!existsSync(path)) return "";
+	try {
+		return readFileSync(path, "utf8").trim();
+	} catch {
+		return "";
+	}
+}
+function projectCapabilitySigningSecret() {
+	return secretFromEnvironmentOrFile("AGENTMEMORY_PROJECT_CAPABILITY_SECRET", "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE", "project-capability-secret");
+}
+function projectCapability(project) {
+	const normalizedProject = project.trim();
+	if (!normalizedProject) throw new Error("project scope is required");
+	const configuredToken = process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"]?.trim();
+	if (configuredToken) return configuredToken;
+	const signingSecret = projectCapabilitySigningSecret();
+	if (signingSecret) {
+		const issuedAt = Math.floor(Date.now() / 1e3);
+		return createProjectCapabilityToken({
+			version: 1,
+			audience: process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"]?.trim() || "agentmemory",
+			project: normalizedProject,
+			issuedAt,
+			expiresAt: issuedAt + CAPABILITY_TTL_SECONDS
+		}, signingSecret);
+	}
+	if (!isStrictCapabilityMode()) return process.env["AGENTMEMORY_SECRET"]?.trim() || "";
+	throw new Error("project capability credentials are unavailable");
+}
+function projectAuthHeaders(project) {
+	const normalizedProject = project.trim();
+	const projectToken = projectCapability(normalizedProject);
+	return {
+		"Content-Type": "application/json",
+		[PROJECT_CAPABILITY_PROJECT_HEADER]: normalizedProject,
+		...projectToken ? { Authorization: `Bearer ${projectToken}` } : {}
+	};
+}
+//#endregion
+//#region src/hooks/_delivery.ts
+var HookDeliveryError = class extends Error {
+	retryable;
+	constructor(message, retryable) {
+		super(message);
+		this.name = "HookDeliveryError";
+		this.retryable = retryable;
+	}
+};
+function responseError(status, body) {
+	return new HookDeliveryError(typeof body?.["error"] === "string" ? body["error"] : `request failed with HTTP ${status}`, status === 429 || status === 503 || body?.["retryable"] === true);
+}
+function delay(ms) {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+function isResponseBody(value) {
+	return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+async function deliverProjectRequest(path, project, body, options) {
+	const restUrl = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
+	const attempts = Math.max(1, options.attempts ?? 1);
+	let lastError;
+	for (let attempt = 1; attempt <= attempts; attempt += 1) try {
+		const response = await fetch(`${restUrl}${path}`, {
+			method: "POST",
+			headers: projectAuthHeaders(project),
+			body: JSON.stringify(body),
+			signal: AbortSignal.timeout(options.timeoutMs)
+		});
+		const parsedBody = await response.json().catch(() => null);
+		if (!isResponseBody(parsedBody)) throw new HookDeliveryError(`hook endpoint returned invalid JSON object with HTTP ${response.status}`, response.ok || response.status === 429 || response.status === 503);
+		const responseBody = parsedBody;
+		if (response.ok && responseBody?.["success"] !== false) return responseBody;
+		throw responseError(response.status, responseBody);
+	} catch (error) {
+		lastError = error;
+		if (!(!(error instanceof HookDeliveryError) || error.retryable) || attempt === attempts) break;
+		await delay(75 * attempt);
+	}
+	throw lastError instanceof Error ? lastError : /* @__PURE__ */ new Error("hook delivery failed");
+}
+function reportHookDeliveryFailure(action, error) {
+	const message = error instanceof Error ? error.message : "hook delivery failed";
+	process.stderr.write(`[agentmemory] ${action} failed: ${message}\n`);
 }
 //#endregion
 //#region src/project-config.ts
@@ -295,14 +414,7 @@ function isSdkChildContext(payload) {
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
 }
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 const TIMEOUT_MS = 1500;
-function authHeaders() {
-	const h = { "Content-Type": "application/json" };
-	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-	return h;
-}
 async function git(args, cwd) {
 	try {
 		const { stdout } = await exec("git", args, {
@@ -397,18 +509,16 @@ async function main() {
 	const project = resolveProject(cwd);
 	const sha = process.env["AGENTMEMORY_COMMIT_SHA"] || await git(["rev-parse", "HEAD"], cwd);
 	if (!sha) return;
-	const body = await collectCommitLinkage(cwd, sha, sessionId, project);
-	try {
-		await fetch(`${REST_URL}/agentmemory/session/commit`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(TIMEOUT_MS)
-		});
-	} catch {}
+	await deliverProjectRequest("/agentmemory/session/commit", project, await collectCommitLinkage(cwd, sha, sessionId, project), {
+		attempts: 2,
+		timeoutMs: TIMEOUT_MS
+	});
 }
 const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
-if (import.meta.url === invokedPath) main().catch(() => process.exit(0));
+if (import.meta.url === invokedPath) main().catch((error) => {
+	reportHookDeliveryFailure("commit linkage", error);
+	process.exitCode = 1;
+});
 //#endregion
 export { collectCommitLinkage };
 

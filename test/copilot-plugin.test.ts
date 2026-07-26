@@ -249,6 +249,8 @@ describe("Copilot hook scripts", () => {
           ...process.env,
           AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
           AGENTMEMORY_SECRET: "",
+          AGENTMEMORY_PROJECT_CAPABILITY_SECRET:
+            "copilot-hook-capability-secret",
           ...env,
         },
         stdio: ["pipe", "pipe", "pipe"],

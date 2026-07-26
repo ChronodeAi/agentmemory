@@ -406,6 +406,12 @@ describe("agentmemory connect — copilot-cli adapter (mock filesystem)", () => 
         AGENTMEMORY_SECRET: "${AGENTMEMORY_SECRET:-}",
         AGENTMEMORY_SECRET_FILE:
           "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
+        AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE:
+          "${AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE:-~/.agentmemory/project-capability-secret}",
+        AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE:
+          "${AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE:-agentmemory}",
+        AGENTMEMORY_STRICT_CAPABILITY_MODE:
+          "${AGENTMEMORY_STRICT_CAPABILITY_MODE:-true}",
         AGENTMEMORY_TOOLS: "${AGENTMEMORY_TOOLS:-all}",
       },
       tools: ["*"],

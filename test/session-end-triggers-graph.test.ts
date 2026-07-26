@@ -61,6 +61,7 @@ describe("api::graph-build endpoint (#666)", () => {
     expect(api).toMatch(
       /sdk\.trigger\(\{\s*function_id:\s*"mem::graph-extract"/,
     );
+    expect(api).toMatch(/payload:\s*\{\s*observations:\s*batch,\s*project\s*\}/);
   });
 
   it("filters observations that have a title (compressed only)", () => {
@@ -71,8 +72,11 @@ describe("api::graph-build endpoint (#666)", () => {
     expect(api).toMatch(/Math\.min\(100,\s*Number\(.*batchSize/);
   });
 
-  it("response shape matches what the viewer expects (success + nodes)", () => {
-    expect(api).toMatch(/success:\s*true,\s*sessions:[\s\S]*?nodes:\s*totalNodes/);
+  it("surfaces partial backfill failures instead of unconditional success", () => {
+    expect(api).toMatch(/status_code:\s*batchesFailed === 0 \? 200 : 503/);
+    expect(api).toMatch(
+      /success:\s*batchesFailed === 0,[\s\S]*?batchesFailed,[\s\S]*?nodes:\s*totalNodes/,
+    );
   });
 });
 
@@ -83,8 +87,11 @@ describe("api::graph-build endpoint (#666)", () => {
 describe("agentmemory status no longer depends on /export (#666)", () => {
   const cli = readFileSync("src/cli.ts", "utf-8");
 
-  it("status uses count-only memories endpoint instead of export", () => {
-    expect(cli).toMatch(/apiFetch<any>\(base,\s*"memories\?count=true"\)/);
+  it("status uses a scoped count-only memories endpoint instead of export", () => {
+    expect(cli).toMatch(
+      /const memoriesQuery = globalScope[\s\S]*?memories\?count=true&scope=global[\s\S]*?memories\?count=true&project=/,
+    );
+    expect(cli).toMatch(/apiFetch<any>\(base,\s*memoriesQuery\)/);
     expect(cli).not.toMatch(/apiFetch<any>\(base,\s*"export"\)/);
   });
 

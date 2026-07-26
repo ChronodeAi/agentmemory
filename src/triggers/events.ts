@@ -77,10 +77,19 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     config: { topic: "agentmemory.observation" },
   });
 
-  sdk.registerFunction("event::session::stopped", async (data: { sessionId: string; project?: string }) => {
-    const summary = await sdk.trigger({ function_id: "mem::summarize", payload: data });
+  sdk.registerFunction("event::session::stopped", async (data: { sessionId: string; project: string }) => {
     const session = await kv.get<Session>(KV.sessions, data.sessionId);
-    if (session && (!data.project || session.project === data.project)) {
+    if (!session || !data.project || session.project !== data.project) {
+      return {
+        success: false,
+        error: "session_not_found_or_project_mismatch",
+      };
+    }
+    const summary = await sdk.trigger({
+      function_id: "mem::summarize",
+      payload: data,
+    });
+    if ((summary as { success?: unknown })?.success === true) {
       try {
         await sdk.trigger({
           function_id: "mem::promotion-generate",
@@ -100,7 +109,7 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
       try {
         sdk.trigger({
           function_id: "mem::slot-reflect",
-          payload: { sessionId: data.sessionId },
+          payload: { sessionId: data.sessionId, project: data.project },
           action: TriggerAction.Void(),
         });
       } catch (err) {
@@ -125,7 +134,7 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         if (compressed.length > 0) {
           sdk.trigger({
             function_id: "mem::graph-extract",
-            payload: { observations: compressed },
+            payload: { observations: compressed, project: data.project },
             action: TriggerAction.Void(),
           });
         }

@@ -17,6 +17,11 @@ import {
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
 import { getEnvVar } from "../config.js";
+import {
+  requireProjectReadScope,
+  type ProjectReadScope,
+  type ProjectScopeInput,
+} from "../project-scope.js";
 
 // #753: keep the response payload below the iii state channel ceiling.
 // 500 nodes + their incident edges hold well under the limit on the
@@ -183,8 +188,8 @@ function paginateFromSnapshot(
 // future extracts rebuild incrementally.
 const REBUILD_SAFE_NODE_CEILING = 25000;
 
-function nameIndexKey(type: string, name: string): string {
-  return `${type}|${name}`;
+function nameIndexKey(project: string, type: string, name: string): string {
+  return `${project}|${type}|${name}`;
 }
 
 function edgeIndexKey(
@@ -361,6 +366,35 @@ function paginate(
   };
 }
 
+async function enumerateGraphForScope(
+  kv: StateKV,
+  scope: ProjectReadScope,
+  label: string,
+): Promise<{ nodes: GraphNode[]; edges: GraphEdge[] }> {
+  const [rawNodes, rawEdges] = await withTimeout(
+    Promise.all([
+      kv.list<GraphNode>(KV.graphNodes),
+      kv.list<GraphEdge>(KV.graphEdges),
+    ]),
+    LIVE_ENUMERATION_BUDGET_MS,
+    label,
+  );
+  const nodes = rawNodes.filter(
+    (node) =>
+      !node.stale &&
+      (scope.kind === "global" || node.project === scope.project),
+  );
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const edges = rawEdges.filter(
+    (edge) =>
+      !edge.stale &&
+      (scope.kind === "global" || edge.project === scope.project) &&
+      nodeIds.has(edge.sourceNodeId) &&
+      nodeIds.has(edge.targetNodeId),
+  );
+  return { nodes, edges };
+}
+
 // Parse all key="value" pairs from a tag's attribute string, in any
 // order. The previous parser hard-coded attribute order
 // (type before name on <entity>, type/source/target/weight on
@@ -380,6 +414,7 @@ function parseAttrs(raw: string): Record<string, string> {
 function parseGraphXml(
   xml: string,
   observationIds: string[],
+  project: string,
 ): {
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -409,6 +444,7 @@ function parseGraphXml(
     }
     nodes.push({
       id: generateId("gn"),
+      project,
       type,
       name,
       properties,
@@ -440,6 +476,7 @@ function parseGraphXml(
     if (!sourceNode || !targetNode) continue;
     edges.push({
       id: generateId("ge"),
+      project,
       type,
       sourceNodeId: sourceNode.id,
       targetNodeId: targetNode.id,
@@ -458,9 +495,20 @@ export function registerGraphFunction(
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::graph-extract", 
-    async (data: { observations: CompressedObservation[] }) => {
+    async (data: {
+      observations: CompressedObservation[];
+      project?: string;
+    }) => {
       if (!data.observations || data.observations.length === 0) {
         return { success: false, error: "No observations provided" };
+      }
+      const project =
+        typeof data.project === "string" ? data.project.trim() : "";
+      if (!project) {
+        return {
+          success: false,
+          error: "project is required for graph extraction",
+        };
       }
       const sessionIds = Array.from(
         new Set(data.observations.map((observation) => observation.sessionId)),
@@ -470,6 +518,27 @@ export function registerGraphFunction(
           kv.get<Session>(KV.sessions, sessionId).catch(() => null),
         ),
       );
+      const missingSessionIds = sessionIds.filter(
+        (_sessionId, index) => !sessions[index],
+      );
+      if (missingSessionIds.length > 0) {
+        return {
+          success: false,
+          error: "graph extraction source session not found",
+          sessionIds: missingSessionIds,
+        };
+      }
+      const mismatchedSessionIds = sessions
+        .filter((session) => session?.project !== project)
+        .map((session) => session?.id)
+        .filter((sessionId): sessionId is string => Boolean(sessionId));
+      if (mismatchedSessionIds.length > 0) {
+        return {
+          success: false,
+          error: "graph extraction project does not match source session",
+          sessionIds: mismatchedSessionIds,
+        };
+      }
       const includesStrictSession = sessions.some(
         (session) =>
           session?.privacy === "strict" ||
@@ -503,7 +572,7 @@ export function registerGraphFunction(
         );
 
         const obsIds = data.observations.map((o) => o.id);
-        const { nodes, edges } = parseGraphXml(response, obsIds);
+        const { nodes, edges } = parseGraphXml(response, obsIds, project);
 
         // #814 v2: targeted name-index lookups replace the O(n) scan
         // over `kv.list<GraphNode>(KV.graphNodes)`. At 75K nodes the
@@ -515,9 +584,10 @@ export function registerGraphFunction(
         let newNodeCount = 0;
         let newEdgeCount = 0;
         const newEdgesForTopCheck: GraphEdge[] = [];
+        const canonicalNodeIds = new Map<string, string>();
 
         for (const node of nodes) {
-          const indexKey = nameIndexKey(node.type, node.name);
+          const indexKey = nameIndexKey(project, node.type, node.name);
           const existingId = await kv.get<string>(
             KV.graphNameIndex,
             indexKey,
@@ -542,6 +612,7 @@ export function registerGraphFunction(
           }
 
           if (existing) {
+            canonicalNodeIds.set(node.id, existing.id);
             const merged = mergeNode(existing, node, obsIds, capturedAt);
             await kv.set(KV.graphNodes, existing.id, merged);
             // Update topNodes entry if present so a stale clone isn't
@@ -551,6 +622,7 @@ export function registerGraphFunction(
             );
             if (topIdx !== -1) snap.topNodes[topIdx] = merged;
           } else {
+            canonicalNodeIds.set(node.id, node.id);
             await kv.set(KV.graphNodes, node.id, node);
             await kv.set(KV.graphNameIndex, indexKey, node.id);
             await kv.set(KV.graphNodeDegree, node.id, 0);
@@ -567,7 +639,16 @@ export function registerGraphFunction(
           }
         }
 
-        for (const edge of edges) {
+        for (const parsedEdge of edges) {
+          const edge: GraphEdge = {
+            ...parsedEdge,
+            sourceNodeId:
+              canonicalNodeIds.get(parsedEdge.sourceNodeId) ??
+              parsedEdge.sourceNodeId,
+            targetNodeId:
+              canonicalNodeIds.get(parsedEdge.targetNodeId) ??
+              parsedEdge.targetNodeId,
+          };
           const eKey = edgeIndexKey(
             edge.sourceNodeId,
             edge.targetNodeId,
@@ -624,11 +705,13 @@ export function registerGraphFunction(
         }
 
         await recordAudit(kv, "observe", "mem::graph-extract", obsIds, {
+          project,
           nodesExtracted: nodes.length,
           edgesExtracted: edges.length,
         });
 
         logger.info("Graph extraction complete", {
+          project,
           nodes: nodes.length,
           edges: edges.length,
           newNodes: newNodeCount,
@@ -636,8 +719,10 @@ export function registerGraphFunction(
         });
         return {
           success: true,
-          nodesAdded: nodes.length,
-          edgesAdded: edges.length,
+          nodesAdded: newNodeCount,
+          edgesAdded: newEdgeCount,
+          nodesExtracted: nodes.length,
+          edgesExtracted: edges.length,
         };
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
@@ -654,7 +739,7 @@ export function registerGraphFunction(
   // rejected it with HTTP 500 "Invocation stopped", leaving the viewer
   // graph tab silently blank.
   sdk.registerFunction("mem::graph-query",
-    async (data: {
+    async (data: ProjectScopeInput & {
       startNodeId?: string;
       nodeType?: string;
       maxDepth?: number;
@@ -662,6 +747,7 @@ export function registerGraphFunction(
       limit?: number;
       offset?: number;
     }): Promise<GraphQueryResult> => {
+      const scope = requireProjectReadScope(data, "mem::graph-query");
       const maxDepth = Math.min(data.maxDepth || 3, 5);
       const { limit, offset } = resolvePagination(data.limit, data.offset);
 
@@ -673,7 +759,7 @@ export function registerGraphFunction(
       // REBUILD_SAFE_NODE_CEILING) or mem::graph-reset to wipe and
       // rebuild incrementally from new observations.
       const noWalk = !data.query && !data.startNodeId;
-      if (noWalk) {
+      if (noWalk && scope.kind === "global") {
         const snap = await readSnapshot(kv);
         if (snap && snap.stats.totalNodes > 0) {
           return paginateFromSnapshot(snap, data.nodeType, limit, offset);
@@ -703,31 +789,32 @@ export function registerGraphFunction(
       let allNodes: GraphNode[];
       let allEdges: GraphEdge[];
       try {
-        const [rawNodes, rawEdges] = await withTimeout(
-          Promise.all([
-            kv.list<GraphNode>(KV.graphNodes),
-            kv.list<GraphEdge>(KV.graphEdges),
-          ]),
-          LIVE_ENUMERATION_BUDGET_MS,
+        const graph = await enumerateGraphForScope(
+          kv,
+          scope,
           "graph-query enumeration",
         );
-        allNodes = rawNodes.filter((n) => !n.stale);
-        allEdges = rawEdges.filter((e) => !e.stale);
+        allNodes = graph.nodes;
+        allEdges = graph.edges;
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
-        logger.warn("Graph query enumeration timed out, using snapshot", {
+        logger.warn("Graph query enumeration timed out", {
+          scope: scope.kind,
+          project: scope.kind === "project" ? scope.project : undefined,
           error: msg,
         });
-        const snap = await readSnapshot(kv);
-        if (snap) {
-          return {
-            ...paginateFromSnapshot(snap, data.nodeType, limit, offset),
-            warning:
-              "Live graph enumeration exceeded budget. Query / " +
-              "startNodeId paths degrade on >25K-node corpora until a " +
-              "per-node edge index lands. Result reflects top-degree " +
-              "snapshot, not the requested walk.",
-          };
+        if (scope.kind === "global") {
+          const snap = await readSnapshot(kv);
+          if (snap) {
+            return {
+              ...paginateFromSnapshot(snap, data.nodeType, limit, offset),
+              warning:
+                "Live graph enumeration exceeded budget. Query / " +
+                "startNodeId paths degrade on >25K-node corpora until a " +
+                "per-node edge index lands. Result reflects top-degree " +
+                "snapshot, not the requested walk.",
+            };
+          }
         }
         return {
           nodes: [],
@@ -739,8 +826,17 @@ export function registerGraphFunction(
           limit,
           offset,
           warning:
-            "Graph enumeration exceeded budget and no snapshot is available.",
+            scope.kind === "project"
+              ? "Project graph enumeration exceeded budget; no cross-project snapshot fallback was used."
+              : "Graph enumeration exceeded budget and no snapshot is available.",
         };
+      }
+
+      if (noWalk) {
+        const matchingNodes = data.nodeType
+          ? allNodes.filter((node) => node.type === data.nodeType)
+          : allNodes;
+        return paginate(matchingNodes, allEdges, 0, limit, offset);
       }
 
       if (data.query) {
@@ -802,40 +898,70 @@ export function registerGraphFunction(
     },
   );
 
-  // #814 v2: graph-stats reads the snapshot exclusively. The snapshot
-  // is maintained inline by mem::graph-extract, so for any corpus built
-  // on a post-#814 agentmemory the stats are always current without an
-  // enumeration. Legacy corpora without a snapshot get an empty
-  // envelope + a warning pointing at the snapshot-rebuild or graph-reset
-  // endpoints — never a 500.
-  sdk.registerFunction("mem::graph-stats", async () => {
-    const snap = await readSnapshot(kv);
-    if (snap) {
-      return {
-        ...snap.stats,
-        fromSnapshot: true,
-        updatedAt: snap.updatedAt,
-        ...(snap.dirty
-          ? {
-              warning:
-                "Snapshot is marked dirty (write was in-flight when read). " +
-                "Counts are eventually consistent.",
-            }
-          : {}),
-      };
-    }
-    return {
-      totalNodes: 0,
-      totalEdges: 0,
-      nodesByType: {},
-      edgesByType: {},
-      fromSnapshot: false,
-      warning:
-        "No graph snapshot available. Run POST /agentmemory/graph/snapshot-rebuild " +
-        "(safe up to ~25K nodes) or POST /agentmemory/graph/reset to wipe " +
-        "and let future extracts repopulate.",
-    };
-  });
+  // Global stats use the incrementally maintained snapshot. Project
+  // stats enumerate and filter live records so a shared snapshot can
+  // never become an implicit cross-project read.
+  sdk.registerFunction(
+    "mem::graph-stats",
+    async (data: ProjectScopeInput) => {
+      const scope = requireProjectReadScope(data, "mem::graph-stats");
+      if (scope.kind === "global") {
+        const snap = await readSnapshot(kv);
+        if (snap) {
+          return {
+            ...snap.stats,
+            fromSnapshot: true,
+            updatedAt: snap.updatedAt,
+            ...(snap.dirty
+              ? {
+                  warning:
+                    "Snapshot is marked dirty (write was in-flight when read). " +
+                    "Counts are eventually consistent.",
+                }
+              : {}),
+          };
+        }
+        return {
+          totalNodes: 0,
+          totalEdges: 0,
+          nodesByType: {},
+          edgesByType: {},
+          fromSnapshot: false,
+          warning:
+            "No graph snapshot available. Run POST /agentmemory/graph/snapshot-rebuild " +
+            "(safe up to ~25K nodes) or POST /agentmemory/graph/reset to wipe " +
+            "and let future extracts repopulate.",
+        };
+      }
+
+      try {
+        const { nodes, edges } = await enumerateGraphForScope(
+          kv,
+          scope,
+          "graph-stats enumeration",
+        );
+        return {
+          ...buildSnapshotFromArrays(nodes, edges).stats,
+          fromSnapshot: false,
+        };
+      } catch (err) {
+        logger.warn("Project graph stats enumeration timed out", {
+          project: scope.project,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        return {
+          totalNodes: 0,
+          totalEdges: 0,
+          nodesByType: {},
+          edgesByType: {},
+          fromSnapshot: false,
+          unavailable: true,
+          warning:
+            "Project graph enumeration exceeded budget; no cross-project snapshot fallback was used.",
+        };
+      }
+    },
+  );
 
   // #814 v2: explicit rebuild backfills the snapshot AND the name /
   // edge-key / degree indexes from existing graphNodes/graphEdges
@@ -847,7 +973,14 @@ export function registerGraphFunction(
   // is mem::graph-reset followed by incremental re-extraction.
   sdk.registerFunction(
     "mem::graph-snapshot-rebuild",
-    async (data?: { force?: boolean }) => {
+    async (data?: { force?: boolean; scope?: unknown }) => {
+      if (data?.scope !== "global") {
+        return {
+          success: false,
+          error:
+            "mem::graph-snapshot-rebuild requires explicit global scope",
+        };
+      }
       const started = Date.now();
       // #825: pre-flight refusal for legacy corpora. The old guard
       // checked node count AFTER kv.list, but the heartbeat dies at
@@ -935,7 +1068,11 @@ export function registerGraphFunction(
         const batch = liveNodes.slice(i, i + BATCH_SIZE);
         await Promise.all(
           batch.flatMap((n) => [
-            kv.set(KV.graphNameIndex, nameIndexKey(n.type, n.name), n.id),
+            kv.set(
+              KV.graphNameIndex,
+              nameIndexKey(n.project ?? "legacy", n.type, n.name),
+              n.id,
+            ),
             kv.set(KV.graphNodeDegree, n.id, degree.get(n.id) ?? 0),
           ]),
         );
@@ -999,24 +1136,33 @@ export function registerGraphFunction(
   // read by any post-#816 code path. Cleanup is deferred to a future
   // chunked-vacuum job; #816's broken vacuum-via-list strategy is
   // what we are leaving behind here.
-  sdk.registerFunction("mem::graph-reset", async () => {
-    const started = Date.now();
-    // Stamp resetAt=now on the empty snapshot. Future
-    // mem::graph-extract calls compare each name-index lookup's
-    // existing node `createdAt` against this timestamp; anything
-    // older counts as an orphan and is dropped from the merge path,
-    // forcing extract to write a fresh row instead of reconnecting
-    // to a pre-reset entry.
-    const resetSnapshot: GraphSnapshot = {
-      ...emptySnapshot(),
-      resetAt: new Date().toISOString(),
-    };
-    await kv.set(KV.graphSnapshot, SNAPSHOT_KEY, resetSnapshot);
-    const counts: Record<string, number> = {
-      [KV.graphSnapshot]: 1,
-    };
-    const tookMs = Date.now() - started;
-    logger.info("Graph state reset", { counts, tookMs });
-    return { success: true, cleared: counts, tookMs };
-  });
+  sdk.registerFunction(
+    "mem::graph-reset",
+    async (data?: { scope?: unknown }) => {
+      if (data?.scope !== "global") {
+        return {
+          success: false,
+          error: "mem::graph-reset requires explicit global scope",
+        };
+      }
+      const started = Date.now();
+      // Stamp resetAt=now on the empty snapshot. Future
+      // mem::graph-extract calls compare each name-index lookup's
+      // existing node `createdAt` against this timestamp; anything
+      // older counts as an orphan and is dropped from the merge path,
+      // forcing extract to write a fresh row instead of reconnecting
+      // to a pre-reset entry.
+      const resetSnapshot: GraphSnapshot = {
+        ...emptySnapshot(),
+        resetAt: new Date().toISOString(),
+      };
+      await kv.set(KV.graphSnapshot, SNAPSHOT_KEY, resetSnapshot);
+      const counts: Record<string, number> = {
+        [KV.graphSnapshot]: 1,
+      };
+      const tookMs = Date.now() - started;
+      logger.info("Graph state reset", { counts, tookMs });
+      return { success: true, cleared: counts, tookMs };
+    },
+  );
 }

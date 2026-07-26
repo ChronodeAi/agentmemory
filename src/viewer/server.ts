@@ -9,6 +9,11 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderViewerDocument } from "./document.js";
 import { timingSafeCompare } from "../auth.js";
+import {
+  clientAuthorizationHeaders,
+  resolveClientRequestScope,
+  type ClientAuthConfig,
+} from "../client-auth.js";
 
 // Self-host the viewer favicon at /favicon.svg instead of an inline
 // data: URI so the viewer CSP can stay tight at `img-src 'self'`.
@@ -199,6 +204,7 @@ export function startViewerServer(
   _sdk: unknown,
   secret?: string,
   restPort?: number,
+  upstreamAuth: ClientAuthConfig = {},
 ): Server {
   // Reset exported runtime state for each start attempt.
   boundViewerPort = null;
@@ -311,7 +317,15 @@ export function startViewerServer(
     }
 
     try {
-      await proxyToRestApi(resolvedRestPort, pathname, qs, method, req, res, secret);
+      await proxyToRestApi(
+        resolvedRestPort,
+        pathname,
+        qs,
+        method,
+        req,
+        res,
+        { legacySecret: secret, ...upstreamAuth },
+      );
     } catch (err) {
       console.error(`[viewer] proxy error on ${method} ${pathname}:`, err);
       json(res, 502, { error: "upstream error" }, req);
@@ -394,7 +408,7 @@ async function proxyToRestApi(
   method: string,
   req: IncomingMessage,
   res: ServerResponse,
-  secret?: string,
+  authConfig: ClientAuthConfig,
 ): Promise<void> {
   const upstreamPath = pathname.startsWith("/agentmemory/")
     ? pathname
@@ -402,18 +416,42 @@ async function proxyToRestApi(
 
   const upstreamUrl = `http://127.0.0.1:${restPort}${upstreamPath}${qs ? "?" + qs : ""}`;
 
-  const headers: Record<string, string> = {};
-  if (secret) {
-    headers["Authorization"] = `Bearer ${secret}`;
-  }
-  const ct = req.headers["content-type"];
-  if (ct) {
-    headers["Content-Type"] = ct;
-  }
-
   let body: string | undefined;
   if (method === "POST" || method === "PUT" || method === "DELETE" || method === "PATCH") {
     body = await readBody(req);
+  }
+  let parsedBody: unknown;
+  if (body) {
+    try {
+      parsedBody = JSON.parse(body);
+    } catch {
+      parsedBody = undefined;
+    }
+  }
+  let authHeaders: Record<string, string>;
+  try {
+    authHeaders = clientAuthorizationHeaders(
+      resolveClientRequestScope(upstreamUrl, parsedBody),
+      authConfig,
+    );
+  } catch (error) {
+    json(
+      res,
+      409,
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "request scope bindings disagree",
+      },
+      req,
+    );
+    return;
+  }
+  const headers: Record<string, string> = { ...authHeaders };
+  const ct = req.headers["content-type"];
+  if (ct) {
+    headers["Content-Type"] = ct;
   }
 
   const controller = new AbortController();

@@ -210,7 +210,14 @@ describe("viewer session rendering", () => {
     const { sandbox, getElement } = loadViewerSandbox();
     sandbox.state.dashboard = {
       loaded: true,
-      health: { status: "healthy", health: {} },
+      health: {
+        status: "healthy",
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+        health: {},
+      },
       sessions: [{ status: "active", observationCount: 3, startedAt: "2026-05-13T12:00:00Z" }],
       memories: [],
       graphStats: null,
@@ -262,6 +269,10 @@ describe("viewer session rendering", () => {
     sandbox.state.dashboard = {
       ...dashboard,
       health: {
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
         health: { status: "degraded", connectionState: "connected" },
       },
     };
@@ -275,6 +286,37 @@ describe("viewer session rendering", () => {
     expect(getElement("view-dashboard").innerHTML).not.toContain(
       "health-dot \"></span> unknown",
     );
+  });
+
+  it("fails closed when the API omits or mismatches build identity", () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    const dashboard = {
+      loaded: true,
+      sessions: [],
+      memories: [],
+      graphStats: null,
+      recentAudit: [],
+      lessons: [],
+      crystals: [],
+      health: { status: "healthy", health: {} },
+    };
+
+    sandbox.state.dashboard = dashboard;
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("incompatible");
+
+    sandbox.state.dashboard = {
+      ...dashboard,
+      health: {
+        ...dashboard.health,
+        build: {
+          viewer: "unexpected-viewer",
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+      },
+    };
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("incompatible");
   });
 
   it("does not throw when timeline and sessions tabs receive sessions missing ids", () => {

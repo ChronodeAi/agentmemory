@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -59,6 +59,10 @@ describe("coding memory lifecycle functions", () => {
   const sessionId = "session-1";
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   beforeEach(async () => {
     delete process.env["AGENTMEMORY_SLOTS"];
@@ -305,6 +309,82 @@ describe("coding memory lifecycle functions", () => {
       acknowledged: false,
       error:
         "trusted provider delivery verification is unavailable; source suppression denied",
+    });
+  });
+
+  it("does not honor legacy source markers and returns typed ledger failures", async () => {
+    await kv.set(KV.injectedSources(sessionId), "lesson-1", {
+      sourceId: "lesson-1",
+      injectedAt: new Date().toISOString(),
+    });
+    const packet = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+    }) as { sourceIds: string[] };
+    expect(packet.sourceIds).toContain("lesson-1");
+
+    const originalList = kv.list.bind(kv);
+    vi.spyOn(kv, "list").mockImplementation(async <T>(scope: string) => {
+      if (scope === KV.injectedSources(sessionId)) {
+        throw new Error("state backend unavailable");
+      }
+      return originalList<T>(scope);
+    });
+    await expect(
+      sdk.trigger("mem::context-packet", { project, sessionId }),
+    ).rejects.toMatchObject({
+      name: "DeliveryLedgerError",
+      code: "delivery_ledger_unavailable",
+      operation: "list",
+    });
+  });
+
+  it("repairs a receipt claim after an acknowledgement write failure", async () => {
+    const packet = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+    }) as { packetId: string };
+    const originalSet = kv.set.bind(kv);
+    let failAcknowledgementWrite = true;
+    vi.spyOn(kv, "set").mockImplementation(
+      async <T>(scope: string, key: string, value: T) => {
+        if (
+          failAcknowledgementWrite &&
+          scope === KV.injectedSources(sessionId) &&
+          key === `ack:${packet.packetId}`
+        ) {
+          throw new Error("ack write interrupted");
+        }
+        return originalSet(scope, key, value);
+      },
+    );
+
+    await expect(
+      sdk.trigger("mem::context-acknowledge", {
+        project,
+        sessionId,
+        packetId: packet.packetId,
+        providerReceipt: "provider-receipt-repair",
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      acknowledged: false,
+      code: "delivery_ledger_unavailable",
+      operation: "write",
+    });
+
+    failAcknowledgementWrite = false;
+    await expect(
+      sdk.trigger("mem::context-acknowledge", {
+        project,
+        sessionId,
+        packetId: packet.packetId,
+        providerReceipt: "provider-receipt-repair",
+      }),
+    ).resolves.toMatchObject({
+      success: true,
+      acknowledged: true,
+      idempotent: true,
     });
   });
 

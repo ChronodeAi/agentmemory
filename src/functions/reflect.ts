@@ -16,13 +16,14 @@ import type {
   Session,
   CompressedObservation,
 } from "../types.js";
-import { recordAudit } from "./audit.js";
+import { recordAudit, safeAudit } from "./audit.js";
 import { REFLECT_SYSTEM, buildReflectPrompt } from "../prompts/reflect.js";
 import {
   recordMatchesProject,
   requireProjectReadScope,
 } from "../project-scope.js";
 import { getEnvVar } from "../config.js";
+import { logger } from "../logger.js";
 
 interface ConceptCluster {
   concepts: string[];
@@ -406,22 +407,26 @@ export function registerReflectFunctions(
             clusterCount++;
             totalInsights++;
           }
-        } catch {
+        } catch (error) {
+          clustersSkipped++;
+          logger.warn("Insight reflection cluster failed", {
+            project,
+            concepts: conceptNames,
+            error: error instanceof Error ? error.message : String(error),
+          });
           continue;
         }
       }
 
-      try {
-        await recordAudit(kv, "reflect", "mem::reflect", [], {
-          newInsights,
-          reinforced,
-          clustersProcessed: conceptClusters.length - clustersSkipped,
-          clustersSkipped,
-          usedFallback,
-          project,
-          scope: projectScope.kind,
-        });
-      } catch {}
+      await safeAudit(kv, "reflect", "mem::reflect", [], {
+        newInsights,
+        reinforced,
+        clustersProcessed: conceptClusters.length - clustersSkipped,
+        clustersSkipped,
+        usedFallback,
+        project,
+        scope: projectScope.kind,
+      });
 
       return {
         success: true,
@@ -512,12 +517,13 @@ export function registerReflectFunctions(
 
       scored.sort((a, b) => b.score - a.score);
 
-      try {
-        await recordAudit(kv, "insight_search", "mem::insight-search", [], {
-          query: data.query,
-          resultCount: scored.length,
-        });
-      } catch {}
+      await safeAudit(kv, "insight_search", "mem::insight-search", [], {
+        query: data.query,
+        resultCount: scored.length,
+        project:
+          projectScope.kind === "project" ? projectScope.project : undefined,
+        scope: projectScope.kind,
+      });
 
       return {
         success: true,

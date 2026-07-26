@@ -24,6 +24,13 @@ jobs:
           node-version: ${{ matrix.node-version }}
       - run: npm ci --legacy-peer-deps --no-audit --no-fund
       - run: npm run test:r13:install-engine
+      - name: Verify clean source, frozen manifest, auth, and runtime profile
+        run: npm run test:r13:preflight
+        env:
+          AGENTMEMORY_SECRET: r13-qualification-synthetic-only
+          AGENTMEMORY_PROJECT_CAPABILITY_SECRET: r13-project-capability-synthetic-only
+          R13_RECEIPT_DIR: .r13-receipts/preflight
+      - run: npm run test:r13:validate -- .r13-receipts/preflight
       - run: npm run build
       - run: npm run skills:check
       - run: npm run test:r13:harness
@@ -33,6 +40,7 @@ jobs:
         run: npm run test:r13 -- --repeat=5
         env:
           AGENTMEMORY_SECRET: r13-qualification-synthetic-only
+          AGENTMEMORY_PROJECT_CAPABILITY_SECRET: r13-project-capability-synthetic-only
           R13_RECEIPT_DIR: .r13-receipts/qualification
       - run: npm run test:r13:validate -- --require-pass .r13-receipts/qualification
       - name: Upload immutable receipts

@@ -56,11 +56,12 @@ function isCompressedObservation(
 async function recoverStaleSession(
   sdk: ISdk,
   sessionId: string,
+  project: string,
 ): Promise<boolean> {
   try {
     const result = await sdk.trigger({
       function_id: "event::session::stopped",
-      payload: { sessionId },
+      payload: { sessionId, project },
     });
     if (!isValidRecoveryResult(result)) {
       logger.warn("Stale session recovery failed", {
@@ -79,14 +80,18 @@ async function recoverStaleSession(
   }
 }
 
-async function runRecoveredSessionConsolidation(sdk: ISdk): Promise<void> {
+async function runRecoveredSessionConsolidation(
+  sdk: ISdk,
+  project: string,
+): Promise<void> {
   try {
     await sdk.trigger({
       function_id: "mem::consolidate-pipeline",
-      payload: { tier: "all" },
+      payload: { tier: "all", project },
     });
   } catch (err) {
     logger.warn("Recovered session consolidation failed", {
+      project,
       error: err instanceof Error ? err.message : String(err),
     });
   }
@@ -113,7 +118,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
         dryRun,
       };
 
-      let recoveredStaleSessions = 0;
+      const recoveredStaleProjects = new Set<string>();
       const sessions = await kv.list<Session>(KV.sessions).catch(() => []);
       const summaries = await kv
         .list<SessionSummary>(KV.summaries)
@@ -121,6 +126,7 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
       const summaryIds = new Set(summaries.map((s) => s.sessionId));
 
       for (const session of sessions) {
+        if (session.status !== "active") continue;
         if (!session.startedAt) continue;
         const age = now - new Date(session.startedAt).getTime();
         const staleDays = cfg.staleSessionDays * MS_PER_DAY;
@@ -146,40 +152,53 @@ export function registerEvictFunction(sdk: ISdk, kv: StateKV): void {
               isCompressedObservation,
             );
             if (hasCompressedObservations) {
-              recovered = await recoverStaleSession(sdk, session.id);
+              recovered = await recoverStaleSession(
+                sdk,
+                session.id,
+                session.project,
+              );
               if (!recovered) continue;
-              recoveredStaleSessions++;
+              recoveredStaleProjects.add(session.project);
             } else if (observations.length > 0) {
               logger.warn("Stale session has no compressed observations", {
                 sessionId: session.id,
               });
-              continue;
             }
 
             try {
-              await kv.delete(KV.sessions, session.id);
+              const closedAt = new Date(now).toISOString();
+              await kv.update(KV.sessions, session.id, [
+                { type: "set", path: "endedAt", value: closedAt },
+                { type: "set", path: "staleClosedAt", value: closedAt },
+                { type: "set", path: "updatedAt", value: closedAt },
+                { type: "set", path: "status", value: "abandoned" },
+              ]);
               stats.staleSessions++;
             } catch (err) {
-              logger.warn("Eviction delete failed", {
+              logger.warn("Stale session close failed", {
                 resource: "session",
                 id: session.id,
                 error: err instanceof Error ? err.message : String(err),
               });
               continue;
             }
-            await recordAudit(kv, "delete", "mem::evict", [session.id], {
+            await recordAudit(kv, "session_close", "mem::evict", [session.id], {
               resource: "session",
               reason: recovered
-                ? "stale_session_recovered_then_evicted"
-                : "stale_session_without_summary",
+                ? "stale_session_recovered_then_closed"
+                : observations.length > 0
+                  ? "stale_session_raw_observations_retained"
+                  : "stale_session_without_observations",
               dryRun,
             });
           }
         }
       }
 
-      if (!dryRun && recoveredStaleSessions > 0) {
-        await runRecoveredSessionConsolidation(sdk);
+      if (!dryRun) {
+        for (const project of recoveredStaleProjects) {
+          await runRecoveredSessionConsolidation(sdk, project);
+        }
       }
 
       const projectObs = new Map<string, CompressedObservation[]>();

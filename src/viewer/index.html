@@ -1117,7 +1117,7 @@
       dashboard: { loaded: false, health: null, sessions: [], memories: [], graphStats: null, recentAudit: [], lessons: [], crystals: [] },
       graph: { loaded: false, nodes: [], edges: [], stats: null, filters: {}, selectedNode: null, queryError: null, truncated: false, totalNodes: 0, totalEdges: 0 },
       memories: { loaded: false, items: [], search: '', typeFilter: '' },
-      timeline: { loaded: false, observations: [], sessionId: '', minImportance: 0, page: 0, pageSize: 50 },
+      timeline: { loaded: false, observations: [], sessions: [], sessionId: '', minImportance: 0, page: 0, pageSize: 50 },
       sessions: { loaded: false, items: [], selectedId: null },
       audit: { loaded: false, entries: [], opFilter: '' },
       activity: { loaded: false, observations: [], sessions: [], typeFilter: '' },
@@ -1165,6 +1165,21 @@
       var id = shortSessionId(s, 8);
       var name = sessionDisplayName(s);
       return id ? name + ' (' + id + ')' : name + ' (missing id)';
+    }
+    function projectForSession(id) {
+      var collections = [
+        state.sessions.items,
+        state.timeline.sessions,
+        state.activity.sessions,
+        state.dashboard.sessions
+      ];
+      for (var i = 0; i < collections.length; i++) {
+        var found = (collections[i] || []).find(function(s) {
+          return sessionId(s) === id;
+        });
+        if (found && found.project) return String(found.project);
+      }
+      return '';
     }
     function debounce(fn, ms) {
       var t;
@@ -1350,12 +1365,12 @@
         var results = await Promise.all([
           apiGet('health'),
           apiGet('sessions?scope=global'),
-          apiGet('memories?latest=true&limit=500'),
-          apiGet('graph/stats'),
-          apiGet('audit?limit=5'),
-          apiGet('semantic'),
-          apiGet('procedural'),
-          apiGet('relations'),
+          apiGet('memories?latest=true&limit=500&scope=global'),
+          apiGet('graph/stats?scope=global'),
+          apiGet('audit?limit=5&scope=global'),
+          apiGet('semantic?scope=global'),
+          apiGet('procedural?scope=global'),
+          apiGet('relations?scope=global'),
           apiGet('lessons?scope=global'),
           apiGet('crystals?scope=global')
         ]);
@@ -1398,9 +1413,8 @@
       var h = d.health || {};
       var snap = h.health || {};
       var remoteBuild = h.build || {};
-      var compatible = !remoteBuild.viewer ||
-        (remoteBuild.viewer === VIEWER_BUILD_ID &&
-          remoteBuild.apiContract === VIEWER_API_CONTRACT);
+      var compatible = remoteBuild.viewer === VIEWER_BUILD_ID &&
+        remoteBuild.apiContract === VIEWER_API_CONTRACT;
       var healthStatus = compatible
         ? (h.status || snap.status || (d.loaded ? 'unavailable' : 'initializing'))
         : 'incompatible';
@@ -1692,8 +1706,8 @@
       el.innerHTML = '<div class="graph-container"><div class="graph-canvas-wrap"><canvas id="graph-canvas"></canvas><div class="graph-controls"><button title="Zoom In" data-action="zoom-graph" data-dir="1">+</button><button title="Zoom Out" data-action="zoom-graph" data-dir="-1">&minus;</button><div class="ctrl-divider"></div><button title="Recenter" data-action="recenter-graph">⌖</button></div><div class="graph-tooltip" id="graph-tooltip"></div></div><div class="graph-sidebar" id="graph-sidebar"></div></div>';
 
       var results = await Promise.all([
-        apiPost('graph/query', { limit: GRAPH_INITIAL_LIMIT }),
-        apiGet('graph/stats')
+        apiPost('graph/query', { scope: 'global', limit: GRAPH_INITIAL_LIMIT }),
+        apiGet('graph/stats?scope=global')
       ]);
       var queryResult = results[0];
       if (queryResult === null) {
@@ -1720,11 +1734,11 @@
       if (state.graph.nodes.length === 0 && (state.graph.stats.totalNodes || state.graph.stats.nodes || 0) === 0) {
         var sb = document.getElementById('graph-sidebar');
         if (sb) sb.innerHTML = '<h3>Graph</h3><p style="font-size:12px;color:var(--ink-faint);margin:8px 0;font-style:italic;">No graph data yet. Building from observations and memories...</p>';
-        var buildResult = await apiPost('graph/build', {});
+        var buildResult = await apiPost('graph/build', { scope: 'global' });
         if (buildResult && buildResult.success && buildResult.nodes > 0) {
           var freshResults = await Promise.all([
-            apiPost('graph/query', { limit: GRAPH_INITIAL_LIMIT }),
-            apiGet('graph/stats')
+            apiPost('graph/query', { scope: 'global', limit: GRAPH_INITIAL_LIMIT }),
+            apiGet('graph/stats?scope=global')
           ]);
           var freshQuery = freshResults[0];
           if (freshQuery) {
@@ -2014,7 +2028,7 @@
     }
 
     async function expandNode(nodeId) {
-      var result = await apiPost('graph/query', { startNodeId: nodeId, maxDepth: 1 });
+      var result = await apiPost('graph/query', { scope: 'global', startNodeId: nodeId, maxDepth: 1 });
       if (!result) return;
       var existingIds = {};
       graphSim.nodes.forEach(function(n) { existingIds[n.id] = true; });
@@ -2136,7 +2150,7 @@
     async function rebuildGraph() {
       var sb = document.getElementById('graph-sidebar');
       if (sb) sb.innerHTML = '<h3>Graph</h3><p style="font-size:12px;color:var(--ink-faint);font-style:italic;">Rebuilding graph from observations...</p>';
-      await apiPost('graph/build', {});
+      await apiPost('graph/build', { scope: 'global' });
       state.graph.loaded = false;
       loadGraph();
     }
@@ -2403,7 +2417,7 @@
       // cap at 2000 so the viewer remains responsive on large
       // corpora. Older endpoints returned the full unbounded list which
       // hit the iii invocation timeout and the UI fell through to 0.
-      var result = await apiGet('memories?latest=true&limit=2000');
+      var result = await apiGet('memories?latest=true&limit=2000&scope=global');
       var items = (result && result.memories) || [];
       // Newest first — server returns KV-insertion order.
       items.sort(function(a, b) {
@@ -2533,7 +2547,7 @@
 
     async function confirmDeleteMemory(id) {
       closeModal();
-      await apiDelete('governance/memories', { memoryIds: [id], reason: 'Deleted via viewer' });
+      await apiDelete('governance/memories', { scope: 'global', memoryIds: [id], reason: 'Deleted via viewer' });
       state.memories.loaded = false;
       loadMemories();
     }
@@ -2547,6 +2561,7 @@
       el.innerHTML = '<div class="loading">Loading timeline...</div>';
       var sessResult = await apiGet('sessions?scope=global');
       var sessions = (sessResult && sessResult.sessions) || [];
+      state.timeline.sessions = sessions;
       state.timeline.loaded = true;
 
       if (sessions.length > 0 && !state.timeline.sessionId) {
@@ -2596,7 +2611,12 @@
         return;
       }
       content.innerHTML = '<div class="loading">Loading observations...</div>';
-      var result = await apiGet('observations?sessionId=' + encodeURIComponent(state.timeline.sessionId));
+      var project = projectForSession(state.timeline.sessionId);
+      if (!project) {
+        content.innerHTML = '<div class="empty-state"><p>Session project is unavailable</p></div>';
+        return;
+      }
+      var result = await apiGet('observations?sessionId=' + encodeURIComponent(state.timeline.sessionId) + '&project=' + encodeURIComponent(project));
       state.timeline.observations = (result && result.observations) || [];
       renderObservations();
     }
@@ -2773,7 +2793,7 @@
       el.innerHTML = '<div class="loading">Loading activity...</div>';
       var results = await Promise.all([
         apiGet('sessions?scope=global'),
-        apiGet('audit?limit=200')
+        apiGet('audit?limit=200&scope=global')
       ]);
       var sessions = (results[0] && results[0].sessions) || [];
       var auditEntries = (results[1] && results[1].entries) || [];
@@ -2783,7 +2803,7 @@
       var recentSessions = sorted.slice(0, 5);
 
       var obsResults = await Promise.all(recentSessions.filter(function(s) { return sessionId(s); }).map(function(s) {
-        return apiGet('observations?sessionId=' + encodeURIComponent(sessionId(s)));
+        return apiGet('observations?sessionId=' + encodeURIComponent(sessionId(s)) + '&project=' + encodeURIComponent(s.project || ''));
       }));
       obsResults.forEach(function(r) {
         if (r && r.observations) allObs = allObs.concat(r.observations);
@@ -2962,7 +2982,7 @@
 
       panel.innerHTML = '<div class="detail-panel"><h3>Loading session details…</h3></div>';
 
-      var obsRes = await apiGet('observations?sessionId=' + encodeURIComponent(id));
+      var obsRes = await apiGet('observations?sessionId=' + encodeURIComponent(id) + '&project=' + encodeURIComponent(s.project || ''));
       var obs = (obsRes && obsRes.observations) || [];
 
       var typeCounts = {};
@@ -3058,7 +3078,9 @@
     }
 
     async function endSession(id) {
-      await apiPost('session/end', { sessionId: id });
+      var project = projectForSession(id);
+      if (!project) return;
+      await apiPost('session/end', { sessionId: id, project: project });
       state.sessions.loaded = false;
       loadSessions();
     }
@@ -3067,7 +3089,12 @@
       if (!btn) return;
       btn.textContent = 'Summarizing...';
       btn.disabled = true;
-      await apiPost('summarize', { sessionId: id });
+      var project = projectForSession(id);
+      if (!project) {
+        btn.textContent = 'Project unavailable';
+        return;
+      }
+      await apiPost('summarize', { sessionId: id, project: project });
       btn.textContent = 'Done';
       setTimeout(function() { btn.textContent = 'Summarize'; btn.disabled = false; }, 2000);
     }
@@ -3137,7 +3164,7 @@
     async function loadActions() {
       var el = document.getElementById('view-actions');
       el.innerHTML = '<div class="loading">Loading actions...</div>';
-      var results = await Promise.all([apiGet('actions'), apiGet('frontier')]);
+      var results = await Promise.all([apiGet('actions?scope=global'), apiGet('frontier?scope=global')]);
       state.actions.items = (results[0] && results[0].actions) || [];
       state.actions.frontier = (results[1] && (results[1].frontier || results[1].actions)) || [];
       state.actions.loaded = true;
@@ -3328,7 +3355,7 @@
     async function loadAudit() {
       var el = document.getElementById('view-audit');
       el.innerHTML = '<div class="loading">Loading audit log...</div>';
-      var result = await apiGet('audit?limit=100');
+      var result = await apiGet('audit?limit=100&scope=global');
       state.audit.entries = (result && result.entries) || [];
       state.audit.loaded = true;
       renderAudit();
@@ -3981,7 +4008,7 @@
     async function loadReplay() {
       var el = document.getElementById('view-replay');
       el.innerHTML = '<div class="loading">Loading sessions…</div>';
-      var res = await apiGet('replay/sessions');
+      var res = await apiGet('replay/sessions?scope=global');
       state.replay.sessions = (res && res.sessions) || [];
       state.replay.loaded = true;
       renderReplay();
@@ -4081,7 +4108,7 @@
       if (!sessionId) { renderReplay(); return; }
       var el = document.getElementById('view-replay');
       el.innerHTML = '<div class="loading">Loading replay…</div>';
-      var res = await apiGet('replay/load?sessionId=' + encodeURIComponent(sessionId));
+      var res = await apiGet('replay/load?scope=global&sessionId=' + encodeURIComponent(sessionId));
       if (res && res.success && res.timeline) {
         state.replay.timeline = res.timeline;
       } else {
@@ -4170,6 +4197,7 @@
       var el = document.getElementById('view-replay');
       var prior = el.innerHTML;
       el.innerHTML = '<div class="loading">Importing JSONL…</div>';
+      body.scope = 'global';
       var res = await apiPost('replay/import-jsonl', body);
       if (!res || res.success === false) {
         el.innerHTML = prior;

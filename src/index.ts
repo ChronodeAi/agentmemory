@@ -50,7 +50,10 @@ import { registerEvictFunction } from "./functions/evict.js";
 import { registerRelationsFunction } from "./functions/relations.js";
 import { registerTimelineFunction } from "./functions/timeline.js";
 import { registerSmartSearchFunction } from "./functions/smart-search.js";
-import { registerCodingMemoryFunctions } from "./functions/coding-memory.js";
+import {
+  createSignedContextDeliveryVerifier,
+  registerCodingMemoryFunctions,
+} from "./functions/coding-memory.js";
 import { registerPromotionFunctions } from "./functions/promotions.js";
 import { registerRecentSearchesSweepFunction } from "./functions/recent-searches-sweep.js";
 import { registerProfileFunction } from "./functions/profile.js";
@@ -104,6 +107,10 @@ import { bootLog } from "./logger.js";
 import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
+import {
+  DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
+  isStrictCapabilityMode,
+} from "./auth.js";
 
 // The CLI imports this worker after iii is ready. Older bundled configs also
 // spawned it through iii-exec, which could leave a detached duplicate during
@@ -219,6 +226,13 @@ async function main() {
   const kv = new StateKV(sdk);
   const secret = getEnvVar("AGENTMEMORY_SECRET");
   const adminSecret = getEnvVar("AGENTMEMORY_ADMIN_SECRET");
+  const projectCapabilitySecret = getEnvVar(
+    "AGENTMEMORY_PROJECT_CAPABILITY_SECRET",
+  );
+  const contextAckSecret = getEnvVar("AGENTMEMORY_CONTEXT_ACK_SECRET");
+  const strictCapabilityMode = isStrictCapabilityMode(
+    getEnvVar("AGENTMEMORY_STRICT_CAPABILITY_MODE"),
+  );
   const metricsStore = new MetricsStore(kv);
   const dedupMap = new DedupMap();
 
@@ -311,7 +325,7 @@ async function main() {
   registerRoutinesFunction(sdk, kv);
   registerSignalsFunction(sdk, kv);
   registerCheckpointsFunction(sdk, kv);
-  registerMeshFunction(sdk, kv, secret);
+  registerMeshFunction(sdk, kv, adminSecret);
   registerBranchAwareFunction(sdk, kv);
   registerFlowCompressFunction(sdk, kv, provider);
   registerSentinelsFunction(sdk, kv);
@@ -368,13 +382,35 @@ async function main() {
   registerSmartSearchFunction(sdk, kv, (query, limit, processingContext) =>
     hybridSearch.search(query, limit, processingContext),
   );
-  registerCodingMemoryFunctions(sdk, kv);
+  registerCodingMemoryFunctions(
+    sdk,
+    kv,
+    createSignedContextDeliveryVerifier(contextAckSecret),
+  );
   registerPromotionFunctions(sdk, kv);
   registerRecentSearchesSweepFunction(sdk, kv);
 
-  registerApiTriggers(sdk, kv, secret, metricsStore, provider, adminSecret);
+  registerApiTriggers(
+    sdk,
+    kv,
+    secret,
+    metricsStore,
+    provider,
+    adminSecret,
+    projectCapabilitySecret,
+    strictCapabilityMode,
+    DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
+  );
   registerEventTriggers(sdk, kv);
-  registerMcpEndpoints(sdk, kv, secret, adminSecret);
+  registerMcpEndpoints(
+    sdk,
+    kv,
+    secret,
+    adminSecret,
+    projectCapabilitySecret,
+    strictCapabilityMode,
+    DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
+  );
 
   const healthMonitor = registerHealthMonitor(sdk, kv);
 
@@ -524,7 +560,7 @@ async function main() {
     `REST API: 135 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
   );
   bootLog(
-    `MCP surface (opt-in via \`npx @agentmemory/mcp\`): ${getAllTools().length} tools · 6 resources · 3 prompts`,
+    `MCP surface (opt-in via \`npx @agentmemory/mcp\`): ${getAllTools().length} tools · 5 resources · 3 prompts`,
   );
 
   const viewerPort = config.restPort + 2;
@@ -534,6 +570,12 @@ async function main() {
     sdk,
     secret,
     config.restPort,
+    {
+      adminSecret,
+      projectCapabilitySecret,
+      audience: getEnvVar("AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"),
+      strictCapabilityMode,
+    },
   );
 
   const autoForgetIntervalMs = parseInt(process.env.AUTO_FORGET_INTERVAL_MS || "3600000", 10);

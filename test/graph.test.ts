@@ -13,6 +13,8 @@ import type {
   Session,
 } from "../src/types.js";
 
+const DEFAULT_PROJECT = "github.com/example/test-project";
+
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
   return {
@@ -47,8 +49,28 @@ function mockSdk() {
       const payload = typeof idOrInput === "string" ? data : idOrInput.payload;
       const fn = functions.get(id);
       if (!fn) throw new Error(`No function: ${id}`);
-      return fn(payload);
+      const record =
+        payload && typeof payload === "object" && !Array.isArray(payload)
+          ? (payload as Record<string, unknown>)
+          : {};
+      let scopedPayload: unknown = payload;
+      if (id === "mem::graph-extract" && record["project"] === undefined) {
+        scopedPayload = { ...record, project: DEFAULT_PROJECT };
+      } else if (
+        [
+          "mem::graph-query",
+          "mem::graph-stats",
+          "mem::graph-snapshot-rebuild",
+          "mem::graph-reset",
+        ].includes(id) &&
+        record["project"] === undefined &&
+        record["scope"] === undefined
+      ) {
+        scopedPayload = { ...record, scope: "global" };
+      }
+      return fn(scopedPayload);
     },
+    getFunction: (id: string) => functions.get(id),
   };
 }
 
@@ -81,11 +103,19 @@ describe("Graph Functions", () => {
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     sdk = mockSdk();
     kv = mockKV();
     vi.clearAllMocks();
     registerGraphFunction(sdk as never, kv as never, mockProvider as never);
+    await kv.set<Session>("mem:sessions", "ses_1", {
+      id: "ses_1",
+      project: DEFAULT_PROJECT,
+      cwd: "/tmp/test-project",
+      startedAt: "2026-02-01T00:00:00Z",
+      status: "active",
+      observationCount: 1,
+    });
   });
 
   it("graph-extract creates nodes and edges from XML response", async () => {
@@ -99,11 +129,13 @@ describe("Graph Functions", () => {
 
     const nodes = await kv.list<GraphNode>("mem:graph:nodes");
     expect(nodes.length).toBe(2);
+    expect(nodes.every((node) => node.project === DEFAULT_PROJECT)).toBe(true);
     expect(nodes.find((n) => n.name === "src/index.ts")).toBeDefined();
     expect(nodes.find((n) => n.name === "main")).toBeDefined();
 
     const edges = await kv.list<GraphEdge>("mem:graph:edges");
     expect(edges.length).toBe(1);
+    expect(edges[0].project).toBe(DEFAULT_PROJECT);
     expect(edges[0].type).toBe("uses");
   });
 
@@ -122,11 +154,102 @@ describe("Graph Functions", () => {
 
     const result = (await sdk.trigger("mem::graph-extract", {
       observations: [testObs],
+      project: session.project,
     })) as { success: boolean; error: string };
 
     expect(result.success).toBe(false);
     expect(result.error).toContain("external_processing_disabled");
     expect(mockProvider.compress).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when graph extraction project does not match its source session", async () => {
+    const fn = sdk.getFunction("mem::graph-extract")!;
+    const result = (await fn({
+      observations: [testObs],
+      project: "github.com/example/other",
+    })) as { success: boolean; error: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("does not match");
+    expect(mockProvider.compress).not.toHaveBeenCalled();
+  });
+
+  it("isolates same-named graph entities and stats across projects", async () => {
+    const otherProject = "github.com/example/other";
+    const otherObs: CompressedObservation = {
+      ...testObs,
+      id: "obs_2",
+      sessionId: "ses_2",
+    };
+    await kv.set<Session>("mem:sessions", "ses_2", {
+      id: "ses_2",
+      project: otherProject,
+      cwd: "/tmp/other",
+      startedAt: "2026-02-01T00:00:00Z",
+      status: "active",
+      observationCount: 1,
+    });
+
+    await sdk.trigger("mem::graph-extract", {
+      observations: [testObs],
+      project: DEFAULT_PROJECT,
+    });
+    await sdk.trigger("mem::graph-extract", {
+      observations: [otherObs],
+      project: otherProject,
+    });
+
+    const first = (await sdk.trigger("mem::graph-query", {
+      project: DEFAULT_PROJECT,
+    })) as GraphQueryResult;
+    const second = (await sdk.trigger("mem::graph-query", {
+      project: otherProject,
+    })) as GraphQueryResult;
+    const global = (await sdk.trigger("mem::graph-query", {
+      scope: "global",
+    })) as GraphQueryResult;
+    const firstStats = (await sdk.trigger("mem::graph-stats", {
+      project: DEFAULT_PROJECT,
+    })) as { totalNodes: number; totalEdges: number };
+
+    expect(first.nodes).toHaveLength(2);
+    expect(first.edges).toHaveLength(1);
+    expect(first.nodes.every((node) => node.project === DEFAULT_PROJECT)).toBe(
+      true,
+    );
+    expect(second.nodes).toHaveLength(2);
+    expect(second.nodes.every((node) => node.project === otherProject)).toBe(
+      true,
+    );
+    expect(global.totalNodes).toBe(4);
+    expect(firstStats).toMatchObject({ totalNodes: 2, totalEdges: 1 });
+    expect(
+      await kv.get(
+        "mem:graph:name-index",
+        `${DEFAULT_PROJECT}|file|src/index.ts`,
+      ),
+    ).not.toBeNull();
+    expect(
+      await kv.get(
+        "mem:graph:name-index",
+        `${otherProject}|file|src/index.ts`,
+      ),
+    ).not.toBeNull();
+  });
+
+  it("rejects graph reads and destructive operations without explicit scope", async () => {
+    await expect(sdk.getFunction("mem::graph-query")!({})).rejects.toThrow(
+      "project is required",
+    );
+    await expect(sdk.getFunction("mem::graph-stats")!({})).rejects.toThrow(
+      "project is required",
+    );
+    await expect(
+      sdk.getFunction("mem::graph-snapshot-rebuild")!({ force: true }),
+    ).resolves.toMatchObject({ success: false });
+    await expect(
+      sdk.getFunction("mem::graph-reset")!({}),
+    ).resolves.toMatchObject({ success: false });
   });
 
   it("graph-extract accepts self-closing entity tags", async () => {
@@ -536,20 +659,25 @@ describe("Graph Functions", () => {
       await sdk.trigger("mem::graph-extract", { observations: [testObs] });
       const nameIndex = await kv.get<string>(
         "mem:graph:name-index",
-        "file|src/index.ts",
+        `${DEFAULT_PROJECT}|file|src/index.ts`,
       );
       expect(typeof nameIndex).toBe("string");
 
       // Re-extract the same observation. With name-index lookup the
       // existing node merges; no duplicates.
       await sdk.trigger("mem::graph-extract", { observations: [testObs] });
-      const nodes = await kv.list<{ name: string; type: string }>(
+      const nodes = await kv.list<GraphNode>(
         "mem:graph:nodes",
       );
       const fileNodes = nodes.filter(
         (n) => n.name === "src/index.ts" && n.type === "file",
       );
       expect(fileNodes.length).toBe(1);
+      const edges = await kv.list<GraphEdge>("mem:graph:edges");
+      expect(edges).toHaveLength(1);
+      const nodeIds = new Set(nodes.map((node) => node.id));
+      expect(nodeIds.has(edges[0].sourceNodeId)).toBe(true);
+      expect(nodeIds.has(edges[0].targetNodeId)).toBe(true);
     });
 
     it("graph-stats returns empty envelope + warning when no snapshot exists", async () => {
@@ -587,7 +715,7 @@ describe("Graph Functions", () => {
       // Index entries exist after the extract.
       const nameBefore = await kv.get(
         "mem:graph:name-index",
-        "file|src/index.ts",
+        `${DEFAULT_PROJECT}|file|src/index.ts`,
       );
       expect(nameBefore).not.toBeNull();
 

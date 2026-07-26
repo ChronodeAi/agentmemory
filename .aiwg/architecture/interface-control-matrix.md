@@ -1,7 +1,7 @@
 # G-ICM-01 Interface Control Matrix
 
 Status: **DRAFT EVIDENCE CONTROL - NOT BASELINED**
-Iteration: Elaboration iteration 2
+Iteration: Elaboration iteration 3
 Project: `github.com/chronodeai/agentmemory`
 Frozen starting revision: `2359478defcea073bff428c3bd5e2dac4e2d0bca`
 Decision owners: Software Architect, Security Architect, Test Architect, and
@@ -20,7 +20,7 @@ The deterministic source inventory is
 
 - 135 REST routes: one explicitly public liveness route and 134 protected
   routes;
-- six MCP HTTP routes, 59 tools, six resources, three prompts, and seven
+- six MCP HTTP routes, 59 tools, five resources, three prompts, and seven
   reduced standalone fallback tools;
 - 13 packaged lifecycle hooks and 44 declared events across five host
   manifests;
@@ -35,13 +35,15 @@ but that is remediation evidence only and does not retire R-14.
 
 ## Cross-Surface Rules
 
-1. `GET /agentmemory/livez` and `GET /agentmemory/health` are the complete
-   public-route allowlist. Every other REST route requires authenticated
-   middleware.
+1. `GET /agentmemory/livez` is the complete public-route allowlist. Detailed
+   health is authenticated because it exposes dependency and runtime telemetry.
+   Every other REST route requires authenticated middleware.
 2. A missing or unreadable server secret makes protected REST and MCP surfaces
    unavailable. It never disables authentication.
 3. Project-bound operations require canonical `project`. Global access requires
    an explicit `scope=global` input and an audit event.
+   The scope-less `agentmemory://graph/stats` resource is intentionally absent;
+   graph reads use the scoped MCP tool or REST route.
 4. Strict/local privacy is evaluated before each external-provider attempt.
    Lower-precedence configuration and provider fallback cannot relax it.
 5. Context reports each required and optional source outcome. Required-source
@@ -86,11 +88,15 @@ but that is remediation evidence only and does not retire R-14.
 - Hook denominator: every `hookEntries` member in `tsdown.config.ts`, in both
   `dist/hooks` and `plugin/scripts`, plus every declared host-manifest event.
 - Provider denominator: every discovered provider adapter plus each query,
-  embedding, vision, migration, and fallback attempt site.
+  embedding, vision, migration, fallback, and outbound transport attempt site.
+- Traceability denominator: every generated surface carries at least one
+  control, requirement, risk, and executable test backlink.
+- Revision denominator: the inventory records the source commit, committed tree,
+  and a SHA-256 digest of every file parsed to generate the denominator.
 - Connector denominator: all `ADAPTERS` entries and integration manifests.
 - Viewer denominator: explicit server paths, the generic proxy contract, and
   every statically discoverable literal UI REST expression.
-- Test denominator: all 140 governed `*.test.ts` files. Omitted or skipped
+- Test denominator: all 147 governed `*.test.ts` files. Omitted or skipped
   mandatory authentication/integration evidence fails the receipt.
 
 ## Review Boundary

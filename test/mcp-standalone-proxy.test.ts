@@ -5,6 +5,10 @@ import { tmpdir } from "node:os";
 import { handleToolCall as rawHandleToolCall } from "../src/mcp/standalone.js";
 import { resetHandleForTests } from "../src/mcp/rest-proxy.js";
 import { InMemoryKV } from "../src/mcp/in-memory-kv.js";
+import {
+  PROJECT_CAPABILITY_PROJECT_HEADER,
+  verifyProjectCapabilityToken,
+} from "../src/auth.js";
 
 type FetchMock = ReturnType<typeof vi.fn>;
 
@@ -40,12 +44,22 @@ function handleToolCall(
 
 describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
   const originalFetch = globalThis.fetch;
+  const originalAdminSecret = process.env["AGENTMEMORY_ADMIN_SECRET"];
+  const originalAdminSecretFile =
+    process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
 
   beforeEach(() => {
     resetHandleForTests();
     process.env["AGENTMEMORY_URL"] = BASE;
     delete process.env["AGENTMEMORY_SECRET"];
     delete process.env["AGENTMEMORY_SECRET_FILE"];
+    delete process.env["AGENTMEMORY_ADMIN_SECRET"];
+    delete process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
+    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"];
+    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE"];
+    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"];
+    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"];
+    delete process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"];
   });
 
   afterEach(() => {
@@ -54,6 +68,22 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     delete process.env["AGENTMEMORY_URL"];
     delete process.env["AGENTMEMORY_SECRET"];
     delete process.env["AGENTMEMORY_SECRET_FILE"];
+    if (originalAdminSecret === undefined) {
+      delete process.env["AGENTMEMORY_ADMIN_SECRET"];
+    } else {
+      process.env["AGENTMEMORY_ADMIN_SECRET"] = originalAdminSecret;
+    }
+    if (originalAdminSecretFile === undefined) {
+      delete process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
+    } else {
+      process.env["AGENTMEMORY_ADMIN_SECRET_FILE"] =
+        originalAdminSecretFile;
+    }
+    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"];
+    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE"];
+    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"];
+    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"];
+    delete process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"];
   });
 
   it("proxies memory_sessions to GET /agentmemory/sessions when server is up", async () => {
@@ -222,6 +252,79 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     await handleToolCall("memory_sessions", {});
     expect(authByPath.get("/agentmemory/livez")).toBe("Bearer s3cret");
     expect(authByPath.get("/agentmemory/sessions")).toBe("Bearer s3cret");
+  });
+
+  it("uses the administrative credential for explicit global scope", async () => {
+    process.env["AGENTMEMORY_SECRET"] = "project-secret";
+    process.env["AGENTMEMORY_ADMIN_SECRET"] = "admin-secret";
+    const authByPath = new Map<string, string | undefined>();
+    installFetch((url, init) => {
+      const auth = (init?.headers as Record<string, string> | undefined)?.[
+        "authorization"
+      ];
+      authByPath.set(new URL(url).pathname, auth);
+      if (url.endsWith("/agentmemory/livez")) {
+        return new Response("ok", { status: 200 });
+      }
+      return new Response(JSON.stringify({ sessions: [] }), { status: 200 });
+    });
+
+    await handleToolCall("memory_sessions", {});
+
+    expect(authByPath.get("/agentmemory/livez")).toBe(
+      "Bearer project-secret",
+    );
+    expect(authByPath.get("/agentmemory/sessions")).toBe(
+      "Bearer admin-secret",
+    );
+  });
+
+  it("mints and transports exact-project capabilities for direct and generic tools", async () => {
+    const project = "github.com/chronodeai/project-a";
+    const signingSecret = "project-capability-signing-secret";
+    process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"] = signingSecret;
+    const requests: Array<{
+      path: string;
+      headers: Record<string, string>;
+    }> = [];
+    installFetch((url, init) => {
+      if (url.endsWith("/agentmemory/livez")) {
+        return new Response("ok", { status: 200 });
+      }
+      requests.push({
+        path: new URL(url).pathname,
+        headers: init?.headers as Record<string, string>,
+      });
+      if (url.endsWith("/agentmemory/mcp/call")) {
+        return new Response(JSON.stringify({ content: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ success: true }), { status: 200 });
+    });
+
+    await rawHandleToolCall("memory_save", {
+      content: "project-bound memory",
+      project,
+    });
+    await rawHandleToolCall("memory_context_packet", {
+      project,
+      sessionId: "session-1",
+    });
+
+    expect(requests.map((request) => request.path)).toEqual([
+      "/agentmemory/remember",
+      "/agentmemory/mcp/call",
+    ]);
+    for (const request of requests) {
+      expect(request.headers[PROJECT_CAPABILITY_PROJECT_HEADER]).toBe(project);
+      const bearer = request.headers.authorization?.replace(/^Bearer /, "");
+      expect(
+        verifyProjectCapabilityToken(bearer, {
+          signingSecret,
+          audience: "agentmemory",
+          project,
+        }),
+      ).toMatchObject({ authorized: true, mode: "capability" });
+    }
   });
 
   it("loads the Bearer token from AGENTMEMORY_SECRET_FILE", async () => {

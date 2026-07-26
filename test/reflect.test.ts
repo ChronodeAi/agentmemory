@@ -257,10 +257,19 @@ describe("Reflect", () => {
       const result = (await sdk.trigger("mem::reflect", {})) as {
         success: boolean;
         newInsights: number;
+        clustersProcessed: number;
+        clustersSkipped: number;
       };
 
       expect(result.success).toBe(true);
       expect(result.newInsights).toBe(0);
+      expect(result.clustersProcessed).toBe(0);
+      expect(result.clustersSkipped).toBe(1);
+      const { logger } = await import("../src/logger.js");
+      expect(logger.warn).toHaveBeenCalledWith(
+        "Insight reflection cluster failed",
+        expect.objectContaining({ error: "LLM timeout" }),
+      );
     });
   });
 

@@ -2,16 +2,16 @@ import type { ISdk, ApiRequest } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
 import type {
+  CommitLink,
   SessionSummary,
   Memory,
   Session,
-  GraphNode,
-  GraphEdge,
 } from "../types.js";
 import { getVisibleTools } from "./tools-registry.js";
 import {
   authorizeAdministrativeRequest,
-  authorizeProtectedRequest,
+  authorizeProjectRequest,
+  DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
 } from "../auth.js";
 import { getAgentId, isAgentScopeIsolated } from "../config.js";
 
@@ -47,7 +47,9 @@ function parseProjectScope(
   args: Record<string, unknown>,
 ): { project?: string; scope?: "global" } | null {
   const project = asNonEmptyString(args.project);
-  if (args.scope === "global") return { scope: "global" };
+  if (args.scope === "global") {
+    return project ? null : { scope: "global" };
+  }
   if (!project) return null;
   return { project };
 }
@@ -57,30 +59,38 @@ export function registerMcpEndpoints(
   kv: StateKV,
   secret?: string,
   adminSecret?: string,
+  projectCapabilitySecret?: string,
+  strictCapabilityMode = true,
+  capabilityAudience = DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
 ): void {
   function checkAuth(
     req: ApiRequest,
-    sec: string | undefined,
+    project?: string,
   ): McpResponse | null {
-    const decision = authorizeProtectedRequest(req.headers, sec);
     const adminDecision = authorizeAdministrativeRequest(
       req.headers,
       adminSecret,
     );
-    if (decision.authorized || adminDecision.authorized) return null;
-    const unavailable =
-      decision.statusCode === 503 && adminDecision.statusCode === 503;
+    if (adminDecision.authorized) return null;
+    const decision = authorizeProjectRequest(req.headers, {
+      signingSecret: projectCapabilitySecret,
+      legacySecret: secret,
+      strictCapabilityMode,
+      audience: capabilityAudience,
+      project,
+    });
+    if (decision.authorized) return null;
     return {
-      status_code: unavailable ? 503 : 401,
+      status_code: decision.statusCode,
       body: {
-        error: unavailable ? "authentication_unavailable" : "unauthorized",
+        error: decision.error,
       },
     };
   }
 
   sdk.registerFunction("mcp::tools::list", 
     async (req: ApiRequest): Promise<McpResponse> => {
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAuth(req);
       if (authErr) return authErr;
       return { status_code: 200, body: { tools: getVisibleTools() } };
     },
@@ -95,23 +105,21 @@ export function registerMcpEndpoints(
     async (
       req: ApiRequest<{ name: string; arguments: Record<string, unknown> }>,
     ): Promise<McpResponse> => {
-      const authErr = checkAuth(req, secret);
-      if (authErr) return authErr;
-
       if (!req.body || typeof req.body.name !== "string") {
         return { status_code: 400, body: { error: "name is required" } };
       }
+      const { name, arguments: args = {} } = req.body;
+      const administrative = authorizeAdministrativeRequest(
+        req.headers,
+        adminSecret,
+      );
       if (req.body.arguments?.scope === "global") {
-        const decision = authorizeAdministrativeRequest(
-          req.headers,
-          adminSecret,
-        );
-        if (!decision.authorized) {
+        if (!administrative.authorized) {
           return {
-            status_code: decision.statusCode,
+            status_code: administrative.statusCode,
             body: {
               error:
-                decision.error === "authentication_unavailable"
+                administrative.error === "authentication_unavailable"
                   ? "global_authentication_unavailable"
                   : "global_unauthorized",
             },
@@ -119,7 +127,18 @@ export function registerMcpEndpoints(
         }
       }
 
-      const { name, arguments: args = {} } = req.body;
+      const requestedProject = asNonEmptyString(args.project);
+      if (!administrative.authorized && !requestedProject) {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "project is required for project-capability MCP tool calls",
+          },
+        };
+      }
+      const authErr = checkAuth(req, requestedProject);
+      if (authErr) return authErr;
 
       try {
         switch (name) {
@@ -548,21 +567,39 @@ export function registerMcpEndpoints(
           }
 
           case "memory_graph_query": {
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
             try {
               const payload: {
+                project?: string;
+                scope?: "global";
                 startNodeId?: string;
                 nodeType?: string;
                 maxDepth?: number;
                 query?: string;
-              } = {};
+                limit?: number;
+                offset?: number;
+              } = { ...projectScope };
               const startNodeId = asNonEmptyString(args.startNodeId);
               const nodeType = asNonEmptyString(args.nodeType);
               const query = asNonEmptyString(args.query);
               const maxDepth = asNumber(args.maxDepth);
+              const limit = asNumber(args.limit);
+              const offset = asNumber(args.offset);
               if (startNodeId) payload.startNodeId = startNodeId;
               if (nodeType) payload.nodeType = nodeType;
               if (query) payload.query = query;
               if (maxDepth !== undefined) payload.maxDepth = Math.max(1, Math.min(8, maxDepth));
+              if (limit !== undefined) payload.limit = Math.max(1, Math.floor(limit));
+              if (offset !== undefined) payload.offset = Math.max(0, Math.floor(offset));
               const result = await sdk.trigger({
                 function_id: "mem::graph-query",
                 payload,
@@ -1378,18 +1415,38 @@ export function registerMcpEndpoints(
           case "memory_commit_lookup": {
             const sha = asNonEmptyString(args.sha);
             if (!sha) return { status_code: 400, body: { error: "sha required" } };
-            const link = await kv.get(KV.commits, sha);
-            if (!link) {
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
+            const link = await kv.get<CommitLink>(KV.commits, sha);
+            if (
+              !link ||
+              (projectScope.project &&
+                link.project !== projectScope.project)
+            ) {
               return {
                 status_code: 200,
                 body: { content: [{ type: "text", text: JSON.stringify({ commit: null, sessions: [] }, null, 2) }] },
               };
             }
-            const linkRecord = link as { sessionIds?: string[] };
             const fetched = await Promise.all(
-              (linkRecord.sessionIds ?? []).map((sid) => kv.get(KV.sessions, sid)),
+              (link.sessionIds ?? []).map((sid) =>
+                kv.get<Session>(KV.sessions, sid),
+              ),
             );
-            const sessions = fetched.filter((s) => s !== null);
+            const sessions = fetched.filter(
+              (session): session is Session =>
+                session !== null &&
+                (!projectScope.project ||
+                  session.project === projectScope.project),
+            );
             return {
               status_code: 200,
               body: { content: [{ type: "text", text: JSON.stringify({ commit: link, sessions }, null, 2) }] },
@@ -1449,7 +1506,22 @@ export function registerMcpEndpoints(
               function_id: "mem::context-acknowledge",
               payload: { project, sessionId, packetId, providerReceipt },
             });
-            return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
+            const failed =
+              !result ||
+              typeof result !== "object" ||
+              (result as { success?: unknown }).success !== true;
+            return {
+              status_code: failed ? 400 : 200,
+              body: {
+                content: [
+                  {
+                    type: "text",
+                    text: JSON.stringify(result, null, 2),
+                  },
+                ],
+                ...(failed ? { isError: true } : {}),
+              },
+            };
           }
 
           case "memory_commit_link": {
@@ -1510,11 +1582,26 @@ export function registerMcpEndpoints(
           }
 
           case "memory_commits": {
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
             const branch = typeof args.branch === "string" ? args.branch : undefined;
             const repo = typeof args.repo === "string" ? args.repo : undefined;
             const limit = Math.max(1, Math.min(500, asNumber(args.limit, 100) ?? 100));
-            const all = await kv.list(KV.commits);
-            const filtered = (all as Array<{ branch?: string; repo?: string; linkedAt?: string }>)
+            const all = await kv.list<CommitLink>(KV.commits);
+            const filtered = all
+              .filter(
+                (commit) =>
+                  !projectScope.project ||
+                  commit.project === projectScope.project,
+              )
               .filter((c) => !branch || c.branch === branch)
               .filter((c) => !repo || c.repo === repo)
               .sort((a, b) => ((a.linkedAt ?? "") < (b.linkedAt ?? "") ? 1 : -1))
@@ -1574,12 +1661,6 @@ export function registerMcpEndpoints(
       mimeType: "application/json",
     },
     {
-      uri: "agentmemory://graph/stats",
-      name: "Knowledge Graph Stats",
-      description: "Node and edge counts by type in the knowledge graph",
-      mimeType: "application/json",
-    },
-    {
       uri: "agentmemory://team/{id}/profile",
       name: "Team Profile",
       description: "Team memory profile with shared concepts and patterns",
@@ -1589,9 +1670,20 @@ export function registerMcpEndpoints(
 
   sdk.registerFunction("mcp::resources::list", 
     async (req: ApiRequest): Promise<McpResponse> => {
-      const authErr = checkAuth(req, secret);
-      if (authErr) return authErr;
-      return { status_code: 200, body: { resources: MCP_RESOURCES } };
+      const administrative = authorizeAdministrativeRequest(
+        req.headers,
+        adminSecret,
+      );
+      if (!administrative.authorized) {
+        const authErr = checkAuth(req);
+        if (authErr) return authErr;
+      }
+      const resources = administrative.authorized
+        ? MCP_RESOURCES
+        : MCP_RESOURCES.filter(({ uri }) =>
+            uri.startsWith("agentmemory://project/"),
+          );
+      return { status_code: 200, body: { resources } };
     },
   );
   sdk.registerTrigger({
@@ -1602,12 +1694,41 @@ export function registerMcpEndpoints(
 
   sdk.registerFunction("mcp::resources::read", 
     async (req: ApiRequest<{ uri: string }>): Promise<McpResponse> => {
-      const authErr = checkAuth(req, secret);
-      if (authErr) return authErr;
-
       const uri = req.body?.uri;
       if (!uri || typeof uri !== "string") {
         return { status_code: 400, body: { error: "uri is required" } };
+      }
+      const projectResourceMatch = uri.match(
+        /^agentmemory:\/\/project\/(.+)\/(?:profile|recent)$/,
+      );
+      if (projectResourceMatch) {
+        let requestedProject: string;
+        try {
+          requestedProject = decodeURIComponent(projectResourceMatch[1]);
+        } catch {
+          return {
+            status_code: 400,
+            body: { error: "Invalid percent-encoding in URI" },
+          };
+        }
+        const authErr = checkAuth(req, requestedProject);
+        if (authErr) return authErr;
+      } else {
+        const administrative = authorizeAdministrativeRequest(
+          req.headers,
+          adminSecret,
+        );
+        if (!administrative.authorized) {
+          return {
+            status_code: administrative.statusCode,
+            body: {
+              error:
+                administrative.error === "authentication_unavailable"
+                  ? "global_authentication_unavailable"
+                  : "global_unauthorized",
+            },
+          };
+        }
       }
 
       try {
@@ -1730,52 +1851,6 @@ export function registerMcpEndpoints(
           };
         }
 
-        if (uri === "agentmemory://graph/stats") {
-          try {
-            const nodes = await kv.list<GraphNode>(KV.graphNodes);
-            const edges = await kv.list<GraphEdge>(KV.graphEdges);
-            const nodesByType: Record<string, number> = {};
-            for (const n of nodes)
-              nodesByType[n.type] = (nodesByType[n.type] || 0) + 1;
-            const edgesByType: Record<string, number> = {};
-            for (const e of edges)
-              edgesByType[e.type] = (edgesByType[e.type] || 0) + 1;
-            return {
-              status_code: 200,
-              body: {
-                contents: [
-                  {
-                    uri,
-                    mimeType: "application/json",
-                    text: JSON.stringify({
-                      totalNodes: nodes.length,
-                      totalEdges: edges.length,
-                      nodesByType,
-                      edgesByType,
-                    }),
-                  },
-                ],
-              },
-            };
-          } catch {
-            return {
-              status_code: 200,
-              body: {
-                contents: [
-                  {
-                    uri,
-                    mimeType: "application/json",
-                    text: JSON.stringify({
-                      totalNodes: 0,
-                      totalEdges: 0,
-                    }),
-                  },
-                ],
-              },
-            };
-          }
-        }
-
         const teamProfileMatch = uri.match(
           /^agentmemory:\/\/team\/(.+)\/profile$/,
         );
@@ -1846,6 +1921,11 @@ export function registerMcpEndpoints(
           description: "What you are working on",
           required: true,
         },
+        {
+          name: "project",
+          description: "Canonical project ID",
+          required: true,
+        },
       ],
     },
     {
@@ -1858,6 +1938,11 @@ export function registerMcpEndpoints(
           description: "Session ID to hand off from",
           required: true,
         },
+        {
+          name: "project",
+          description: "Canonical project ID",
+          required: true,
+        },
       ],
     },
     {
@@ -1866,8 +1951,8 @@ export function registerMcpEndpoints(
       arguments: [
         {
           name: "project",
-          description: "Project path to analyze (optional)",
-          required: false,
+          description: "Canonical project ID",
+          required: true,
         },
       ],
     },
@@ -1875,7 +1960,7 @@ export function registerMcpEndpoints(
 
   sdk.registerFunction("mcp::prompts::list", 
     async (req: ApiRequest): Promise<McpResponse> => {
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAuth(req);
       if (authErr) return authErr;
       return { status_code: 200, body: { prompts: MCP_PROMPTS } };
     },
@@ -1890,7 +1975,23 @@ export function registerMcpEndpoints(
     async (
       req: ApiRequest<{ name: string; arguments?: Record<string, string> }>,
     ): Promise<McpResponse> => {
-      const authErr = checkAuth(req, secret);
+      const requestedProject = asNonEmptyString(
+        req.body?.arguments?.project,
+      );
+      const administrative = authorizeAdministrativeRequest(
+        req.headers,
+        adminSecret,
+      );
+      if (!administrative.authorized && !requestedProject) {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "project is required for project-capability MCP prompt calls",
+          },
+        };
+      }
+      const authErr = checkAuth(req, requestedProject);
       if (authErr) return authErr;
 
       const promptName = req.body?.name;
@@ -1919,7 +2020,11 @@ export function registerMcpEndpoints(
             const searchResult = await sdk
               .trigger({
                 function_id: "mem::search",
-                payload: { query: taskDesc, limit: 10 },
+                payload: {
+                  query: taskDesc,
+                  limit: 10,
+                  ...(requestedProject ? { project: requestedProject } : {}),
+                },
               })
               .catch(() => ({ results: [] }));
             const memories = await kv.list<Memory>(KV.memories);
@@ -1942,6 +2047,11 @@ export function registerMcpEndpoints(
                 ? []
                 : memories
                     .filter((m) => m.isLatest)
+                    .filter(
+                      (m) =>
+                        requestedProject === undefined ||
+                        m.project === requestedProject,
+                    )
                     .filter(
                       (m) =>
                         activeAgentId === undefined ||
@@ -1975,8 +2085,22 @@ export function registerMcpEndpoints(
               };
             }
             const session = await kv.get<Session>(KV.sessions, sessionId);
+            if (
+              requestedProject &&
+              (!session || session.project !== requestedProject)
+            ) {
+              return {
+                status_code: 404,
+                body: { error: "session not found for project" },
+              };
+            }
             const summaries = await kv.list<SessionSummary>(KV.summaries);
-            const summary = summaries.find((s) => s.sessionId === sessionId);
+            const summary = summaries.find(
+              (s) =>
+                s.sessionId === sessionId &&
+                (requestedProject === undefined ||
+                  s.project === requestedProject),
+            );
             return {
               status_code: 200,
               body: {
@@ -1995,16 +2119,19 @@ export function registerMcpEndpoints(
 
           case "detect_patterns": {
             if (
-              promptArgs.project !== undefined &&
-              typeof promptArgs.project !== "string"
+              typeof promptArgs.project !== "string" ||
+              !promptArgs.project.trim()
             ) {
               return {
                 status_code: 400,
-                body: { error: "project argument must be a string" },
+                body: {
+                  error:
+                    "project argument is required and must be a string",
+                },
               };
             }
             const result = await sdk.trigger({ function_id: "mem::patterns", payload: {
-              project: promptArgs.project || undefined,
+              project: promptArgs.project.trim(),
             } });
             return {
               status_code: 200,

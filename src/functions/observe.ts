@@ -21,17 +21,26 @@ import { saveImageToDisk } from "../utils/image-store.js";
 const CAPTURE_CONCURRENCY_LIMIT = 256;
 const captureAdmission = {
   active: 0,
+  accepted: 0,
+  completed: 0,
+  failed: 0,
   rejected: 0,
 };
 
 export function getCaptureAdmissionMetrics(): {
   active: number;
   limit: number;
+  accepted: number;
+  completed: number;
+  failed: number;
   rejected: number;
 } {
   return {
     active: captureAdmission.active,
     limit: CAPTURE_CONCURRENCY_LIMIT,
+    accepted: captureAdmission.accepted,
+    completed: captureAdmission.completed,
+    failed: captureAdmission.failed,
     rejected: captureAdmission.rejected,
   };
 }
@@ -76,6 +85,7 @@ export function registerObserveFunction(
         !payload.timestamp ||
         typeof payload.timestamp !== "string"
       ) {
+        captureAdmission.failed += 1;
         return {
           success: false,
           error:
@@ -99,7 +109,11 @@ export function registerObserveFunction(
           d["tool_output"] ?? d["error"],
         );
         if (dedupMap.isDuplicate(dedupHash)) {
-          return { deduplicated: true, sessionId: payload.sessionId };
+          return {
+            success: true,
+            deduplicated: true,
+            sessionId: payload.sessionId,
+          };
         }
       }
 
@@ -158,8 +172,9 @@ export function registerObserveFunction(
         };
       }
       captureAdmission.active += 1;
+      captureAdmission.accepted += 1;
       try {
-        return await withKeyedLock(`obs:${payload.sessionId}`, async () => {
+        const result = await withKeyedLock(`obs:${payload.sessionId}`, async () => {
         const existingSession = await kv.get<Session>(
           KV.sessions,
           payload.sessionId,
@@ -182,12 +197,43 @@ export function registerObserveFunction(
             maxObservationsPerSession >= 100 &&
             existing.length >= maxObservationsPerSession - 1
           ) {
-            await sdk
-              .trigger({
+            let summaryResult: unknown;
+            try {
+              summaryResult = await sdk.trigger({
                 function_id: "mem::summarize",
-                payload: { sessionId: payload.sessionId },
-              })
-              .catch(() => null);
+                payload: {
+                  sessionId: payload.sessionId,
+                  project: payload.project,
+                },
+              });
+            } catch (error) {
+              logger.warn("Rolling compaction summary failed", {
+                sessionId: payload.sessionId,
+                project: payload.project,
+                error: error instanceof Error ? error.message : String(error),
+              });
+              return {
+                success: false,
+                retryable: true,
+                error: "compaction_summary_failed",
+              };
+            }
+            if (
+              !summaryResult ||
+              typeof summaryResult !== "object" ||
+              (summaryResult as { success?: unknown }).success !== true
+            ) {
+              logger.warn("Rolling compaction summary was not accepted", {
+                sessionId: payload.sessionId,
+                project: payload.project,
+                result: summaryResult,
+              });
+              return {
+                success: false,
+                retryable: true,
+                error: "compaction_summary_failed",
+              };
+            }
             const compactCount = Math.max(
               1,
               Math.floor(maxObservationsPerSession / 5),
@@ -485,8 +531,22 @@ export function registerObserveFunction(
           hook: payload.hookType,
           compress: shouldAutoCompress ? "llm" : "synthetic",
         });
-        return { observationId: obsId };
+        return { success: true, observationId: obsId };
         });
+        if (
+          result &&
+          typeof result === "object" &&
+          "success" in result &&
+          result.success === false
+        ) {
+          captureAdmission.failed += 1;
+        } else {
+          captureAdmission.completed += 1;
+        }
+        return result;
+      } catch (error) {
+        captureAdmission.failed += 1;
+        throw error;
       } finally {
         captureAdmission.active -= 1;
       }

@@ -10,35 +10,158 @@
     "source_sha",
     "source_tree_sha256",
     "source_worktree_dirty",
+    "qualification_waivers",
     "environment",
     "limits",
     "tests",
     "process",
     "result",
+    "failures",
     "artifact_sha256"
   ],
   "properties": {
     "schema_version": { "const": 1 },
     "risk_id": { "const": "R-13" },
-    "run_id": { "type": "string", "minLength": 1 },
-    "source_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
-    "source_tree_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "run_id": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9._-]+$"
+    },
+    "source_sha": { "$ref": "#/$defs/sha1" },
+    "source_tree_sha256": { "$ref": "#/$defs/sha256" },
     "source_worktree_dirty": { "type": "boolean" },
-    "environment": { "type": "object" },
-    "limits": { "type": "object" },
-    "tests": { "type": "object" },
-    "process": { "type": "object" },
+    "qualification_waivers": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "unqualified-node-profile",
+          "dirty-source",
+          "unverified-iii-provenance"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "environment": {
+      "type": "object",
+      "required": [
+        "platform",
+        "release",
+        "architecture",
+        "node",
+        "npm",
+        "qualified_node_profile",
+        "mandatory_auth_configured",
+        "mandatory_project_capability_auth_configured"
+      ],
+      "properties": {
+        "platform": {
+          "type": "string",
+          "enum": ["aix", "darwin", "freebsd", "linux", "openbsd", "sunos", "win32"]
+        },
+        "release": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
+        "node": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+" },
+        "npm": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+" },
+        "qualified_node_profile": { "type": "boolean" },
+        "mandatory_auth_configured": { "type": "boolean" },
+        "mandatory_project_capability_auth_configured": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "limits": {
+      "type": "object",
+      "required": ["timeout_ms", "max_workers", "rss_bytes"],
+      "properties": {
+        "timeout_ms": { "type": "integer", "minimum": 1 },
+        "max_workers": { "const": 1 },
+        "rss_bytes": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "tests": {
+      "type": "object",
+      "required": [
+        "expected_count",
+        "expected_manifest_sha256",
+        "expected_content_sha256"
+      ],
+      "properties": {
+        "expected_count": { "type": "integer", "minimum": 1 },
+        "expected_manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "expected_content_sha256": { "$ref": "#/$defs/sha256" },
+        "observed_count": { "type": "integer", "minimum": 0 },
+        "missing": { "$ref": "#/$defs/stringArray" },
+        "extra": { "$ref": "#/$defs/stringArray" },
+        "skipped": { "$ref": "#/$defs/stringArray" },
+        "mandatory_auth_tests": { "$ref": "#/$defs/stringArray" },
+        "missing_auth_tests": { "$ref": "#/$defs/stringArray" }
+      },
+      "additionalProperties": false
+    },
+    "process": {
+      "type": "object",
+      "properties": {
+        "argv": { "$ref": "#/$defs/stringArray" },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "duration_ms": { "type": "integer", "minimum": 0 },
+        "exit_code": { "type": ["integer", "null"] },
+        "signal": { "type": ["string", "null"] },
+        "peak_rss_bytes": { "type": "integer", "minimum": 0 },
+        "service_pid": { "type": "integer", "minimum": 1 },
+        "worker_pids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^\\d+$" },
+          "uniqueItems": true
+        },
+        "peak_concurrent_workers": { "type": "integer", "minimum": 0 },
+        "iii_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
+        "iii_sha_verified": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "result": {
       "type": "string",
-      "enum": ["pass", "fail", "preflight-pass", "preflight-fail"]
+      "enum": [
+        "pass",
+        "provisional-pass",
+        "fail",
+        "preflight-pass",
+        "preflight-fail"
+      ]
     },
+    "failures": { "$ref": "#/$defs/stringArray" },
     "artifact_sha256": {
       "type": "object",
-      "additionalProperties": {
-        "type": "string",
-        "pattern": "^[0-9a-f]{64}$"
-      }
+      "properties": {
+        "stderr.log": { "$ref": "#/$defs/sha256" },
+        "stdout.log": { "$ref": "#/$defs/sha256" },
+        "telemetry.jsonl": { "$ref": "#/$defs/sha256" },
+        "tracked-tests.txt": { "$ref": "#/$defs/sha256" },
+        "vitest.json": { "$ref": "#/$defs/sha256" },
+        "worker-pids.txt": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
     }
   },
-  "additionalProperties": true
+  "$defs": {
+    "sha1": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    }
+  },
+  "additionalProperties": false
 }

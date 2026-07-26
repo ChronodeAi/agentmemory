@@ -2,20 +2,15 @@
 import { resolveProject } from "./_project.js";
 import { captureToolEvent } from "./_capture.js";
 import { resolveProjectConfig } from "../project-config.js";
+import {
+  deliverObservation,
+  reportObservationDeliveryFailure,
+} from "./_observe-delivery.js";
 
 function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
   if (!payload || typeof payload !== "object") return false;
   return (payload as { entrypoint?: unknown }).entrypoint === "sdk-ts";
-}
-
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-  return h;
 }
 
 async function main() {
@@ -48,10 +43,7 @@ async function main() {
   );
   if (!captured) return;
 
-  fetch(`${REST_URL}/agentmemory/observe`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({
+  await deliverObservation({
       hookType: "post_tool_use",
       sessionId,
       project: config.project_id,
@@ -68,10 +60,7 @@ async function main() {
         ...(captured.provenance ? { provenance: captured.provenance } : {}),
         ...(imageData ? { image_data: imageData } : {}),
       },
-    }),
-    signal: AbortSignal.timeout(3000),
-  }).catch(() => {});
-  setTimeout(() => process.exit(0), 500).unref();
+  });
 }
 
 function toolOutput(data: Record<string, unknown>): unknown {
@@ -118,4 +107,4 @@ function extractImageData(output: unknown): { imageData: string | undefined; cle
   return { imageData: undefined, cleanOutput: output };
 }
 
-main().catch(() => process.exit(0));
+main().catch(reportObservationDeliveryFailure);

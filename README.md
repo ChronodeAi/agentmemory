@@ -1497,7 +1497,8 @@ Only `/agentmemory/livez` is public. Protected endpoints, including detailed
 health telemetry, require `Authorization: Bearer <secret>`. Explicit
 cross-project `scope: "global"` requires the separate
 `AGENTMEMORY_ADMIN_SECRET`; project credentials cannot escalate to global
-scope. Mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
+scope. Mesh sync endpoints require the same `AGENTMEMORY_ADMIN_SECRET` on both
+peers and use an explicit project or global export scope.
 
 <details>
 <summary>Key endpoints</summary>

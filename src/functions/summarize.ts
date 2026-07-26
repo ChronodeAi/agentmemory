@@ -233,12 +233,16 @@ export function registerSummarizeFunction(
   metricsStore?: MetricsStore,
 ): void {
   sdk.registerFunction("mem::summarize", 
-    async (data: { sessionId: string } | undefined) => {
+    async (data: { sessionId: string; project: string } | undefined) => {
       const startMs = Date.now();
       if (!data || typeof data.sessionId !== "string" || !data.sessionId.trim()) {
         return { success: false, error: "sessionId is required" };
       }
+      if (typeof data.project !== "string" || !data.project.trim()) {
+        return { success: false, error: "project is required" };
+      }
       const sessionId = data.sessionId.trim();
+      const project = data.project.trim();
 
       const session = await kv.get<Session>(KV.sessions, sessionId);
       if (!session) {
@@ -246,6 +250,13 @@ export function registerSummarizeFunction(
           sessionId,
         });
         return { success: false, error: "session_not_found" };
+      }
+      if (session.project !== project) {
+        logger.warn("Session project mismatch for summarize", {
+          sessionId,
+          requestedProject: project,
+        });
+        return { success: false, error: "session_project_mismatch" };
       }
 
       const observations = await kv.list<CompressedObservation>(

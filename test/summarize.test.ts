@@ -142,8 +142,10 @@ async function setupHandler(opts: {
     await kv.set(`obs:${opts.sessionId}`, o.id, o);
   }
   registerSummarizeFunction(sdk as any, kv as any, opts.provider);
-  const handler = sdk.functions.get("mem::summarize")!;
-  return { handler, kv };
+  const rawHandler = sdk.functions.get("mem::summarize")!;
+  const handler = (payload: Record<string, unknown>) =>
+    rawHandler({ ...payload, project: "test-project" });
+  return { handler, rawHandler, kv };
 }
 
 describe("mem::summarize chunking", () => {
@@ -156,6 +158,27 @@ describe("mem::summarize chunking", () => {
 
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
+  });
+
+  it("rejects missing or mismatched project scope", async () => {
+    const provider = makeProvider([summaryXml({ title: "unused" })]);
+    const { rawHandler } = await setupHandler({
+      sessionId: "ses_scope",
+      obsCount: 1,
+      provider,
+    });
+
+    await expect(rawHandler({ sessionId: "ses_scope" })).resolves.toMatchObject({
+      success: false,
+      error: "project is required",
+    });
+    await expect(
+      rawHandler({ sessionId: "ses_scope", project: "other-project" }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: "session_project_mismatch",
+    });
+    expect(provider.calls).toHaveLength(0);
   });
 
   it("small session takes the single-call path (no chunking, no reduce)", async () => {

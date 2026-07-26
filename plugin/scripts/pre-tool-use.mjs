@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -257,6 +257,79 @@ loadAgentmemoryEnvironment();
 function resolveProject(cwd) {
 	return resolveProjectConfig(typeof cwd === "string" && cwd.trim() ? cwd : process.cwd()).project_id;
 }
+randomBytes(32);
+const PROJECT_CAPABILITY_TOKEN_VERSION = "amcap1";
+const PROJECT_CAPABILITY_PROJECT_HEADER = "x-agentmemory-project";
+function hmac(value, secret) {
+	return createHmac("sha256", secret).update(value).digest("base64url");
+}
+function createProjectCapabilityToken(claims, signingSecret) {
+	if (!signingSecret) throw new Error("project capability signing secret is required");
+	const normalized = {
+		version: 1,
+		audience: claims.audience.trim(),
+		project: claims.project.trim(),
+		expiresAt: claims.expiresAt,
+		...claims.issuedAt !== void 0 ? { issuedAt: claims.issuedAt } : {},
+		...claims.capabilityId ? { capabilityId: claims.capabilityId.trim() } : {}
+	};
+	if (!normalized.audience || !normalized.project || !Number.isSafeInteger(normalized.expiresAt)) throw new Error("invalid project capability claims");
+	const signed = `${PROJECT_CAPABILITY_TOKEN_VERSION}.${Buffer.from(JSON.stringify(normalized)).toString("base64url")}`;
+	return `${signed}.${hmac(signed, signingSecret)}`;
+}
+function isStrictCapabilityMode(value = process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"]) {
+	return ![
+		"false",
+		"0",
+		"off"
+	].includes((value ?? "").trim().toLowerCase());
+}
+//#endregion
+//#region src/hooks/_auth.ts
+const CAPABILITY_TTL_SECONDS = 300;
+function secretFromEnvironmentOrFile(environmentName, fileEnvironmentName, defaultFileName) {
+	const direct = process.env[environmentName]?.trim();
+	if (direct) return direct;
+	const configuredPath = process.env[fileEnvironmentName]?.trim() || join(homedir(), ".agentmemory", defaultFileName);
+	const path = configuredPath.startsWith("~/") ? join(homedir(), configuredPath.slice(2)) : configuredPath;
+	if (!existsSync(path)) return "";
+	try {
+		return readFileSync(path, "utf8").trim();
+	} catch {
+		return "";
+	}
+}
+function projectCapabilitySigningSecret() {
+	return secretFromEnvironmentOrFile("AGENTMEMORY_PROJECT_CAPABILITY_SECRET", "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE", "project-capability-secret");
+}
+function projectCapability(project) {
+	const normalizedProject = project.trim();
+	if (!normalizedProject) throw new Error("project scope is required");
+	const configuredToken = process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"]?.trim();
+	if (configuredToken) return configuredToken;
+	const signingSecret = projectCapabilitySigningSecret();
+	if (signingSecret) {
+		const issuedAt = Math.floor(Date.now() / 1e3);
+		return createProjectCapabilityToken({
+			version: 1,
+			audience: process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"]?.trim() || "agentmemory",
+			project: normalizedProject,
+			issuedAt,
+			expiresAt: issuedAt + CAPABILITY_TTL_SECONDS
+		}, signingSecret);
+	}
+	if (!isStrictCapabilityMode()) return process.env["AGENTMEMORY_SECRET"]?.trim() || "";
+	throw new Error("project capability credentials are unavailable");
+}
+function projectAuthHeaders(project) {
+	const normalizedProject = project.trim();
+	const projectToken = projectCapability(normalizedProject);
+	return {
+		"Content-Type": "application/json",
+		[PROJECT_CAPABILITY_PROJECT_HEADER]: normalizedProject,
+		...projectToken ? { Authorization: `Bearer ${projectToken}` } : {}
+	};
+}
 //#endregion
 //#region src/hooks/pre-tool-use.ts
 function isSdkChildContext(payload) {
@@ -264,16 +337,10 @@ function isSdkChildContext(payload) {
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
 }
-const INJECT_CONTEXT = process.env["AGENTMEMORY_INJECT_CONTEXT"] === "true";
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-function authHeaders() {
-	const h = { "Content-Type": "application/json" };
-	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-	return h;
-}
 async function main() {
-	if (!INJECT_CONTEXT) return;
+	loadAgentmemoryEnvironment();
+	if (process.env["AGENTMEMORY_INJECT_CONTEXT"] !== "true") return;
 	let input = "";
 	for await (const chunk of process.stdin) input += chunk;
 	let data;
@@ -321,7 +388,7 @@ async function main() {
 	try {
 		const res = await fetch(`${REST_URL}/agentmemory/enrich`, {
 			method: "POST",
-			headers: authHeaders(),
+			headers: projectAuthHeaders(project),
 			body: JSON.stringify({
 				sessionId,
 				files,

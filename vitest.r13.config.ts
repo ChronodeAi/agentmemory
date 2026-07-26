@@ -8,11 +8,6 @@ export default defineConfig({
   test: {
     include: ["test/**/*.test.ts"],
     pool: "forks",
-    poolOptions: {
-      forks: {
-        singleFork: true,
-      },
-    },
     maxWorkers: 1,
     minWorkers: 1,
     fileParallelism: false,

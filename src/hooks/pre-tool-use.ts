@@ -1,5 +1,7 @@
 #!/usr/bin/env node
+import { loadAgentmemoryEnvironment } from "../project-config.js";
 import { resolveProject } from "./_project.js";
+import { projectAuthHeaders } from "./_auth.js";
 
 function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
@@ -21,21 +23,13 @@ function isSdkChildContext(payload: unknown): boolean {
 //   AGENTMEMORY_INJECT_CONTEXT=true   in ~/.agentmemory/.env
 // and restart Claude Code. Expect your session input token count to grow
 // proportionally with the number of file-touching tool calls per turn.
-const INJECT_CONTEXT = process.env["AGENTMEMORY_INJECT_CONTEXT"] === "true";
-
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-  return h;
-}
 
 async function main() {
+  loadAgentmemoryEnvironment();
   // Default off: exit immediately so we don't even open stdin. This keeps
   // Claude Code's tool-call hot path as cheap as possible.
-  if (!INJECT_CONTEXT) return;
+  if (process.env["AGENTMEMORY_INJECT_CONTEXT"] !== "true") return;
 
   let input = "";
   for await (const chunk of process.stdin) {
@@ -100,7 +94,7 @@ async function main() {
   try {
     const res = await fetch(`${REST_URL}/agentmemory/enrich`, {
       method: "POST",
-      headers: authHeaders(),
+      headers: projectAuthHeaders(project),
       body: JSON.stringify({
         sessionId,
         files,

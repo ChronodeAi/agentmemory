@@ -5,6 +5,8 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { dirname, join, relative, resolve } from "node:path";
 import ts from "typescript";
 import { parse as parseYaml } from "yaml";
@@ -22,6 +24,130 @@ const checkOnly = process.argv.includes("--check");
 const publicRoutes = new Set([
   "GET /agentmemory/livez",
 ]);
+const inventoryInputPaths = new Set([
+  "src/triggers/api.ts",
+  "src/mcp/server.ts",
+  "src/mcp/standalone.ts",
+  "src/mcp/tools-registry.ts",
+  "src/cli/connect/index.ts",
+  "src/viewer/index.html",
+  "tsdown.config.ts",
+  "plugin/hooks/hooks.json",
+  "plugin/hooks/hooks.codex.json",
+  "plugin/hooks/hooks.copilot.json",
+  "integrations/hermes/plugin.yaml",
+  "integrations/openclaw/plugin.yaml",
+]);
+
+const CONTROL_LINKS = {
+  identity: {
+    control_ids: ["ICM-01", "ICM-02"],
+    requirements: ["FR-01", "FR-02", "FR-03", "FR-04"],
+    risks: ["R-01", "R-10"],
+    tests: [
+      "test/project-config.test.ts",
+      "test/cross-project-isolation.test.ts",
+    ],
+  },
+  auth: {
+    control_ids: ["ICM-02", "ICM-09"],
+    requirements: ["FR-03", "FR-04", "FR-15", "FR-16", "FR-19"],
+    risks: ["R-01", "R-02", "R-14"],
+    tests: [
+      "test/auth-capability.test.ts",
+      "test/cross-project-isolation.test.ts",
+      "test/integration.test.ts",
+    ],
+  },
+  capture: {
+    control_ids: ["ICM-03", "ICM-14"],
+    requirements: ["FR-05", "FR-07", "FR-17", "FR-18"],
+    risks: ["R-02", "R-07", "R-11"],
+    tests: [
+      "test/capture-profile.test.ts",
+      "test/hook-project.test.ts",
+      "test/claude-code-with-hooks.test.ts",
+    ],
+  },
+  session: {
+    control_ids: ["ICM-04", "ICM-14"],
+    requirements: ["FR-06", "FR-17", "FR-18"],
+    risks: ["R-06", "R-07", "R-11"],
+    tests: [
+      "test/observe-implicit-session.test.ts",
+      "test/codex-connect-hooks.test.ts",
+      "test/integration.test.ts",
+    ],
+  },
+  context: {
+    control_ids: ["ICM-05", "ICM-06"],
+    requirements: ["FR-09", "FR-11", "FR-19"],
+    risks: ["R-03", "R-04", "R-17"],
+    tests: [
+      "test/coding-memory.test.ts",
+      "test/context-delivery-routes.test.ts",
+      "test/context-eligibility.test.ts",
+    ],
+  },
+  provenance: {
+    control_ids: ["ICM-07"],
+    requirements: ["FR-10", "FR-12"],
+    risks: ["R-06"],
+    tests: ["test/coding-memory.test.ts", "test/integration.test.ts"],
+  },
+  promotion: {
+    control_ids: ["ICM-08"],
+    requirements: ["FR-13", "FR-14"],
+    risks: ["R-03", "R-05"],
+    tests: ["test/promotions.test.ts"],
+  },
+  provider: {
+    control_ids: ["ICM-10"],
+    requirements: ["FR-07", "FR-15"],
+    risks: ["R-02", "R-15"],
+    tests: [
+      "test/privacy.test.ts",
+      "test/embedding-provider.test.ts",
+      "test/agent-sdk-provider.test.ts",
+    ],
+  },
+  health: {
+    control_ids: ["ICM-11", "ICM-12"],
+    requirements: ["FR-12", "FR-20"],
+    risks: ["R-07", "R-08", "R-09"],
+    tests: [
+      "test/health-thresholds.test.ts",
+      "test/viewer-session-id.test.ts",
+      "test/integration.test.ts",
+    ],
+  },
+  viewer: {
+    control_ids: ["ICM-12"],
+    requirements: ["FR-03", "FR-20"],
+    risks: ["R-08", "R-09"],
+    tests: [
+      "test/slots.test.ts",
+      "test/viewer-security.test.ts",
+      "test/viewer-session-id.test.ts",
+    ],
+  },
+  migration: {
+    control_ids: ["ICM-13"],
+    requirements: ["FR-02", "FR-19"],
+    risks: ["R-13", "R-16"],
+    tests: ["test/snapshot.test.ts", "test/infer-memory-projects.test.ts"],
+  },
+  connector: {
+    control_ids: ["ICM-14"],
+    requirements: ["FR-17", "FR-18"],
+    risks: ["R-07", "R-11"],
+    tests: [
+      "test/cli-connect.test.ts",
+      "test/codex-connect-hooks.test.ts",
+      "test/claude-code-with-hooks.test.ts",
+    ],
+  },
+};
 
 function sourceFile(path) {
   const source = readFileSync(path, "utf8");
@@ -170,9 +296,31 @@ function providerFiles(path) {
   return files;
 }
 
+function repositoryIdentity(paths) {
+  const runGit = (args) =>
+    execFileSync("git", args, {
+      cwd: root,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  const digest = createHash("sha256");
+  for (const path of [...paths].sort()) {
+    digest.update(path);
+    digest.update("\0");
+    digest.update(readFileSync(join(root, path)));
+    digest.update("\0");
+  }
+  return {
+    commit_sha: runGit(["rev-parse", "HEAD"]),
+    commit_tree_sha: runGit(["rev-parse", "HEAD^{tree}"]),
+    inventory_input_sha256: digest.digest("hex"),
+  };
+}
+
 function providerInventory() {
   const providers = [];
   for (const path of providerFiles(join(root, "src/providers"))) {
+    inventoryInputPaths.add(relative(root, path));
     const { file } = sourceFile(path);
     walk(file, (node) => {
       if (
@@ -189,6 +337,126 @@ function providerInventory() {
     });
   }
   return providers.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function providerAttemptInventory() {
+  const providerMethods = new Set([
+    "compress",
+    "summarize",
+    "describeImage",
+    "embed",
+    "embedBatch",
+    "embedImage",
+  ]);
+  const attempts = [];
+  for (const path of providerFiles(join(root, "src"))) {
+    const relativePath = relative(root, path);
+    inventoryInputPaths.add(relativePath);
+    const { file } = sourceFile(path);
+    walk(file, (node) => {
+      if (!ts.isCallExpression(node)) return;
+      const line =
+        file.getLineAndCharacterOfPosition(node.getStart()).line + 1;
+      const expression = node.expression;
+      const callee = expression.getText(file);
+      let method;
+      let receiver;
+      if (ts.isPropertyAccessExpression(expression)) {
+        method = expression.name.text;
+        receiver = expression.expression.getText(file);
+      } else if (ts.isIdentifier(expression)) {
+        method = expression.text;
+      }
+
+      const providerInvocation =
+        method &&
+        providerMethods.has(method) &&
+        !(
+          relativePath.startsWith("src/providers/") &&
+          receiver === "this"
+        );
+      const providerTransport =
+        relativePath.startsWith("src/providers/") &&
+        (method === "fetchWithTimeout" ||
+          callee.endsWith(".messages.create") ||
+          (relativePath === "src/providers/agent-sdk.ts" &&
+            method === "query"));
+      if (!providerInvocation && !providerTransport) return;
+
+      let purpose = "query";
+      if (relativePath.includes("migrate")) purpose = "migration";
+      else if (
+        relativePath.includes("vision") ||
+        method === "describeImage" ||
+        method === "embedImage"
+      ) {
+        purpose = "vision";
+      } else if (
+        method === "embed" ||
+        method === "embedBatch" ||
+        relativePath.includes("/embedding/")
+      ) {
+        purpose = "embedding";
+      } else if (relativePath.includes("fallback-chain")) {
+        purpose = "fallback";
+      } else if (providerTransport) {
+        purpose = "transport";
+      }
+
+      attempts.push({
+        surface_id: `PROVIDER:ATTEMPT:${relativePath}:${line}:${method}`,
+        purpose,
+        kind: providerInvocation ? "invocation" : "transport",
+        method,
+        receiver: receiver ?? null,
+        source: `${relativePath}:${line}`,
+      });
+    });
+  }
+  return attempts.sort((a, b) =>
+    a.surface_id.localeCompare(b.surface_id),
+  );
+}
+
+function linksForSurface(surface) {
+  const haystack = `${surface.surface_id} ${surface.source}`.toLowerCase();
+  let key = "auth";
+  if (surface.type === "provider-adapter" || surface.type === "provider-attempt") {
+    key = "provider";
+  } else if (surface.type.startsWith("viewer")) {
+    key = "viewer";
+  } else if (
+    surface.type === "host-connector" ||
+    surface.type === "host-hook-event"
+  ) {
+    key = "connector";
+  } else if (surface.type === "packaged-hook") {
+    if (/pre-compact|context/.test(haystack)) key = "context";
+    else if (/commit/.test(haystack)) key = "provenance";
+    else if (/session|subagent|task-completed/.test(haystack)) key = "session";
+    else key = "capture";
+  } else if (/promotion|lesson|insight|remember/.test(haystack)) {
+    key = "promotion";
+  } else if (/context|recall|search|file-history/.test(haystack)) {
+    key = "context";
+  } else if (/commit|provenance/.test(haystack)) {
+    key = "provenance";
+  } else if (/health|slot|viewer/.test(haystack)) {
+    key = "health";
+  } else if (/migrat|snapshot|restore|index/.test(haystack)) {
+    key = "migration";
+  } else if (/session|agent|handoff/.test(haystack)) {
+    key = "session";
+  } else if (/project|scope/.test(haystack)) {
+    key = "identity";
+  }
+  const links = CONTROL_LINKS[key];
+  return {
+    control_ids: [...links.control_ids],
+    requirements: [...links.requirements],
+    risks: [...links.risks],
+    tests: [...links.tests],
+  };
 }
 
 function namedObjectArray(path, variableName, key) {
@@ -338,6 +606,7 @@ const mcpTools = getAllTools()
   .sort((a, b) => a.name.localeCompare(b.name));
 const hooks = hookInventory();
 const providers = providerInventory();
+const providerAttempts = providerAttemptInventory();
 const mcpProtocol = mcpProtocolInventory();
 mcpProtocol.standalone_fallback_tools = standaloneTools();
 const hostManifests = hostManifestInventory();
@@ -421,12 +690,23 @@ const surfaces = [
     source: provider.source,
     auth_control: "processing-policy",
   })),
+  ...providerAttempts.map((attempt) => ({
+    ...attempt,
+    type: "provider-attempt",
+    auth_control: "processing-policy",
+  })),
 ];
+const tracedSurfaces = surfaces.map((surface) => ({
+  ...surface,
+  ...linksForSurface(surface),
+}));
+const sourceIdentity = repositoryIdentity(inventoryInputPaths);
 
 const inventory = {
-  schema_version: 1,
+  schema_version: 2,
   control_id: "G-ICM-01",
   project_id: "github.com/chronodeai/agentmemory",
+  source_identity: sourceIdentity,
   public_route_allowlist: [...publicRoutes].sort(),
   counts: {
     registered_api_functions: api.functions.length,
@@ -452,6 +732,7 @@ const inventory = {
     ),
     viewer_ui_rest_expressions: viewer.ui_rest_expressions.length,
     provider_adapters: providers.length,
+    provider_attempt_sites: providerAttempts.length,
     host_connectors: connectors.length,
   },
   rest: api.routes,
@@ -464,8 +745,9 @@ const inventory = {
   host_hook_manifests: hostManifests,
   viewer,
   provider_adapters: providers,
+  provider_attempt_sites: providerAttempts,
   host_connectors: connectors,
-  surfaces,
+  surfaces: tracedSurfaces,
 };
 
 const rendered = `${JSON.stringify(inventory, null, 2)}\n`;

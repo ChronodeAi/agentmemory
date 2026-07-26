@@ -1,12 +1,28 @@
 import { describe, expect, it } from "vitest";
-import { evaluateHealth } from "../src/health/thresholds.js";
+import { registerHealthMonitor } from "../src/health/monitor.js";
+import {
+  evaluateHealth,
+  healthStatusExitCode,
+} from "../src/health/thresholds.js";
 import type { HealthSnapshot } from "../src/types.js";
+import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 function snap(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
+  const now = Date.now();
   return {
+    collectedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 60_000).toISOString(),
     connectionState: "connected",
-    workers: [],
-    memory: { heapUsed: 0, heapTotal: 1, rss: 0, external: 0 },
+    workers: [{ id: "worker-1", name: "worker", status: "running" }],
+    workerProbeStatus: "ok",
+    slotBackend: { status: "ok" },
+    memory: {
+      heapUsed: 0,
+      heapTotal: 1,
+      rss: 0,
+      external: 0,
+      systemTotal: 16 * 1024 * 1024 * 1024,
+    },
     cpu: { userMicros: 0, systemMicros: 0, percent: 0 },
     eventLoopLagMs: 0,
     uptimeSeconds: 1,
@@ -18,6 +34,14 @@ function snap(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
 }
 
 describe("evaluateHealth memory severity", () => {
+  it("returns a failing automation exit code unless health is explicit", () => {
+    expect(healthStatusExitCode("healthy")).toBe(0);
+    expect(healthStatusExitCode("degraded")).toBe(1);
+    expect(healthStatusExitCode("critical")).toBe(1);
+    expect(healthStatusExitCode("unknown")).toBe(1);
+    expect(healthStatusExitCode(undefined)).toBe(1);
+  });
+
   it("fails health when KV or worker probing is unavailable", () => {
     expect(
       evaluateHealth(
@@ -27,6 +51,37 @@ describe("evaluateHealth memory severity", () => {
     expect(
       evaluateHealth(snap({ workerProbeStatus: "error" })),
     ).toMatchObject({ status: "critical", alerts: ["worker_probe_failed"] });
+  });
+
+  it.each([
+    ["empty", "workers_missing"],
+    ["invalid", "worker_probe_invalid"],
+  ] as const)("fails closed for a %s worker result", (workerProbeStatus, alert) => {
+    expect(
+      evaluateHealth(snap({ workers: [], workerProbeStatus })),
+    ).toMatchObject({ status: "critical", alerts: [alert] });
+  });
+
+  it("fails closed when slots are unavailable or the snapshot expired", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          slotBackend: { status: "error", error: "synthetic" },
+        }),
+      ),
+    ).toMatchObject({
+      status: "critical",
+      alerts: ["slot_backend_unavailable"],
+    });
+
+    expect(
+      evaluateHealth(
+        snap({ expiresAt: new Date(Date.now() - 1).toISOString() }),
+      ),
+    ).toMatchObject({
+      status: "critical",
+      alerts: ["health_snapshot_stale"],
+    });
   });
 
   it("stays healthy when heap fills a tiny steady-state process (issue #158)", () => {
@@ -104,5 +159,104 @@ describe("evaluateHealth memory severity", () => {
     expect(loose.status).toBe("critical");
     const strict = evaluateHealth(s, { memoryRssFloorBytes: 1024 * 1024 * 1024 });
     expect(strict.status).toBe("healthy");
+  });
+
+  it("accounts for RSS and external memory even when heap usage is low", () => {
+    const rss = evaluateHealth(
+      snap({
+        memory: {
+          heapUsed: 10,
+          heapTotal: 100,
+          rss: 9 * 1024 * 1024 * 1024,
+          external: 0,
+          systemTotal: 16 * 1024 * 1024 * 1024,
+        },
+      }),
+    );
+    expect(rss.status).toBe("critical");
+    expect(
+      rss.alerts.some((alert) => alert.startsWith("memory_rss_critical_")),
+    ).toBe(true);
+
+    const external = evaluateHealth(
+      snap({
+        memory: {
+          heapUsed: 10,
+          heapTotal: 100,
+          rss: 100 * 1024 * 1024,
+          external: 2 * 1024 * 1024 * 1024,
+          systemTotal: 16 * 1024 * 1024 * 1024,
+        },
+      }),
+    );
+    expect(external.status).toBe("critical");
+    expect(
+      external.alerts.some((alert) =>
+        alert.startsWith("memory_external_critical_"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports capture capacity and recent delivery failures", () => {
+    const exhausted = evaluateHealth(
+      snap({
+        captureAdmission: {
+          active: 10,
+          limit: 10,
+          rejected: 1,
+          rejectedSinceLastCollection: 1,
+          failedSinceLastCollection: 2,
+        },
+      }),
+    );
+    expect(exhausted.status).toBe("critical");
+    expect(exhausted.alerts).toEqual(
+      expect.arrayContaining([
+        "capture_capacity_exhausted",
+        "capture_rejected_1",
+        "capture_failed_2",
+      ]),
+    );
+  });
+});
+
+describe("health dependency probing", () => {
+  it.each([
+    [{ workers: [] }, "workers_missing"],
+    [{ workers: "not-an-array" }, "worker_probe_invalid"],
+  ])("fails closed for malformed engine worker output", async (result, alert) => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    sdk.registerFunction("engine::workers::list", async () => result);
+    const monitor = registerHealthMonitor(sdk as never, kv as never);
+    try {
+      const snapshot = await monitor.collectNow();
+      expect(snapshot.status).toBe("critical");
+      expect(snapshot.alerts).toContain(alert);
+    } finally {
+      monitor.stop();
+    }
+  });
+
+  it("fails closed when the slot backend cannot be listed", async () => {
+    const sdk = mockSdk();
+    sdk.registerFunction("engine::workers::list", async () => ({
+      workers: [{ id: "worker-1", name: "worker", status: "running" }],
+    }));
+    const base = mockKV();
+    const kv = {
+      ...base,
+      list: async () => {
+        throw new Error("synthetic slot failure");
+      },
+    };
+    const monitor = registerHealthMonitor(sdk as never, kv as never);
+    try {
+      const snapshot = await monitor.collectNow();
+      expect(snapshot.status).toBe("critical");
+      expect(snapshot.alerts).toContain("slot_backend_unavailable");
+    } finally {
+      monitor.stop();
+    }
   });
 });

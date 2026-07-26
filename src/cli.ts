@@ -40,6 +40,7 @@ const c = {
 import { generateId } from "./state/schema.js";
 import {
   buildDiagnostics,
+  diagnosticFixConfirmed,
   dryRunPlan,
   parseEnvFile,
   type Diagnostic,
@@ -64,6 +65,12 @@ import { knownAgents } from "./cli/connect/index.js";
 import { materializeIiiRuntimeConfig } from "./cli/iii-runtime-config.js";
 import { getEnvVar } from "./config.js";
 import { resolveProjectConfig } from "./project-config.js";
+import { healthStatusExitCode } from "./health/thresholds.js";
+import {
+  clientAuthorizationHeaders,
+  resolveClientRequestScope,
+} from "./client-auth.js";
+import { isStrictCapabilityMode } from "./auth.js";
 
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
@@ -1386,14 +1393,29 @@ async function main() {
   writePrefs({ skipSplash: true });
 }
 
+function clientRequestHeaders(url: string, body?: unknown): Record<string, string> {
+  return clientAuthorizationHeaders(resolveClientRequestScope(url, body), {
+    legacySecret: getEnvVar("AGENTMEMORY_SECRET"),
+    adminSecret: getEnvVar("AGENTMEMORY_ADMIN_SECRET"),
+    projectCapabilitySecret: getEnvVar(
+      "AGENTMEMORY_PROJECT_CAPABILITY_SECRET",
+    ),
+    projectCapabilityToken: getEnvVar(
+      "AGENTMEMORY_PROJECT_CAPABILITY_TOKEN",
+    ),
+    audience: getEnvVar("AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"),
+    strictCapabilityMode: isStrictCapabilityMode(
+      getEnvVar("AGENTMEMORY_STRICT_CAPABILITY_MODE"),
+    ),
+  });
+}
+
 async function apiFetch<T = unknown>(base: string, path: string, timeoutMs = 5000): Promise<T | null> {
   try {
-    const headers: Record<string, string> = {};
-    const secret = getEnvVar("AGENTMEMORY_SECRET");
-    if (secret) headers["Authorization"] = `Bearer ${secret}`;
-    const res = await fetch(`${base}/agentmemory/${path}`, {
+    const url = `${base}/agentmemory/${path}`;
+    const res = await fetch(url, {
       signal: AbortSignal.timeout(timeoutMs),
-      headers,
+      headers: clientRequestHeaders(url),
     });
     return (await res.json()) as T;
   } catch {
@@ -1410,6 +1432,12 @@ async function runStatus() {
   const sessionQuery = globalScope
     ? "sessions?scope=global&agentId=*"
     : `sessions?project=${encodeURIComponent(project!)}&agentId=*`;
+  const graphQuery = globalScope
+    ? "graph/stats?scope=global"
+    : `graph/stats?project=${encodeURIComponent(project!)}`;
+  const memoriesQuery = globalScope
+    ? "memories?count=true&scope=global"
+    : `memories?count=true&project=${encodeURIComponent(project!)}`;
   p.intro("agentmemory status");
 
   const up = await isEngineRunning();
@@ -1431,8 +1459,8 @@ async function runStatus() {
     ] = await Promise.all([
       apiFetch<any>(base, "health"),
       apiFetch<any>(base, sessionQuery),
-      apiFetch<any>(base, "graph/stats"),
-      apiFetch<any>(base, "memories?count=true"),
+      apiFetch<any>(base, graphQuery),
+      apiFetch<any>(base, memoriesQuery),
       apiFetch<any>(base, "config/flags"),
       apiFetch<any>(base, "diagnostics/followup"),
       project
@@ -1515,6 +1543,10 @@ async function runStatus() {
     }
 
     p.note(lines.join("\n"), "agentmemory");
+    const statusExitCode = healthStatusExitCode(status);
+    if (statusExitCode !== 0) {
+      process.exitCode = statusExitCode;
+    }
   } catch (err) {
     p.log.error(err instanceof Error ? err.message : String(err));
     process.exit(1);
@@ -1609,6 +1641,34 @@ function buildDoctorEffects(): DoctorEffects {
         );
       } catch {
         return {};
+      }
+    },
+    runtimeEnv: () => {
+      let fileEnv: Record<string, string> = {};
+      try {
+        fileEnv = parseEnvFile(
+          readFileSync(join(homedir(), ".agentmemory", ".env"), "utf-8"),
+        );
+      } catch {
+        fileEnv = {};
+      }
+      const effective = { ...fileEnv };
+      for (const [key, value] of Object.entries(process.env)) {
+        if (value !== undefined) effective[key] = value;
+      }
+      return effective;
+    },
+    secretFileHasValue: (path: string) => {
+      const expanded =
+        path === "~"
+          ? homedir()
+          : path.startsWith("~/")
+            ? join(homedir(), path.slice(2))
+            : path;
+      try {
+        return readFileSync(expanded, "utf8").trim().length > 0;
+      } catch {
+        return false;
       }
     },
     pidfileExists: () => existsSync(enginePidfilePath()),
@@ -1735,6 +1795,7 @@ function buildDoctorEffects(): DoctorEffects {
 
 async function passiveServerChecks(): Promise<DoctorCheck[]> {
   const base = getBaseUrl();
+  const project = resolveProjectConfig(process.cwd()).project_id;
   const checks: DoctorCheck[] = [];
 
   const serverUp = await isEngineRunning();
@@ -1750,7 +1811,11 @@ async function passiveServerChecks(): Promise<DoctorCheck[]> {
   const [health, flags, graph] = await Promise.all([
     apiFetch<any>(base, "health", 3000),
     apiFetch<any>(base, "config/flags", 3000),
-    apiFetch<any>(base, "graph/stats", 3000),
+    apiFetch<any>(
+      base,
+      `graph/stats?project=${encodeURIComponent(project)}`,
+      3000,
+    ),
   ]);
 
   const hasLlm = flags?.provider === "llm";
@@ -1926,10 +1991,13 @@ async function runDoctor() {
 
     if (applyAll) {
       const r = await applyFixWithReport(d, ctx, false);
-      if (r.ok) fixed++;
       // Re-check only this diagnostic.
       const after = await d.check(ctx);
-      if (!after.ok) p.log.warn(`${d.id} still failing after fix.`);
+      if (diagnosticFixConfirmed(r, after)) {
+        fixed++;
+      } else if (!after.ok) {
+        p.log.warn(`${d.id} still failing after fix.`);
+      }
       continue;
     }
 
@@ -2059,9 +2127,13 @@ async function postJson<T = unknown>(
   timeoutMs = 5000,
 ): Promise<T | null> {
   try {
+    const headers = {
+      "Content-Type": "application/json",
+      ...clientRequestHeaders(url, body),
+    };
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers,
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(timeoutMs),
     });
@@ -2077,9 +2149,13 @@ async function postJsonStrict<T = unknown>(
   body: unknown,
   timeoutMs = 5000,
 ): Promise<T | null> {
+  const headers = {
+    "Content-Type": "application/json",
+    ...clientRequestHeaders(url, body),
+  };
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(body),
     signal: AbortSignal.timeout(timeoutMs),
   });
@@ -2119,9 +2195,13 @@ async function seedDemoSession(
     };
 
     try {
+      const headers = {
+        "Content-Type": "application/json",
+        ...clientRequestHeaders(url, payload),
+      };
       const res = await fetch(url, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(payload),
         signal: AbortSignal.timeout(5000),
       });
@@ -2140,14 +2220,21 @@ async function seedDemoSession(
     }
   }
 
-  await postJsonStrict(`${base}/agentmemory/session/end`, { sessionId: session.id });
+  await postJsonStrict(`${base}/agentmemory/session/end`, {
+    sessionId: session.id,
+    project,
+  });
   return stored;
 }
 
-async function runDemoSearch(base: string, query: string): Promise<SearchResult> {
+async function runDemoSearch(
+  base: string,
+  project: string,
+  query: string,
+): Promise<SearchResult> {
   const data = await postJson<{ results?: Array<{ title?: string }> }>(
     `${base}/agentmemory/smart-search`,
-    { query, limit: 5 },
+    { project, query, limit: 5 },
     10000,
   );
   const items = data?.results ?? [];
@@ -2323,7 +2410,7 @@ async function runDemoBody(base: string) {
 
   const results: SearchResult[] = [];
   for (const query of queries) {
-    results.push(await runDemoSearch(base, query));
+    results.push(await runDemoSearch(base, demoProject, query));
   }
 
   sQuery.stop("Search complete");

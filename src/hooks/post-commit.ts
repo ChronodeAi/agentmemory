@@ -8,6 +8,10 @@ import {
   credentialFreeWorktreeId,
   parseCommitTransitions,
 } from "./_capture.js";
+import {
+  deliverProjectRequest,
+  reportHookDeliveryFailure,
+} from "./_delivery.js";
 import { resolveProject } from "./_project.js";
 
 const exec = promisify(execFile);
@@ -18,15 +22,7 @@ function isSdkChildContext(payload: unknown): boolean {
   return (payload as { entrypoint?: unknown }).entrypoint === "sdk-ts";
 }
 
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 const TIMEOUT_MS = 1500;
-
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-  return h;
-}
 
 async function git(args: string[], cwd: string): Promise<string | null> {
   try {
@@ -155,21 +151,20 @@ async function main() {
 
   const body = await collectCommitLinkage(cwd, sha, sessionId, project);
 
-  try {
-    await fetch(`${REST_URL}/agentmemory/session/commit`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-  } catch {
-    // best-effort
-  }
+  await deliverProjectRequest(
+    "/agentmemory/session/commit",
+    project,
+    body,
+    { attempts: 2, timeoutMs: TIMEOUT_MS },
+  );
 }
 
 const invokedPath = process.argv[1]
   ? pathToFileURL(resolve(process.argv[1])).href
   : "";
 if (import.meta.url === invokedPath) {
-  main().catch(() => process.exit(0));
+  main().catch((error) => {
+    reportHookDeliveryFailure("commit linkage", error);
+    process.exitCode = 1;
+  });
 }

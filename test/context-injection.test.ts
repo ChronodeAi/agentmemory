@@ -112,9 +112,9 @@ describe("pre-tool-use hook — context injection gate (#143)", () => {
 
 describe("session-start hook — context injection gate (#143)", () => {
   it("registers the session but writes nothing to stdout when AGENTMEMORY_INJECT_CONTEXT is unset", async () => {
-    // Session registration POST will fail against the unreachable URL,
-    // but the hook's try/catch must swallow that cleanly — Claude Code
-    // must never see an error at session start.
+    // Session registration POST will fail against the unreachable URL.
+    // The failure must be visible on stderr without injecting context or
+    // preventing Claude Code from starting.
     const payload = JSON.stringify({
       session_id: "ses_test",
       cwd: "/tmp/fake-project",
@@ -124,5 +124,6 @@ describe("session-start hook — context injection gate (#143)", () => {
     });
     expect(result.exitCode).toBe(0);
     expect(result.stdout).toBe("");
+    expect(result.stderr).toContain("session registration failed");
   });
 });

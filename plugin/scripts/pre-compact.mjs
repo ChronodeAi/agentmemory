@@ -1,6 +1,6 @@
 #!/usr/bin/env node
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
@@ -251,6 +251,82 @@ function resolveProjectConfig(cwd = process.cwd()) {
 		...existsSync(overridePath) ? { override_path: overridePath } : {}
 	};
 }
+randomBytes(32);
+const PROJECT_CAPABILITY_TOKEN_VERSION = "amcap1";
+const PROJECT_CAPABILITY_PROJECT_HEADER = "x-agentmemory-project";
+function hmac(value, secret) {
+	return createHmac("sha256", secret).update(value).digest("base64url");
+}
+function createProjectCapabilityToken(claims, signingSecret) {
+	if (!signingSecret) throw new Error("project capability signing secret is required");
+	const normalized = {
+		version: 1,
+		audience: claims.audience.trim(),
+		project: claims.project.trim(),
+		expiresAt: claims.expiresAt,
+		...claims.issuedAt !== void 0 ? { issuedAt: claims.issuedAt } : {},
+		...claims.capabilityId ? { capabilityId: claims.capabilityId.trim() } : {}
+	};
+	if (!normalized.audience || !normalized.project || !Number.isSafeInteger(normalized.expiresAt)) throw new Error("invalid project capability claims");
+	const signed = `${PROJECT_CAPABILITY_TOKEN_VERSION}.${Buffer.from(JSON.stringify(normalized)).toString("base64url")}`;
+	return `${signed}.${hmac(signed, signingSecret)}`;
+}
+function isStrictCapabilityMode(value = process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"]) {
+	return ![
+		"false",
+		"0",
+		"off"
+	].includes((value ?? "").trim().toLowerCase());
+}
+//#endregion
+//#region src/hooks/_auth.ts
+const CAPABILITY_TTL_SECONDS = 300;
+function secretFromEnvironmentOrFile(environmentName, fileEnvironmentName, defaultFileName) {
+	const direct = process.env[environmentName]?.trim();
+	if (direct) return direct;
+	const configuredPath = process.env[fileEnvironmentName]?.trim() || join(homedir(), ".agentmemory", defaultFileName);
+	const path = configuredPath.startsWith("~/") ? join(homedir(), configuredPath.slice(2)) : configuredPath;
+	if (!existsSync(path)) return "";
+	try {
+		return readFileSync(path, "utf8").trim();
+	} catch {
+		return "";
+	}
+}
+function projectCapabilitySigningSecret() {
+	return secretFromEnvironmentOrFile("AGENTMEMORY_PROJECT_CAPABILITY_SECRET", "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE", "project-capability-secret");
+}
+function contextAcknowledgementSecret() {
+	return secretFromEnvironmentOrFile("AGENTMEMORY_CONTEXT_ACK_SECRET", "AGENTMEMORY_CONTEXT_ACK_SECRET_FILE", "context-ack-secret");
+}
+function projectCapability(project) {
+	const normalizedProject = project.trim();
+	if (!normalizedProject) throw new Error("project scope is required");
+	const configuredToken = process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"]?.trim();
+	if (configuredToken) return configuredToken;
+	const signingSecret = projectCapabilitySigningSecret();
+	if (signingSecret) {
+		const issuedAt = Math.floor(Date.now() / 1e3);
+		return createProjectCapabilityToken({
+			version: 1,
+			audience: process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"]?.trim() || "agentmemory",
+			project: normalizedProject,
+			issuedAt,
+			expiresAt: issuedAt + CAPABILITY_TTL_SECONDS
+		}, signingSecret);
+	}
+	if (!isStrictCapabilityMode()) return process.env["AGENTMEMORY_SECRET"]?.trim() || "";
+	throw new Error("project capability credentials are unavailable");
+}
+function projectAuthHeaders(project) {
+	const normalizedProject = project.trim();
+	const projectToken = projectCapability(normalizedProject);
+	return {
+		"Content-Type": "application/json",
+		[PROJECT_CAPABILITY_PROJECT_HEADER]: normalizedProject,
+		...projectToken ? { Authorization: `Bearer ${projectToken}` } : {}
+	};
+}
 //#endregion
 //#region src/hooks/_project.ts
 loadAgentmemoryEnvironment();
@@ -265,13 +341,28 @@ function isSdkChildContext(payload) {
 	return payload.entrypoint === "sdk-ts";
 }
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-function authHeaders() {
-	const h = { "Content-Type": "application/json" };
-	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-	return h;
+function reportFailure(message) {
+	process.stderr.write(`[agentmemory] ${message}\n`);
+	process.exitCode = 1;
+}
+function signedAcknowledgement(input, acknowledgementSecret) {
+	const claims = {
+		version: 1,
+		audience: "agentmemory:context-delivery",
+		...input,
+		providerId: "claude-code:pre-compact",
+		receiptId: randomUUID()
+	};
+	const signed = `amack1.${Buffer.from(JSON.stringify(claims)).toString("base64url")}`;
+	return `${signed}.${createHmac("sha256", acknowledgementSecret).update(signed).digest("base64url")}`;
+}
+function writeContext(context) {
+	return new Promise((resolve, reject) => {
+		process.stdout.write(context, (error) => error ? reject(error) : resolve());
+	});
 }
 async function main() {
+	loadAgentmemoryEnvironment();
 	let input = "";
 	for await (const chunk of process.stdin) input += chunk;
 	let data;
@@ -282,34 +373,84 @@ async function main() {
 	}
 	if (!data || typeof data !== "object") return;
 	if (isSdkChildContext(data)) return;
+	if (process.env["AGENTMEMORY_INJECT_CONTEXT"] !== "true") return;
 	const sessionId = data.session_id || data.sessionId || "unknown";
 	const project = resolveProject(data.cwd);
+	const acknowledgementSecret = contextAcknowledgementSecret();
+	if (!acknowledgementSecret) {
+		reportFailure("context delivery credentials are unavailable");
+		return;
+	}
+	let headers;
+	try {
+		headers = projectAuthHeaders(project);
+	} catch {
+		reportFailure("context delivery credentials are unavailable");
+		return;
+	}
 	if (process.env["CLAUDE_MEMORY_BRIDGE"] === "true") try {
 		await fetch(`${REST_URL}/agentmemory/claude-bridge/sync`, {
 			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify({}),
+			headers,
+			body: JSON.stringify({ project }),
 			signal: AbortSignal.timeout(5e3)
 		});
 	} catch {}
 	try {
-		const res = await fetch(`${REST_URL}/agentmemory/context`, {
+		const res = await fetch(`${REST_URL}/agentmemory/context-packet`, {
 			method: "POST",
-			headers: authHeaders(),
+			headers,
 			body: JSON.stringify({
 				sessionId,
 				project,
-				budget: 1500
+				token_budget: 1500,
+				context_class: "advisory"
 			}),
 			signal: AbortSignal.timeout(5e3)
 		});
-		if (res.ok) {
-			const result = await res.json();
-			if (result.context) process.stdout.write(result.context);
+		if (!res.ok) {
+			reportFailure(`context packet request failed with HTTP ${res.status}`);
+			return;
 		}
-	} catch {}
+		const result = await res.json();
+		if (result.success === true && result.context === "" && (!result.sourceIds || result.sourceIds.length === 0)) return;
+		if (result.success !== true || !result.context || !result.packetId || !result.expiresAt || !result.nonce || !result.contextSha256 || createHash("sha256").update(result.context).digest("hex") !== result.contextSha256) {
+			reportFailure("context packet response failed validation");
+			return;
+		}
+		await writeContext(result.context);
+		const providerReceipt = signedAcknowledgement({
+			packetId: result.packetId,
+			project,
+			sessionId,
+			contextSha256: result.contextSha256,
+			nonce: result.nonce,
+			expiresAt: result.expiresAt
+		}, acknowledgementSecret);
+		const acknowledgement = await fetch(`${REST_URL}/agentmemory/context-acknowledge`, {
+			method: "POST",
+			headers,
+			body: JSON.stringify({
+				project,
+				sessionId,
+				packetId: result.packetId,
+				providerReceipt
+			}),
+			signal: AbortSignal.timeout(5e3)
+		});
+		if (!acknowledgement.ok) {
+			reportFailure(`context acknowledgement failed with HTTP ${acknowledgement.status}`);
+			return;
+		}
+		const acknowledgementResult = await acknowledgement.json();
+		if (acknowledgementResult.success !== true || acknowledgementResult.acknowledged !== true) reportFailure("context acknowledgement was not confirmed");
+	} catch {
+		reportFailure("context delivery failed");
+	}
 }
-main().catch(() => process.exit(0));
+main().catch(() => {
+	reportFailure("context delivery failed");
+});
 //#endregion
 export {};
 

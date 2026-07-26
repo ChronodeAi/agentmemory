@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { RawObservation } from "../src/types.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type {
+  CompressedObservation,
+  RawObservation,
+  Session,
+} from "../src/types.js";
+import { KV } from "../src/state/schema.js";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -73,7 +80,14 @@ function validPayload(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("mem::observe auto-compress gate (#138)", () => {
+  const originalHome = process.env["HOME"];
+  const isolatedHome = join(
+    tmpdir(),
+    `agentmemory-auto-compress-test-${process.pid}`,
+  );
+
   beforeEach(() => {
+    process.env["HOME"] = isolatedHome;
     // Reset module cache so observe.js re-imports config.js with the
     // fresh AGENTMEMORY_AUTO_COMPRESS env state. Without this, a later
     // test that sets the env var can be undermined by cached module
@@ -83,6 +97,11 @@ describe("mem::observe auto-compress gate (#138)", () => {
   });
   afterEach(() => {
     delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    if (originalHome === undefined) {
+      delete process.env["HOME"];
+    } else {
+      process.env["HOME"] = originalHome;
+    }
   });
 
   it("default (AGENTMEMORY_AUTO_COMPRESS unset): does NOT fire mem::compress", async () => {
@@ -187,6 +206,68 @@ describe("mem::observe auto-compress gate (#138)", () => {
 
     const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
     expect(compressCalls).toHaveLength(0);
+  });
+
+  it("retains observations when rolling compaction cannot create a summary", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const session: Session = {
+      id: "ses_compaction",
+      project: "github.com/example/project",
+      cwd: "/tmp/project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 99,
+    };
+    await kv.set(KV.sessions, session.id, session);
+    for (let index = 0; index < 99; index += 1) {
+      const observation: CompressedObservation = {
+        id: `obs_${index}`,
+        sessionId: session.id,
+        timestamp: new Date(Date.now() + index).toISOString(),
+        type: "file_edit",
+        title: `Edit ${index}`,
+        facts: [`fact ${index}`],
+        narrative: `narrative ${index}`,
+        concepts: ["compaction"],
+        files: [`src/file-${index}.ts`],
+        importance: 5,
+      };
+      await kv.set(KV.observations(session.id), observation.id, observation);
+    }
+    sdk.registerFunction("mem::summarize", () => ({
+      success: false,
+      error: "no_provider",
+    }));
+    registerObserveFunction(sdk as never, kv as never, undefined, 100);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      validPayload({
+        sessionId: session.id,
+        project: session.project,
+        cwd: session.cwd,
+      }),
+    )) as { success: boolean; error: string; retryable: boolean };
+
+    expect(result).toMatchObject({
+      success: false,
+      retryable: true,
+      error: "compaction_summary_failed",
+    });
+    expect(
+      await kv.list<CompressedObservation>(KV.observations(session.id)),
+    ).toHaveLength(99);
+    expect(await kv.list(KV.factLedger(session.id))).toHaveLength(0);
+    expect(
+      sdk.triggered.find((call) => call.id === "mem::summarize")?.data,
+    ).toEqual({
+      sessionId: session.id,
+      project: session.project,
+    });
   });
 });
 

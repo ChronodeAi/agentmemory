@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import type { ISdk } from "iii-sdk";
 import type {
   CommitLink,
@@ -20,6 +20,7 @@ import {
 } from "./slots.js";
 import type { AccessLog } from "./access-tracker.js";
 import { recordAudit } from "./audit.js";
+import { timingSafeCompare } from "../auth.js";
 
 interface InjectionMetrics {
   samplesMs: number[];
@@ -27,14 +28,66 @@ interface InjectionMetrics {
   lastAt: string;
 }
 
-type ContextClass = "advisory" | "gate-critical";
-type ContextSourceName =
+export type ContextClass = "advisory" | "gate-critical";
+export type ContextSourceName =
   | "slots"
   | "profile"
   | "lessons"
   | "episodic"
   | "file_history";
 type ContextSourceStatus = "ok" | "unavailable" | "failed";
+
+export type ContextEligibilityReason =
+  | "expired"
+  | "deleted"
+  | "superseded"
+  | "contradicted"
+  | "unaccepted_gate_authority"
+  | "recalled_only"
+  | "provenance_missing";
+
+export interface ContextEligibilityExclusion {
+  source: ContextSourceName;
+  candidateId?: string;
+  reason: ContextEligibilityReason;
+}
+
+export interface ContextEligibilityDecision {
+  eligible: boolean;
+  reason?: ContextEligibilityReason;
+}
+
+export interface ContextSourcePolicy {
+  source: ContextSourceName;
+  advisory: "optional";
+  gateCritical: "required" | "optional";
+}
+
+export const CONTEXT_SOURCE_POLICIES: Readonly<
+  Record<ContextSourceName, ContextSourcePolicy>
+> = {
+  slots: { source: "slots", advisory: "optional", gateCritical: "optional" },
+  profile: {
+    source: "profile",
+    advisory: "optional",
+    gateCritical: "optional",
+  },
+  lessons: {
+    source: "lessons",
+    advisory: "optional",
+    gateCritical: "required",
+  },
+  episodic: {
+    source: "episodic",
+    advisory: "optional",
+    gateCritical: "required",
+  },
+  file_history: {
+    source: "file_history",
+    advisory: "optional",
+    gateCritical: "required",
+  },
+};
 
 interface ContextSourceOutcome {
   source: ContextSourceName;
@@ -87,12 +140,38 @@ export type ContextDeliveryVerifier = (input: {
   expiresAt: string;
 }) => Promise<ContextDeliveryVerification>;
 
+export interface SignedContextDeliveryClaims {
+  version: 1;
+  audience: "agentmemory:context-delivery";
+  packetId: string;
+  project: string;
+  sessionId: string;
+  contextSha256: string;
+  nonce: string;
+  expiresAt: string;
+  providerId: string;
+  receiptId: string;
+}
+
 interface SourceRead<T> {
   value: T;
   outcome: ContextSourceOutcome;
 }
 
 const PACKET_TTL_MS = 5 * 60 * 1000;
+const CONTEXT_DELIVERY_RECEIPT_VERSION = "amack1";
+
+export class DeliveryLedgerError extends Error {
+  readonly code = "delivery_ledger_unavailable";
+
+  constructor(
+    readonly operation: "read" | "list" | "write",
+    cause: unknown,
+  ) {
+    super(`delivery ledger ${operation} failed: ${errorMessage(cause)}`);
+    this.name = "DeliveryLedgerError";
+  }
+}
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -100,6 +179,217 @@ function errorMessage(error: unknown): string {
 
 function receiptHash(providerReceipt: string): string {
   return createHash("sha256").update(providerReceipt).digest("hex");
+}
+
+function sourceRequired(
+  source: ContextSourceName,
+  contextClass: ContextClass,
+  requested = true,
+): boolean {
+  return (
+    requested &&
+    contextClass === "gate-critical" &&
+    CONTEXT_SOURCE_POLICIES[source].gateCritical === "required"
+  );
+}
+
+function stringValue(
+  candidate: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = candidate[key];
+  return typeof value === "string" && value.trim()
+    ? value.trim()
+    : undefined;
+}
+
+function stringList(
+  candidate: Record<string, unknown>,
+  key: string,
+): string[] {
+  const value = candidate[key];
+  return Array.isArray(value)
+    ? value.filter(
+        (entry): entry is string =>
+          typeof entry === "string" && Boolean(entry.trim()),
+      )
+    : [];
+}
+
+export function evaluateContextCandidate(
+  candidate: Record<string, unknown>,
+  options: {
+    contextClass: ContextClass;
+    candidateId?: string;
+    now?: number;
+  },
+): ContextEligibilityDecision {
+  const status = stringValue(candidate, "status")?.toLowerCase();
+  const now = options.now ?? Date.now();
+  const expiry =
+    stringValue(candidate, "expiresAt") ??
+    stringValue(candidate, "forgetAfter");
+  if (expiry) {
+    const expiresAt = new Date(expiry).getTime();
+    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
+      return { eligible: false, reason: "expired" };
+    }
+  }
+  if (candidate["deleted"] === true || status === "deleted") {
+    return { eligible: false, reason: "deleted" };
+  }
+  if (
+    candidate["isLatest"] === false ||
+    status === "superseded" ||
+    stringValue(candidate, "supersededBy")
+  ) {
+    return { eligible: false, reason: "superseded" };
+  }
+  if (candidate["contradicted"] === true || status === "contradicted") {
+    return { eligible: false, reason: "contradicted" };
+  }
+  const gateAuthority =
+    candidate["gateAuthority"] === true ||
+    stringValue(candidate, "authority")?.toLowerCase() === "gate";
+  const accepted =
+    candidate["accepted"] === true ||
+    status === "accepted" ||
+    stringValue(candidate, "authorityStatus")?.toLowerCase() === "accepted";
+  if (
+    options.contextClass === "gate-critical" &&
+    gateAuthority &&
+    !accepted
+  ) {
+    return { eligible: false, reason: "unaccepted_gate_authority" };
+  }
+  const tags = stringList(candidate, "tags").map((tag) => tag.toLowerCase());
+  if (
+    candidate["recalledOnly"] === true ||
+    stringValue(candidate, "source")?.toLowerCase() === "recall" ||
+    tags.includes("recalled-only")
+  ) {
+    return { eligible: false, reason: "recalled_only" };
+  }
+  const provenanceIds = [
+    options.candidateId,
+    stringValue(candidate, "id"),
+    stringValue(candidate, "obsId"),
+    ...stringList(candidate, "sourceIds"),
+    ...stringList(candidate, "sourceObservationIds"),
+    stringValue(candidate, "commitSha"),
+    stringValue(candidate, "receiptId"),
+  ].filter((value): value is string => Boolean(value));
+  if (provenanceIds.length === 0) {
+    return { eligible: false, reason: "provenance_missing" };
+  }
+  return { eligible: true };
+}
+
+function selectEligible<T>(
+  source: ContextSourceName,
+  candidates: T[],
+  contextClass: ContextClass,
+  toRecord: (candidate: T) => Record<string, unknown>,
+  candidateId: (candidate: T) => string | undefined,
+  exclusions: ContextEligibilityExclusion[],
+  now: number,
+): T[] {
+  const eligible: T[] = [];
+  for (const candidate of candidates) {
+    const id = candidateId(candidate);
+    const decision = evaluateContextCandidate(toRecord(candidate), {
+      contextClass,
+      candidateId: id,
+      now,
+    });
+    if (decision.eligible) {
+      eligible.push(candidate);
+    } else {
+      exclusions.push({
+        source,
+        ...(id ? { candidateId: id } : {}),
+        reason: decision.reason ?? "provenance_missing",
+      });
+    }
+  }
+  return eligible;
+}
+
+function deliveryReceiptSignature(
+  encodedClaims: string,
+  secret: string,
+): string {
+  return createHmac("sha256", secret)
+    .update(`${CONTEXT_DELIVERY_RECEIPT_VERSION}.${encodedClaims}`)
+    .digest("base64url");
+}
+
+export function createSignedContextDeliveryReceipt(
+  claims: SignedContextDeliveryClaims,
+  secret: string,
+): string {
+  if (!secret) throw new Error("context acknowledgement secret is required");
+  const encoded = Buffer.from(JSON.stringify(claims)).toString("base64url");
+  return `${CONTEXT_DELIVERY_RECEIPT_VERSION}.${encoded}.${deliveryReceiptSignature(encoded, secret)}`;
+}
+
+export function createSignedContextDeliveryVerifier(
+  secret: string | undefined,
+): ContextDeliveryVerifier {
+  return async (input) => {
+    if (!secret) {
+      return {
+        verified: false,
+        error: "context acknowledgement verification is unavailable",
+      };
+    }
+    const parts = input.providerReceipt.split(".");
+    if (
+      parts.length !== 3 ||
+      parts[0] !== CONTEXT_DELIVERY_RECEIPT_VERSION ||
+      !timingSafeCompare(
+        parts[2],
+        deliveryReceiptSignature(parts[1], secret),
+      )
+    ) {
+      return { verified: false, error: "invalid context acknowledgement" };
+    }
+    let claims: SignedContextDeliveryClaims;
+    try {
+      claims = JSON.parse(
+        Buffer.from(parts[1], "base64url").toString("utf8"),
+      ) as SignedContextDeliveryClaims;
+    } catch {
+      return { verified: false, error: "invalid context acknowledgement" };
+    }
+    if (
+      claims.version !== 1 ||
+      claims.audience !== "agentmemory:context-delivery" ||
+      claims.packetId !== input.packetId ||
+      claims.project !== input.project ||
+      claims.sessionId !== input.sessionId ||
+      claims.contextSha256 !== input.contextSha256 ||
+      claims.nonce !== input.nonce ||
+      claims.expiresAt !== input.expiresAt ||
+      typeof claims.providerId !== "string" ||
+      !claims.providerId.trim() ||
+      typeof claims.receiptId !== "string" ||
+      !claims.receiptId.trim()
+    ) {
+      return {
+        verified: false,
+        error: "context acknowledgement does not match packet",
+      };
+    }
+    if (Date.now() > new Date(claims.expiresAt).getTime()) {
+      return { verified: false, error: "context acknowledgement has expired" };
+    }
+    return {
+      verified: true,
+      providerId: claims.providerId.trim(),
+      receiptId: claims.receiptId.trim(),
+    };
+  };
 }
 
 async function readSource<T>(
@@ -172,17 +462,43 @@ async function hasBeenInjected(
   sourceId: string,
 ): Promise<boolean> {
   const scope = KV.injectedSources(sessionId);
-  const legacyMarker = await kv
-    .get<{ sourceId: string }>(scope, sourceId)
-    .catch(() => null);
-  if (legacyMarker) return true;
-  const records = await kv.list<ContextAcknowledgement>(scope).catch(() => []);
+  let records: ContextAcknowledgement[];
+  try {
+    records = await kv.list<ContextAcknowledgement>(scope);
+  } catch (error) {
+    throw new DeliveryLedgerError("list", error);
+  }
   return records.some(
     (record) =>
       record.kind === "context_acknowledgement" &&
       record.sessionId === sessionId &&
       record.sourceIds.includes(sourceId),
   );
+}
+
+async function ledgerGet<T>(
+  kv: StateKV,
+  scope: string,
+  key: string,
+): Promise<T | null> {
+  try {
+    return await kv.get<T>(scope, key);
+  } catch (error) {
+    throw new DeliveryLedgerError("read", error);
+  }
+}
+
+async function ledgerSet<T>(
+  kv: StateKV,
+  scope: string,
+  key: string,
+  value: T,
+): Promise<T> {
+  try {
+    return await kv.set(scope, key, value);
+  } catch (error) {
+    throw new DeliveryLedgerError("write", error);
+  }
 }
 
 export function registerCodingMemoryFunctions(
@@ -249,14 +565,15 @@ export function registerCodingMemoryFunctions(
           : files.join(" ") || project;
       const contextClass: ContextClass =
         data.context_class === "gate-critical" ? "gate-critical" : "advisory";
-      const required = contextClass === "gate-critical";
+      const eligibilityExclusions: ContextEligibilityExclusion[] = [];
+      const eligibilityNow = Date.now();
 
       const [slotsRead, profileRead, lessonsRead, episodicRead, fileRead] =
         await Promise.all([
           isSlotsEnabled()
             ? readSource(
                 "slots",
-                required,
+                sourceRequired("slots", contextClass),
                 [] as MemorySlot[],
                 () => listPinnedSlots(kv, project),
                 (items) => items.length,
@@ -265,7 +582,7 @@ export function registerCodingMemoryFunctions(
                 value: [],
                 outcome: {
                   source: "slots",
-                  required,
+                  required: sourceRequired("slots", contextClass),
                   status: "unavailable",
                   itemCount: 0,
                   error: "slots are disabled",
@@ -273,27 +590,23 @@ export function registerCodingMemoryFunctions(
               }),
           readSource(
             "profile",
-            required,
+            sourceRequired("profile", contextClass),
             null as ProjectProfile | null,
             () => kv.get<ProjectProfile>(KV.profiles, project),
             (value) => (value ? 1 : 0),
           ),
           readSource(
             "lessons",
-            required,
+            sourceRequired("lessons", contextClass),
             [] as Lesson[],
             async () =>
               (await kv.list<Lesson>(KV.lessons))
-                .filter(
-                  (lesson) => !lesson.deleted && lesson.project === project,
-                )
-                .sort((a, b) => b.confidence - a.confidence)
-                .slice(0, 10),
+                .filter((lesson) => lesson.project === project),
             (items) => items.length,
           ),
           readSource(
             "episodic",
-            required,
+            sourceRequired("episodic", contextClass),
             { results: [] } as { results: Array<Record<string, unknown>> },
             async () => {
               const result = await sdk.trigger({
@@ -301,7 +614,7 @@ export function registerCodingMemoryFunctions(
                 payload: {
                   query,
                   project,
-                  limit: 5,
+                  limit: 20,
                   format: "narrative",
                   token_budget: budgets.episodic,
                 },
@@ -322,7 +635,7 @@ export function registerCodingMemoryFunctions(
           files.length > 0
             ? readSource(
                 "file_history",
-                required,
+                sourceRequired("file_history", contextClass, true),
                 { context: "", sourceIds: [] } as {
                   context: string;
                   sourceIds: string[];
@@ -378,10 +691,89 @@ export function registerCodingMemoryFunctions(
         ]);
 
       const slots = slotsRead.value;
-      const profile = profileRead.value;
-      const projectLessons = lessonsRead.value;
-      const searchResult = episodicRead.value;
+      const eligibleSlots = selectEligible(
+        "slots",
+        slots,
+        contextClass,
+        (slot) => slot as unknown as Record<string, unknown>,
+        (slot) => `slot:${project}:${slot.label}:${slot.updatedAt}`,
+        eligibilityExclusions,
+        eligibilityNow,
+      );
+      const profileCandidates = profileRead.value ? [profileRead.value] : [];
+      const eligibleProfiles = selectEligible(
+        "profile",
+        profileCandidates,
+        contextClass,
+        (profile) => profile as unknown as Record<string, unknown>,
+        (profile) => `profile:${project}:${profile.updatedAt}`,
+        eligibilityExclusions,
+        eligibilityNow,
+      );
+      const profile = eligibleProfiles[0] ?? null;
+      const projectLessons = selectEligible(
+        "lessons",
+        lessonsRead.value,
+        contextClass,
+        (lesson) => lesson as unknown as Record<string, unknown>,
+        (lesson) => lesson.id,
+        eligibilityExclusions,
+        eligibilityNow,
+      )
+        .sort((a, b) => b.confidence - a.confidence)
+        .slice(0, 10);
+      const searchRows = selectEligible(
+        "episodic",
+        episodicRead.value.results,
+        contextClass,
+        (row) => {
+          const observation =
+            row.observation && typeof row.observation === "object"
+              ? (row.observation as Record<string, unknown>)
+              : {};
+          return { ...row, ...observation };
+        },
+        (row) =>
+          typeof row.obsId === "string"
+            ? row.obsId
+            : row.observation &&
+                typeof row.observation === "object" &&
+                typeof (row.observation as Record<string, unknown>).id ===
+                  "string"
+              ? ((row.observation as Record<string, unknown>).id as string)
+              : undefined,
+        eligibilityExclusions,
+        eligibilityNow,
+      )
+        .sort(
+          (a, b) =>
+            (typeof b.score === "number" ? b.score : 0) -
+            (typeof a.score === "number" ? a.score : 0),
+        )
+        .slice(0, 5);
       const fileResult = fileRead.value;
+      const eligibleFileSourceIds = selectEligible(
+        "file_history",
+        fileResult.sourceIds,
+        contextClass,
+        () => ({}),
+        (id) => id,
+        eligibilityExclusions,
+        eligibilityNow,
+      );
+      fileResult.sourceIds = eligibleFileSourceIds;
+      for (const [read, count] of [
+        [slotsRead, eligibleSlots.length],
+        [profileRead, profile ? 1 : 0],
+        [lessonsRead, projectLessons.length],
+        [episodicRead, searchRows.length],
+        [fileRead, eligibleFileSourceIds.length],
+      ] as Array<[SourceRead<unknown>, number]>) {
+        if (read.outcome.status !== "failed") {
+          read.outcome.itemCount = count;
+          read.outcome.status = count > 0 ? "ok" : "unavailable";
+        }
+      }
       const sourceOutcomes: ContextSourceOutcome[] = [
         slotsRead.outcome,
         profileRead.outcome,
@@ -424,13 +816,14 @@ export function registerCodingMemoryFunctions(
           sourceIds: [],
           sources: sourceOutcomes,
           completeness,
+          eligibility: { excluded: eligibilityExclusions },
           error: "required context sources are incomplete",
         };
       }
 
       const selectedSourceIds: string[] = [];
       const sections: string[] = [];
-      const slotSources = slots.map(
+      const slotSources = eligibleSlots.map(
         (slot) => `slot:${project}:${slot.label}:${slot.updatedAt}`,
       );
       const freshSlotSources: string[] = [];
@@ -447,7 +840,7 @@ export function registerCodingMemoryFunctions(
         !(await hasBeenInjected(kv, sessionId, profileSource));
       if (freshSlotSources.length > 0 || profileIsFresh) {
         const identityParts: string[] = [];
-        const pinned = renderPinnedContext(slots);
+        const pinned = renderPinnedContext(eligibleSlots);
         if (pinned && freshSlotSources.length > 0) identityParts.push(pinned);
         if (profile && profileSource && profileIsFresh) {
           identityParts.push(
@@ -493,14 +886,8 @@ export function registerCodingMemoryFunctions(
         selectedSourceIds.push(...freshLessons.map((lesson) => lesson.id));
       }
 
-      const searchRows =
-        searchResult &&
-        typeof searchResult === "object" &&
-        Array.isArray((searchResult as { results?: unknown[] }).results)
-          ? (searchResult as { results: Array<Record<string, unknown>> }).results
-          : [];
       const freshRows: Array<Record<string, unknown>> = [];
-      for (const row of searchRows.slice(0, 5)) {
+      for (const row of searchRows) {
         const sourceId =
           typeof row.obsId === "string"
             ? row.obsId
@@ -591,7 +978,8 @@ export function registerCodingMemoryFunctions(
         generatedAt,
         expiresAt: new Date(Date.now() + PACKET_TTL_MS).toISOString(),
       };
-      await kv.set(
+      await ledgerSet(
+        kv,
         KV.injectedSources(sessionId),
         `packet:${packetId}`,
         packet,
@@ -616,9 +1004,12 @@ export function registerCodingMemoryFunctions(
         tokens: estimateTokens(context),
         packetId,
         expiresAt: packet.expiresAt,
+        nonce: packet.nonce,
+        contextSha256: packet.contextSha256,
         sourceIds: uniqueSourceIds,
         sources: sourceOutcomes,
         completeness,
+        eligibility: { excluded: eligibilityExclusions },
         latencyMs,
       };
     },
@@ -657,156 +1048,184 @@ export function registerCodingMemoryFunctions(
         return { success: false, error: "session does not belong to project" };
       }
 
-      return withKeyedLock(`context-ack:${sessionId}:${packetId}`, async () => {
-        const scope = KV.injectedSources(sessionId);
-        const providerReceiptHash = receiptHash(providerReceipt);
-        const existing = await kv.get<ContextAcknowledgement>(
-          scope,
-          `ack:${packetId}`,
-        );
-        if (existing) {
-          if (
-            existing.project !== project ||
-            existing.sessionId !== sessionId ||
-            existing.providerReceiptHash !== providerReceiptHash
-          ) {
-            return {
-              success: false,
-              error: "acknowledgement does not match the recorded delivery",
-            };
-          }
-          return {
-            success: true,
-            acknowledged: true,
-            idempotent: true,
-            packetId,
-            sourceIds: existing.sourceIds,
-            acknowledgedAt: existing.acknowledgedAt,
-          };
-        }
-
-        const packet = await kv.get<ContextPacketRecord>(
-          scope,
-          `packet:${packetId}`,
-        );
-        if (!packet) {
-          return { success: false, error: "context packet not found" };
-        }
-        if (
-          packet.project !== project ||
-          packet.sessionId !== sessionId ||
-          packet.packetId !== packetId
-        ) {
-          return {
-            success: false,
-            error: "context packet does not belong to project and session",
-          };
-        }
-        if (Date.now() > new Date(packet.expiresAt).getTime()) {
-          return { success: false, error: "context packet has expired" };
-        }
-        if (!verifyDelivery) {
-          return {
-            success: false,
-            acknowledged: false,
-            error:
-              "trusted provider delivery verification is unavailable; source suppression denied",
-          };
-        }
-        const verification = await verifyDelivery({
-          providerReceipt,
-          packetId,
-          project,
-          sessionId,
-          sourceIds: packet.sourceIds,
-          contextSha256: packet.contextSha256,
-          nonce: packet.nonce,
-          generatedAt: packet.generatedAt,
-          expiresAt: packet.expiresAt,
-        });
-        if (!verification.verified) {
-          return {
-            success: false,
-            acknowledged: false,
-            error:
-              verification.error ??
-              "provider delivery receipt failed verification",
-          };
-        }
-        const providerId = verification.providerId?.trim();
-        const receiptId = verification.receiptId?.trim();
-        if (!providerId || !receiptId) {
-          return {
-            success: false,
-            acknowledged: false,
-            error:
-              "verified provider delivery evidence must include providerId and receiptId",
-          };
-        }
-        const receiptClaim = await withKeyedLock(
-          `context-receipt:${receiptId}`,
+      try {
+        return await withKeyedLock(
+          `context-ack:${sessionId}:${packetId}`,
           async () => {
-            const existingReceipt = await kv.get<{
-              packetId: string;
-              project: string;
-              sessionId: string;
-            }>(KV.contextDeliveryReceipts, receiptId);
-            if (existingReceipt) return false;
-            await kv.set(KV.contextDeliveryReceipts, receiptId, {
+            const scope = KV.injectedSources(sessionId);
+            const providerReceiptHash = receiptHash(providerReceipt);
+            const existing = await ledgerGet<ContextAcknowledgement>(
+              kv,
+              scope,
+              `ack:${packetId}`,
+            );
+            if (existing) {
+              if (
+                existing.project !== project ||
+                existing.sessionId !== sessionId ||
+                existing.providerReceiptHash !== providerReceiptHash
+              ) {
+                return {
+                  success: false,
+                  error: "acknowledgement does not match the recorded delivery",
+                };
+              }
+              return {
+                success: true,
+                acknowledged: true,
+                idempotent: true,
+                packetId,
+                sourceIds: existing.sourceIds,
+                acknowledgedAt: existing.acknowledgedAt,
+              };
+            }
+
+            const packet = await ledgerGet<ContextPacketRecord>(
+              kv,
+              scope,
+              `packet:${packetId}`,
+            );
+            if (!packet) {
+              return { success: false, error: "context packet not found" };
+            }
+            if (
+              packet.project !== project ||
+              packet.sessionId !== sessionId ||
+              packet.packetId !== packetId
+            ) {
+              return {
+                success: false,
+                error: "context packet does not belong to project and session",
+              };
+            }
+            if (Date.now() > new Date(packet.expiresAt).getTime()) {
+              return { success: false, error: "context packet has expired" };
+            }
+            if (!verifyDelivery) {
+              return {
+                success: false,
+                acknowledged: false,
+                error:
+                  "trusted provider delivery verification is unavailable; source suppression denied",
+              };
+            }
+            const verification = await verifyDelivery({
+              providerReceipt,
               packetId,
               project,
               sessionId,
-              providerId,
+              sourceIds: packet.sourceIds,
               contextSha256: packet.contextSha256,
-              claimedAt: new Date().toISOString(),
+              nonce: packet.nonce,
+              generatedAt: packet.generatedAt,
+              expiresAt: packet.expiresAt,
             });
-            return true;
+            if (!verification.verified) {
+              return {
+                success: false,
+                acknowledged: false,
+                error:
+                  verification.error ??
+                  "provider delivery receipt failed verification",
+              };
+            }
+            const providerId = verification.providerId?.trim();
+            const receiptId = verification.receiptId?.trim();
+            if (!providerId || !receiptId) {
+              return {
+                success: false,
+                acknowledged: false,
+                error:
+                  "verified provider delivery evidence must include providerId and receiptId",
+              };
+            }
+            const receiptClaim = await withKeyedLock(
+              `context-receipt:${receiptId}`,
+              async () => {
+                const existingReceipt = await ledgerGet<{
+                  packetId: string;
+                  project: string;
+                  sessionId: string;
+                  providerId: string;
+                  contextSha256: string;
+                }>(kv, KV.contextDeliveryReceipts, receiptId);
+                if (existingReceipt) {
+                  return existingReceipt.packetId === packetId &&
+                    existingReceipt.project === project &&
+                    existingReceipt.sessionId === sessionId &&
+                    existingReceipt.providerId === providerId &&
+                    existingReceipt.contextSha256 === packet.contextSha256
+                    ? "existing"
+                    : "conflict";
+                }
+                await ledgerSet(kv, KV.contextDeliveryReceipts, receiptId, {
+                  packetId,
+                  project,
+                  sessionId,
+                  providerId,
+                  contextSha256: packet.contextSha256,
+                  claimedAt: new Date().toISOString(),
+                });
+                return "created";
+              },
+            );
+            if (receiptClaim === "conflict") {
+              return {
+                success: false,
+                acknowledged: false,
+                error: "provider delivery receipt has already been used",
+              };
+            }
+
+            const acknowledgedAt = new Date().toISOString();
+            const acknowledgement: ContextAcknowledgement = {
+              kind: "context_acknowledgement",
+              packetId,
+              project,
+              sessionId,
+              sourceIds: packet.sourceIds,
+              providerReceiptHash,
+              providerId,
+              receiptId,
+              acknowledgedAt,
+            };
+            await ledgerSet(kv, scope, `ack:${packetId}`, acknowledgement);
+            await recordAudit(
+              kv,
+              "observe",
+              "mem::context-acknowledge",
+              [packetId],
+              {
+                project,
+                sessionId,
+                sourceCount: packet.sourceIds.length,
+                acknowledgedAt,
+                providerId,
+                receiptId,
+              },
+            );
+            return {
+              success: true,
+              acknowledged: true,
+              idempotent: receiptClaim === "existing",
+              packetId,
+              sourceIds: packet.sourceIds,
+              acknowledgedAt,
+            };
           },
         );
-        if (!receiptClaim) {
+      } catch (error) {
+        if (error instanceof DeliveryLedgerError) {
           return {
             success: false,
             acknowledged: false,
-            error: "provider delivery receipt has already been used",
+            code: error.code,
+            operation: error.operation,
+            error: error.message,
           };
         }
-
-        const acknowledgedAt = new Date().toISOString();
-        const acknowledgement: ContextAcknowledgement = {
-          kind: "context_acknowledgement",
-          packetId,
-          project,
-          sessionId,
-          sourceIds: packet.sourceIds,
-          providerReceiptHash,
-          providerId,
-          receiptId,
-          acknowledgedAt,
-        };
-        await kv.set(scope, `ack:${packetId}`, acknowledgement);
-        await recordAudit(
-          kv,
-          "observe",
-          "mem::context-acknowledge",
-          [packetId],
-          {
-            project,
-            sessionId,
-            sourceCount: packet.sourceIds.length,
-            acknowledgedAt,
-            providerId,
-            receiptId,
-          },
-        );
-        return {
-          success: true,
-          acknowledged: true,
-          idempotent: false,
-          packetId,
-          sourceIds: packet.sourceIds,
-          acknowledgedAt,
-        };
-      });
+        throw error;
+      }
     },
   );
 

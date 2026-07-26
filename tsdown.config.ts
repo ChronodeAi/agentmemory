@@ -68,6 +68,14 @@ export default defineConfig([
     clean: false,
     sourcemap: false,
   },
+  {
+    entry: ["src/functions/migrate.ts"],
+    outDir: "dist/functions",
+    ...shared,
+    clean: false,
+    sourcemap: false,
+    banner: { js: "#!/usr/bin/env node" },
+  },
   // One entry per config block prevents tsdown from hoisting shared
   // helpers into hashed chunks across hooks.
   ...hookEntries.map((entry) => ({

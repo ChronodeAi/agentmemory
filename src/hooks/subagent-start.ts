@@ -1,5 +1,9 @@
 #!/usr/bin/env node
 import { resolveProject } from "./_project.js";
+import {
+  deliverObservation,
+  reportObservationDeliveryFailure,
+} from "./_observe-delivery.js";
 
 // Inlined from ./sdk-guard so each hook bundles to a single self-contained
 // .mjs (matches the pattern used by every other hook entry in tsdown.config).
@@ -7,21 +11,6 @@ function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
   if (!payload || typeof payload !== "object") return false;
   return (payload as { entrypoint?: unknown }).entrypoint === "sdk-ts";
-}
-
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-
-// Passive telemetry only — nothing reads the response, so the previous
-// `await` was pure latency. Tightened from 2000ms to a defensive cap so a
-// slow/unreachable server can't stack onto every concurrent subagent
-// startup (#221).
-const TIMEOUT_MS = 800;
-
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-  return h;
 }
 
 async function main() {
@@ -44,10 +33,7 @@ async function main() {
   const agentId = data.agent_id || data.agentName;
   const agentType = data.agent_type || data.agentDisplayName || data.agentName;
 
-  fetch(`${REST_URL}/agentmemory/observe`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({
+  await deliverObservation({
       hookType: "subagent_start",
       sessionId,
       project: resolveProject(data.cwd as string | undefined),
@@ -59,10 +45,7 @@ async function main() {
         parent_session_id:
           data.parent_session_id ?? data.parentSessionId ?? sessionId,
       },
-    }),
-    signal: AbortSignal.timeout(TIMEOUT_MS),
-  }).catch(() => {});
-  setTimeout(() => process.exit(0), 500).unref();
+  });
 }
 
-main().catch(() => process.exit(0));
+main().catch(reportObservationDeliveryFailure);

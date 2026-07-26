@@ -14,7 +14,10 @@ import {
 } from "../version.js";
 import {
   authorizeAdministrativeRequest,
+  authorizeProjectRequest,
   authorizeProtectedRequest,
+  DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
+  extractProjectBinding,
 } from "../auth.js";
 import { isSlotsEnabled, isReflectEnabled } from "../functions/slots.js";
 import { renderViewerDocument } from "../viewer/document.js";
@@ -56,27 +59,15 @@ function parseOptionalInt(raw: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function checkAuth(
-  req: ApiRequest,
-  secret: string | undefined,
-): Response | null {
-  const decision = authorizeProtectedRequest(req.headers, secret);
-  return decision.authorized
-    ? null
-    : {
-        status_code: decision.statusCode,
-        body: { error: decision.error },
-      };
-}
-
 function requireConfiguredSecret(
   secret: string | undefined,
   feature: string,
+  variable = "AGENTMEMORY_SECRET",
 ): Response | null {
   if (secret) return null;
   return {
     status_code: 503,
-    body: { error: `${feature} requires AGENTMEMORY_SECRET` },
+    body: { error: `${feature} requires ${variable}` },
   };
 }
 
@@ -153,6 +144,49 @@ function parseOptionalPositiveInt(value: unknown): number | undefined | null {
   return parsed;
 }
 
+function triggerResult(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function failedTriggerStatus(
+  result: Record<string, unknown>,
+  fallback = 400,
+): number {
+  const error =
+    typeof result["error"] === "string" ? result["error"].toLowerCase() : "";
+  const code =
+    typeof result["code"] === "string" ? result["code"].toLowerCase() : "";
+  if (
+    error.includes("unavailable") ||
+    error.includes("incomplete") ||
+    code.includes("ledger")
+  ) {
+    return 503;
+  }
+  if (
+    result["retryable"] === true ||
+    error.includes("capacity") ||
+    error.includes("temporarily")
+  ) {
+    return 429;
+  }
+  if (error.includes("not found")) return 404;
+  if (error.includes("expired")) return 410;
+  if (
+    error.includes("does not match") ||
+    error.includes("does not belong") ||
+    error.includes("already") ||
+    error.includes("limit reached")
+  ) {
+    return 409;
+  }
+  return fallback;
+}
+
 export function registerApiTriggers(
   sdk: ISdk,
   kv: StateKV,
@@ -160,6 +194,9 @@ export function registerApiTriggers(
   metricsStore?: MetricsStore,
   provider?: ResilientProvider | { circuitState?: unknown },
   adminSecret?: string,
+  projectCapabilitySecret?: string,
+  strictCapabilityMode = false,
+  capabilityAudience = DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
 ): void {
   type ApiTrigger = {
     type: "http";
@@ -192,6 +229,80 @@ export function registerApiTriggers(
       },
     });
   };
+  type AuthRequest = {
+    headers?: Record<string, string | string[] | undefined>;
+    body?: Record<string, unknown>;
+    query_params?: Record<string, unknown>;
+  };
+  const checkRequestAuthorization = (
+    request: AuthRequest | undefined,
+  ): Response | null => {
+    const headers = request?.headers;
+    const adminDecision = authorizeAdministrativeRequest(headers, adminSecret);
+    const requestsGlobal =
+      request?.body?.["scope"] === "global" ||
+      request?.query_params?.["scope"] === "global";
+    if (requestsGlobal) {
+      return adminDecision.authorized
+        ? null
+        : {
+            status_code: adminDecision.statusCode,
+            body: {
+              error:
+                adminDecision.error === "authentication_unavailable"
+                  ? "global_authentication_unavailable"
+                  : "global_unauthorized",
+            },
+          };
+    }
+    if (adminDecision.authorized) return null;
+
+    const projectBindings = [
+      extractProjectBinding(headers),
+      asNonEmptyString(request?.body?.["project"]) ?? undefined,
+      asNonEmptyString(request?.query_params?.["project"]) ?? undefined,
+    ].filter((value): value is string => Boolean(value));
+    const uniqueProjectBindings = new Set(projectBindings);
+    if (uniqueProjectBindings.size > 1) {
+      return {
+        status_code: 401,
+        body: { error: "project_binding_mismatch" },
+      };
+    }
+    const project = projectBindings[0];
+    const decision = project
+      ? authorizeProjectRequest(headers, {
+          signingSecret: projectCapabilitySecret,
+          legacySecret: secret,
+          strictCapabilityMode,
+          audience: capabilityAudience,
+          project,
+        })
+      : authorizeProtectedRequest(headers, secret);
+    return decision.authorized
+      ? null
+      : {
+          status_code: decision.statusCode,
+          body: { error: decision.error },
+        };
+  };
+  const checkAuth = (
+    req: ApiRequest,
+    _legacySecret?: string,
+  ): Response | null =>
+    checkRequestAuthorization(req as unknown as AuthRequest);
+  const checkAdminAuth = (req: ApiRequest): Response | null => {
+    const decision = authorizeAdministrativeRequest(
+      req.headers,
+      adminSecret,
+    );
+    return decision.authorized
+      ? null
+      : {
+          status_code: decision.statusCode,
+          body: { error: decision.error },
+        };
+  };
 
   sdk.registerFunction(
     "middleware::api-auth",
@@ -202,48 +313,12 @@ export function registerApiTriggers(
         query_params?: Record<string, unknown>;
       };
     }) => {
-      const request = input?.request;
-      const headers = request?.headers || {};
-      const decision = authorizeProtectedRequest(headers, secret);
-      const adminDecision = authorizeAdministrativeRequest(
-        headers,
-        adminSecret,
-      );
-      if (!decision.authorized && !adminDecision.authorized) {
+      const authError = checkRequestAuthorization(input?.request);
+      if (authError) {
         return {
           action: "respond",
-          response: {
-            status_code:
-              decision.statusCode === 503 && adminDecision.statusCode === 503
-                ? 503
-                : 401,
-            body: {
-              error:
-                decision.statusCode === 503 && adminDecision.statusCode === 503
-                  ? "authentication_unavailable"
-                  : "unauthorized",
-            },
-          },
+          response: authError,
         };
-      }
-      const requestsGlobal =
-        request?.body?.scope === "global" ||
-        request?.query_params?.scope === "global";
-      if (requestsGlobal) {
-        if (!adminDecision.authorized) {
-          return {
-            action: "respond",
-            response: {
-              status_code: adminDecision.statusCode,
-              body: {
-                error:
-                  adminDecision.error === "authentication_unavailable"
-                    ? "global_authentication_unavailable"
-                    : "global_unauthorized",
-              },
-            },
-          };
-        }
       }
       return { action: "continue" };
     },
@@ -347,7 +422,18 @@ export function registerApiTriggers(
       const circuitBreaker =
         provider && "circuitState" in provider ? provider.circuitState : null;
 
-      const status = health?.status || "critical";
+      const viewerPort = getBoundViewerPort();
+      const viewerSkipped = getViewerSkipped();
+      const viewerStatus = viewerSkipped
+        ? "unavailable"
+        : typeof viewerPort === "number"
+          ? "ok"
+          : "error";
+      const backendStatus = health?.status || "critical";
+      const status =
+        backendStatus === "healthy" && viewerStatus !== "ok"
+          ? "degraded"
+          : backendStatus;
       const statusCode = status === "critical" ? 503 : 200;
 
       return {
@@ -357,11 +443,29 @@ export function registerApiTriggers(
           readiness: health ? "evaluated" : "initializing",
           service: "agentmemory",
           version: VERSION,
+          build: {
+            backend: BACKEND_BUILD_ID,
+            viewer: VIEWER_BUILD_ID,
+            apiContract: API_CONTRACT_VERSION,
+            compatibility: "compatible",
+          },
+          components: {
+            backend: { status: backendStatus },
+            workers: {
+              status: health?.workerProbeStatus ?? "error",
+              count: health?.workers.length ?? 0,
+            },
+            slots: health?.slotBackend ?? {
+              status: "error",
+              error: "health_not_collected",
+            },
+            viewer: { status: viewerStatus, port: viewerPort ?? null },
+          },
           health: health || null,
           functionMetrics,
           circuitBreaker,
-          viewerPort: getBoundViewerPort(),
-          viewerSkipped: getViewerSkipped(),
+          viewerPort,
+          viewerSkipped,
         },
       };
     },
@@ -413,8 +517,39 @@ export function registerApiTriggers(
           ? { externalProcessing: body.externalProcessing }
           : {}),
       };
-      const result = await sdk.trigger({ function_id: "mem::observe", payload });
-      return { status_code: 201, body: result };
+      try {
+        const rawResult = await sdk.trigger({
+          function_id: "mem::observe",
+          payload,
+        });
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: {
+              success: false,
+              retryable: true,
+              error: "capture_result_unavailable",
+            },
+          };
+        }
+        if (result["success"] !== true) {
+          return {
+            status_code: failedTriggerStatus(result, 500),
+            body: result,
+          };
+        }
+        return { status_code: 201, body: result };
+      } catch {
+        return {
+          status_code: 503,
+          body: {
+            success: false,
+            retryable: true,
+            error: "capture_delivery_failed",
+          },
+        };
+      }
     },
   );
   registerApiTrigger({
@@ -522,7 +657,7 @@ export function registerApiTriggers(
           },
         };
       }
-      const result = await sdk.trigger({
+      const rawResult = await sdk.trigger({
         function_id: "mem::context-packet",
         payload: {
           project,
@@ -538,7 +673,18 @@ export function registerApiTriggers(
               : "advisory",
         },
       });
-      return { status_code: 200, body: result };
+      const result = triggerResult(rawResult);
+      if (!result) {
+        return {
+          status_code: 503,
+          body: { success: false, error: "context_packet_result_unavailable" },
+        };
+      }
+      return {
+        status_code:
+          result["success"] === true ? 200 : failedTriggerStatus(result, 400),
+        body: result,
+      };
     },
   );
   registerApiTrigger({
@@ -568,11 +714,28 @@ export function registerApiTriggers(
           },
         };
       }
-      const result = await sdk.trigger({
+      const rawResult = await sdk.trigger({
         function_id: "mem::context-acknowledge",
         payload: { project, sessionId, packetId, providerReceipt },
       });
-      return { status_code: 200, body: result };
+      const result = triggerResult(rawResult);
+      if (!result) {
+        return {
+          status_code: 503,
+          body: {
+            success: false,
+            acknowledged: false,
+            error: "context_acknowledgement_result_unavailable",
+          },
+        };
+      }
+      return {
+        status_code:
+          result["success"] === true && result["acknowledged"] === true
+            ? 200
+            : failedTriggerStatus(result, 400),
+        body: result,
+      };
     },
   );
   registerApiTrigger({
@@ -1123,13 +1286,18 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::summarize", 
     async (req: ApiRequest<{ sessionId: string }>): Promise<Response> => {
-      const sessionId = asNonEmptyString((req.body as Record<string, unknown>)?.sessionId);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const sessionId = asNonEmptyString(body.sessionId);
+      const project = asNonEmptyString(body.project);
       if (!sessionId) {
         return { status_code: 400, body: { error: "sessionId is required" } };
       }
+      if (!project) {
+        return { status_code: 400, body: { error: "project is required" } };
+      }
       const result = await sdk.trigger({
         function_id: "mem::summarize",
-        payload: { sessionId },
+        payload: { sessionId, project },
       });
       return { status_code: 200, body: result };
     },
@@ -1230,6 +1398,23 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let projectScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        projectScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::session::by-commit",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const sha = asNonEmptyString(req.query_params?.["sha"]);
       if (!sha) {
         return {
@@ -1238,7 +1423,11 @@ export function registerApiTriggers(
         };
       }
       const link = await kv.get<CommitLink>(KV.commits, sha);
-      if (!link) {
+      if (
+        !link ||
+        (projectScope.kind === "project" &&
+          link.project !== projectScope.project)
+      ) {
         return {
           status_code: 404,
           body: { error: "no sessions linked to this commit" },
@@ -1247,7 +1436,12 @@ export function registerApiTriggers(
       const fetched = await Promise.all(
         (link.sessionIds ?? []).map((sid) => kv.get<Session>(KV.sessions, sid)),
       );
-      const sessions = fetched.filter((s): s is Session => s !== null);
+      const sessions = fetched.filter(
+        (session): session is Session =>
+          session !== null &&
+          (projectScope.kind === "global" ||
+            session.project === projectScope.project),
+      );
       return { status_code: 200, body: { commit: link, sessions } };
     },
   );
@@ -1265,12 +1459,34 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let projectScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        projectScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::commits",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const branch = asNonEmptyString(req.query_params?.["branch"]);
       const repo = asNonEmptyString(req.query_params?.["repo"]);
       const rawLimit = parseOptionalInt(req.query_params?.["limit"]);
       const limit = Math.max(1, Math.min(500, rawLimit ?? 100));
       const all = await kv.list<CommitLink>(KV.commits);
       const filtered = all
+        .filter(
+          (commit) =>
+            projectScope.kind === "global" ||
+            commit.project === projectScope.project,
+        )
         .filter((c) => !branch || c.branch === branch)
         .filter((c) => !repo || c.repo === repo)
         .sort((a, b) => ((a.linkedAt ?? "") < (b.linkedAt ?? "") ? 1 : -1))
@@ -1350,8 +1566,18 @@ export function registerApiTriggers(
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
       const sessionId = asNonEmptyString(req.query_params?.["sessionId"]);
+      const project = asNonEmptyString(req.query_params?.["project"]);
       if (!sessionId)
         return { status_code: 400, body: { error: "sessionId required" } };
+      if (!project)
+        return { status_code: 400, body: { error: "project required" } };
+      const session = await kv.get<Session>(KV.sessions, sessionId);
+      if (!session || session.project !== project) {
+        return {
+          status_code: 404,
+          body: { error: "session not found for project" },
+        };
+      }
       const observations = await kv.list<CompressedObservation>(
         KV.observations(sessionId),
       );
@@ -1623,10 +1849,29 @@ export function registerApiTriggers(
         step?: string;
         dryRun?: boolean;
         projectAliases?: Record<string, string>;
+        action?: "resume" | "rollback";
       }>,
     ): Promise<Response> => {
-      const authErr = checkAuth(req, secret);
-      if (authErr) return authErr;
+      const adminDecision = authorizeAdministrativeRequest(
+        req.headers,
+        adminSecret,
+      );
+      if (!adminDecision.authorized) {
+        return {
+          status_code: adminDecision.statusCode,
+          body: { error: adminDecision.error },
+        };
+      }
+      if (
+        req.body?.action !== undefined &&
+        req.body.action !== "resume" &&
+        req.body.action !== "rollback"
+      ) {
+        return {
+          status_code: 400,
+          body: { error: "action must be resume or rollback" },
+        };
+      }
       const hasStep =
         typeof req.body?.step === "string" && req.body.step.trim().length > 0;
       const hasDbPath =
@@ -1646,9 +1891,24 @@ export function registerApiTriggers(
           ...(req.body.projectAliases !== undefined && {
             projectAliases: req.body.projectAliases,
           }),
+          ...(req.body.action !== undefined && { action: req.body.action }),
         },
       });
-      return { status_code: 200, body: result };
+      const parsed = triggerResult(result);
+      const rollbackSucceeded =
+        parsed?.["status"] === "rolled-back" &&
+        triggerResult(parsed["rollback"])?.["success"] === true;
+      const operationSucceeded =
+        parsed?.["success"] === true || rollbackSucceeded;
+      return {
+        status_code:
+          parsed && !operationSucceeded
+            ? failedTriggerStatus(parsed, 400)
+            : 200,
+        body: parsed
+          ? { ...parsed, operationSucceeded }
+          : result,
+      };
     },
   );
   registerApiTrigger({
@@ -1998,6 +2258,8 @@ export function registerApiTriggers(
   sdk.registerFunction("api::graph-query",
     async (
       req: ApiRequest<{
+        project?: string;
+        scope?: "project" | "global";
         startNodeId?: string;
         nodeType?: string;
         maxDepth?: number;
@@ -2008,6 +2270,17 @@ export function registerApiTriggers(
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let readScope;
+      try {
+        readScope = requireProjectReadScope(req.body, "api::graph-query");
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       // Whitelist payload fields explicitly; AGENTS.md security rule:
       // REST endpoints never pass raw req.body through to sdk.trigger.
       const payload = {
@@ -2017,6 +2290,9 @@ export function registerApiTriggers(
         query: req.body?.query,
         limit: req.body?.limit,
         offset: req.body?.offset,
+        ...(readScope.kind === "global"
+          ? { scope: "global" as const }
+          : { project: readScope.project }),
       };
       try {
         const result = await sdk.trigger({ function_id: "mem::graph-query", payload });
@@ -2036,8 +2312,31 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let readScope;
       try {
-        const result = await sdk.trigger({ function_id: "mem::graph-stats", payload: {} });
+        readScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::graph-stats",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      try {
+        const result = await sdk.trigger({
+          function_id: "mem::graph-stats",
+          payload:
+            readScope.kind === "global"
+              ? { scope: "global" }
+              : { project: readScope.project },
+        });
         return { status_code: 200, body: result };
       } catch {
         return graphDisabledResponse();
@@ -2056,15 +2355,42 @@ export function registerApiTriggers(
   // unbounded kv.list. Operator-grade endpoint exposed for the viewer
   // banner action and CLI repair.
   sdk.registerFunction("api::graph-snapshot-rebuild",
-    async (req: ApiRequest): Promise<Response> => {
+    async (
+      req: ApiRequest<{ scope?: "global"; force?: boolean }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      if (req.body?.scope !== "global") {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "graph snapshot rebuild requires explicit global scope",
+          },
+        };
+      }
       try {
-        const result = await sdk.trigger({
+        const rawResult = await sdk.trigger({
           function_id: "mem::graph-snapshot-rebuild",
-          payload: {},
+          payload: {
+            scope: "global",
+            force: req.body.force === true,
+          },
         });
-        return { status_code: 200, body: result };
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: { success: false, error: "graph_rebuild_result_unavailable" },
+          };
+        }
+        return {
+          status_code:
+            result["success"] === true
+              ? 200
+              : failedTriggerStatus(result, 400),
+          body: result,
+        };
       } catch {
         return graphDisabledResponse();
       }
@@ -2081,15 +2407,36 @@ export function registerApiTriggers(
   // recall + history stay intact while the graph rebuilds incrementally
   // from new extracts (or a one-shot /graph/build replay).
   sdk.registerFunction("api::graph-reset",
-    async (req: ApiRequest): Promise<Response> => {
+    async (
+      req: ApiRequest<{ scope?: "global" }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      if (req.body?.scope !== "global") {
+        return {
+          status_code: 400,
+          body: { error: "graph reset requires explicit global scope" },
+        };
+      }
       try {
-        const result = await sdk.trigger({
+        const rawResult = await sdk.trigger({
           function_id: "mem::graph-reset",
-          payload: {},
+          payload: { scope: "global" },
         });
-        return { status_code: 200, body: result };
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: { success: false, error: "graph_reset_result_unavailable" },
+          };
+        }
+        return {
+          status_code:
+            result["success"] === true
+              ? 200
+              : failedTriggerStatus(result, 400),
+          body: result,
+        };
       } catch {
         return graphDisabledResponse();
       }
@@ -2102,9 +2449,18 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction("api::graph-extract",
-    async (req: ApiRequest<{ observations: unknown[] }>): Promise<Response> => {
+    async (
+      req: ApiRequest<{ observations: unknown[]; project?: string }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const project = asNonEmptyString(req.body?.project);
+      if (!project) {
+        return {
+          status_code: 400,
+          body: { error: "project is required" },
+        };
+      }
       if (
         !Array.isArray(req.body?.observations) ||
         req.body.observations.length === 0
@@ -2115,8 +2471,31 @@ export function registerApiTriggers(
         };
       }
       try {
-        const result = await sdk.trigger({ function_id: "mem::graph-extract", payload: req.body });
-        return { status_code: 200, body: result };
+        const rawResult = await sdk.trigger({
+          function_id: "mem::graph-extract",
+          payload: {
+            observations: req.body.observations,
+            project,
+          },
+        });
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: {
+              success: false,
+              retryable: true,
+              error: "graph_extraction_result_unavailable",
+            },
+          };
+        }
+        return {
+          status_code:
+            result["success"] === true
+              ? 200
+              : failedTriggerStatus(result, 400),
+          body: result,
+        };
       } catch {
         return graphDisabledResponse();
       }
@@ -2133,21 +2512,59 @@ export function registerApiTriggers(
   // session, collects observations that have a `title` (compressed only),
   // and feeds them through `mem::graph-extract` in batches.
   sdk.registerFunction("api::graph-build",
-    async (req: ApiRequest<{ batchSize?: number }>): Promise<Response> => {
+    async (
+      req: ApiRequest<{
+        batchSize?: number;
+        project?: string;
+        scope?: "project" | "global";
+      }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let readScope;
+      try {
+        readScope = requireProjectReadScope(req.body, "api::graph-build");
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const batchSize = Math.max(
         1,
         Math.min(100, Number((req.body as { batchSize?: number })?.batchSize) || 25),
       );
       try {
-        const sessions = await kv.list<Session>(KV.sessions);
+        const allSessions = await kv.list<Session>(KV.sessions);
+        const sessions =
+          readScope.kind === "global"
+            ? allSessions
+            : allSessions.filter(
+                (session) => session.project === readScope.project,
+              );
         let totalNodes = 0;
         let totalEdges = 0;
         let batchesRun = 0;
+        let batchesFailed = 0;
+        let skippedUnscopedSessions = 0;
+        const failures: Array<{
+          sessionId: string;
+          batchIndex: number;
+          error: string;
+        }> = [];
         for (const session of sessions) {
           const sid = session?.id;
           if (typeof sid !== "string" || sid.length === 0) continue;
+          const project =
+            typeof session.project === "string"
+              ? session.project.trim()
+              : "";
+          if (!project) {
+            skippedUnscopedSessions += 1;
+            continue;
+          }
           const observations = await kv.list<CompressedObservation>(KV.observations(sid));
           const compressed = observations.filter((o) => o && typeof o.title === "string" && o.title.length > 0);
           if (compressed.length === 0) continue;
@@ -2156,14 +2573,31 @@ export function registerApiTriggers(
             try {
               const result = (await sdk.trigger({
                 function_id: "mem::graph-extract",
-                payload: { observations: batch },
+                payload: { observations: batch, project },
               })) as { success?: boolean; nodesAdded?: number; edgesAdded?: number };
               if (result?.success) {
                 totalNodes += Number(result.nodesAdded) || 0;
                 totalEdges += Number(result.edgesAdded) || 0;
+              } else {
+                batchesFailed += 1;
+                failures.push({
+                  sessionId: sid,
+                  batchIndex: Math.floor(i / batchSize),
+                  error:
+                    typeof (result as { error?: unknown })?.error === "string"
+                      ? (result as { error: string }).error
+                      : "graph extraction batch failed",
+                });
               }
               batchesRun++;
             } catch (err) {
+              batchesRun++;
+              batchesFailed += 1;
+              failures.push({
+                sessionId: sid,
+                batchIndex: Math.floor(i / batchSize),
+                error: err instanceof Error ? err.message : String(err),
+              });
               logger.warn("graph-build batch failed", {
                 sessionId: sid,
                 batchIndex: Math.floor(i / batchSize),
@@ -2173,13 +2607,17 @@ export function registerApiTriggers(
           }
         }
         return {
-          status_code: 200,
+          status_code: batchesFailed === 0 ? 200 : 503,
           body: {
-            success: true,
+            success: batchesFailed === 0,
+            retryable: batchesFailed > 0,
             sessions: sessions.length,
+            skippedUnscopedSessions,
             batches: batchesRun,
+            batchesFailed,
             nodes: totalNodes,
             edges: totalEdges,
+            failures,
           },
         };
       } catch {
@@ -3220,9 +3658,13 @@ export function registerApiTriggers(
     async (
       req: ApiRequest<{ url: string; name: string; sharedScopes?: string[] }>,
     ): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
       if (!req.body?.url || !req.body?.name) {
         return { status_code: 400, body: { error: "url and name are required" } };
@@ -3239,9 +3681,13 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::mesh-list", 
     async (req: ApiRequest): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
       const result = await sdk.trigger({ function_id: "mem::mesh-list", payload: {} });
       return { status_code: 200, body: result };
@@ -3257,9 +3703,13 @@ export function registerApiTriggers(
     async (
       req: ApiRequest<{ peerId?: string; direction?: string }>,
     ): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
       const result = await sdk.trigger({ function_id: "mem::mesh-sync", payload: req.body || {} });
       return { status_code: 200, body: result };
@@ -3273,9 +3723,13 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::mesh-receive", 
     async (req: ApiRequest): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
       const result = await sdk.trigger({ function_id: "mem::mesh-receive", payload: req.body || {} });
       return { status_code: 200, body: result };
@@ -3289,10 +3743,31 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::mesh-export", 
     async (req: ApiRequest): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
+      let projectScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        projectScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::mesh-export",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const since = req.query_params?.["since"] as string;
       if (since) {
         const parsed = new Date(since).getTime();
@@ -3300,33 +3775,67 @@ export function registerApiTriggers(
           return { status_code: 400, body: { error: "Invalid 'since' date format" } };
         }
       }
-      const project = req.query_params?.["project"] as string | undefined;
       const sinceTime = since ? new Date(since).getTime() : 0;
-      const df = <T>(items: T[], field: "updatedAt" | "createdAt") =>
-        items.filter((i) => new Date((i as Record<string, unknown>)[field] as string).getTime() > sinceTime);
-      const memories = await kv.list<import("../types.js").Memory>(KV.memories);
-      let actions = await kv.list<import("../types.js").Action>(KV.actions);
-      if (project) {
-        actions = actions.filter((a) => a.project === project);
-      }
+      const delta = <T>(items: T[]) =>
+        items.filter((item) => {
+          const record = item as Record<string, unknown>;
+          const timestamp = record["updatedAt"] ?? record["createdAt"];
+          return (
+            typeof timestamp === "string" &&
+            new Date(timestamp).getTime() > sinceTime
+          );
+        });
+      const scoped = <T extends { project?: string }>(items: T[]) =>
+        projectScope.kind === "global"
+          ? items
+          : items.filter((item) => item.project === projectScope.project);
+
+      const memories = scoped(
+        await kv.list<import("../types.js").Memory>(KV.memories),
+      );
+      const actions = scoped(
+        await kv.list<import("../types.js").Action>(KV.actions),
+      );
+      const semantic = scoped(
+        await kv.list<import("../types.js").SemanticMemory>(KV.semantic),
+      );
+      const procedural = scoped(
+        await kv.list<import("../types.js").ProceduralMemory>(KV.procedural),
+      );
+      const graphNodes = scoped(
+        await kv.list<import("../types.js").GraphNode>(KV.graphNodes),
+      );
+      const graphNodeIds = new Set(graphNodes.map(({ id }) => id));
+      const graphEdges = scoped(
+        await kv.list<import("../types.js").GraphEdge>(KV.graphEdges),
+      ).filter(
+        (edge) =>
+          projectScope.kind === "global" ||
+          (graphNodeIds.has(edge.sourceNodeId) &&
+            graphNodeIds.has(edge.targetNodeId)),
+      );
+      const projectMemoryIds = new Set([
+        ...memories.map(({ id }) => id),
+        ...semantic.map(({ id }) => id),
+        ...procedural.map(({ id }) => id),
+      ]);
+      const relations = (
+        await kv.list<import("../types.js").MemoryRelation>(KV.relations)
+      ).filter(
+        (relation) =>
+          projectScope.kind === "global" ||
+          (projectMemoryIds.has(relation.sourceId) &&
+            projectMemoryIds.has(relation.targetId)),
+      );
       const body: Record<string, unknown> = {
-        memories: df(memories, "updatedAt"),
-        actions: df(actions, "updatedAt"),
+        memories: delta(memories),
+        actions: delta(actions),
+        semantic: delta(semantic),
+        procedural: delta(procedural),
+        relations: delta(relations),
+        graphNodes: delta(graphNodes),
+        graphEdges: delta(graphEdges),
       };
-      if (!project) {
-        const semantic = await kv.list<import("../types.js").SemanticMemory>(KV.semantic);
-        const procedural = await kv.list<import("../types.js").ProceduralMemory>(KV.procedural);
-        const relations = await kv.list<import("../types.js").MemoryRelation>(KV.relations);
-        const graphNodes = await kv.list<import("../types.js").GraphNode>(KV.graphNodes);
-        const graphEdges = await kv.list<import("../types.js").GraphEdge>(KV.graphEdges);
-        body.semantic = df(semantic, "updatedAt");
-        body.procedural = df(procedural, "updatedAt");
-        body.relations = df(relations, "createdAt");
-        body.graphNodes = graphNodes.filter(
-          (n) => new Date(n.updatedAt || n.createdAt).getTime() > sinceTime,
-        );
-        body.graphEdges = df(graphEdges, "createdAt");
-      }
       return { status_code: 200, body };
     },
   );

@@ -8,6 +8,10 @@ interface ThresholdConfig {
   memoryWarnPercent: number;
   memoryCriticalPercent: number;
   memoryRssFloorBytes: number;
+  memoryRssWarnSystemPercent: number;
+  memoryRssCriticalSystemPercent: number;
+  memoryExternalWarnBytes: number;
+  memoryExternalCriticalBytes: number;
 }
 
 const DEFAULTS: ThresholdConfig = {
@@ -18,7 +22,15 @@ const DEFAULTS: ThresholdConfig = {
   memoryWarnPercent: 80,
   memoryCriticalPercent: 95,
   memoryRssFloorBytes: 512 * 1024 * 1024,
+  memoryRssWarnSystemPercent: 25,
+  memoryRssCriticalSystemPercent: 50,
+  memoryExternalWarnBytes: 512 * 1024 * 1024,
+  memoryExternalCriticalBytes: 1024 * 1024 * 1024,
 };
+
+export function healthStatusExitCode(status: unknown): 0 | 1 {
+  return status === "healthy" ? 0 : 1;
+}
 
 export function evaluateHealth(
   snapshot: HealthSnapshot,
@@ -34,8 +46,25 @@ export function evaluateHealth(
     alerts.push("kv_unavailable");
     critical = true;
   }
-  if (snapshot.workerProbeStatus === "error") {
-    alerts.push("worker_probe_failed");
+  if (snapshot.workerProbeStatus !== "ok") {
+    alerts.push(
+      snapshot.workerProbeStatus === "empty"
+        ? "workers_missing"
+        : snapshot.workerProbeStatus === "invalid"
+          ? "worker_probe_invalid"
+          : "worker_probe_failed",
+    );
+    critical = true;
+  }
+  if (snapshot.slotBackend?.status !== "ok") {
+    alerts.push("slot_backend_unavailable");
+    critical = true;
+  }
+  if (
+    snapshot.expiresAt &&
+    Date.parse(snapshot.expiresAt) <= Date.now()
+  ) {
+    alerts.push("health_snapshot_stale");
     critical = true;
   }
 
@@ -73,6 +102,10 @@ export function evaluateHealth(
       ? (snapshot.memory.heapUsed / snapshot.memory.heapTotal) * 100
       : 0;
   const rss = snapshot.memory.rss ?? 0;
+  const external = snapshot.memory.external ?? 0;
+  const systemTotal = snapshot.memory.systemTotal ?? 0;
+  const rssSystemPercent =
+    systemTotal > 0 ? (rss / systemTotal) * 100 : 0;
   const rssAboveFloor = rss >= cfg.memoryRssFloorBytes;
   const memMb = Math.round(rss / (1024 * 1024));
   if (memPercent > cfg.memoryCriticalPercent && rssAboveFloor) {
@@ -83,6 +116,48 @@ export function evaluateHealth(
     degraded = true;
   } else if (memPercent > cfg.memoryWarnPercent) {
     notes.push(`memory_heap_tight_${Math.round(memPercent)}%_rss${memMb}mb`);
+  }
+  if (rssSystemPercent > cfg.memoryRssCriticalSystemPercent) {
+    alerts.push(`memory_rss_critical_${Math.round(rssSystemPercent)}%`);
+    critical = true;
+  } else if (rssSystemPercent > cfg.memoryRssWarnSystemPercent) {
+    alerts.push(`memory_rss_warn_${Math.round(rssSystemPercent)}%`);
+    degraded = true;
+  }
+  if (external > cfg.memoryExternalCriticalBytes) {
+    alerts.push(
+      `memory_external_critical_${Math.round(external / (1024 * 1024))}mb`,
+    );
+    critical = true;
+  } else if (external > cfg.memoryExternalWarnBytes) {
+    alerts.push(
+      `memory_external_warn_${Math.round(external / (1024 * 1024))}mb`,
+    );
+    degraded = true;
+  }
+
+  const admission = snapshot.captureAdmission;
+  if (admission) {
+    if (admission.limit > 0 && admission.active >= admission.limit) {
+      alerts.push("capture_capacity_exhausted");
+      critical = true;
+    } else if (
+      admission.limit > 0 &&
+      admission.active / admission.limit >= 0.9
+    ) {
+      alerts.push("capture_capacity_pressure");
+      degraded = true;
+    }
+    if ((admission.rejectedSinceLastCollection ?? 0) > 0) {
+      alerts.push(
+        `capture_rejected_${admission.rejectedSinceLastCollection}`,
+      );
+      degraded = true;
+    }
+    if ((admission.failedSinceLastCollection ?? 0) > 0) {
+      alerts.push(`capture_failed_${admission.failedSinceLastCollection}`);
+      degraded = true;
+    }
   }
 
   const status = critical ? "critical" : degraded ? "degraded" : "healthy";

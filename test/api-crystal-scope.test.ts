@@ -18,7 +18,14 @@ function registerCrystalApi() {
     trigger,
   };
 
-  registerApiTriggers(sdk as never, {} as never, "synthetic-secret");
+  registerApiTriggers(
+    sdk as never,
+    {} as never,
+    "synthetic-secret",
+    undefined,
+    undefined,
+    "admin-secret",
+  );
   const handler = functions.get("api::crystal-list");
   if (!handler) throw new Error("api::crystal-list was not registered");
   return { handler, trigger };
@@ -29,7 +36,7 @@ describe("GET /agentmemory/crystals scope", () => {
     const { handler, trigger } = registerCrystalApi();
 
     const response = (await handler({
-      headers: { authorization: "Bearer synthetic-secret" },
+      headers: { authorization: "Bearer admin-secret" },
       query_params: { scope: "global" },
     })) as { status_code: number };
 

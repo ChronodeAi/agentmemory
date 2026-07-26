@@ -1,12 +1,18 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { createHash } from "node:crypto";
+import {
+  createProjectCapabilityToken,
+  PROJECT_CAPABILITY_PROJECT_HEADER,
+} from "../src/auth.js";
 
 const BASE_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
 const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
+const CAPABILITY_SECRET =
+  process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"] || "";
 
-if (!SECRET) {
+if (!SECRET || !CAPABILITY_SECRET) {
   throw new Error(
-    "AGENTMEMORY_SECRET is mandatory for the governed integration profile",
+    "service and project capability secrets are mandatory for the governed integration profile",
   );
 }
 
@@ -18,13 +24,24 @@ function url(path: string): string {
   return `${BASE_URL}${path}`;
 }
 
-function authHeaders(): Record<string, string> {
+function authHeaders(project?: string): Record<string, string> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
   };
-  if (SECRET) {
-    headers["Authorization"] = `Bearer ${SECRET}`;
-  }
+  const bearer = project
+    ? createProjectCapabilityToken(
+        {
+          version: 1,
+          audience: "agentmemory",
+          project,
+          issuedAt: Math.floor(Date.now() / 1000),
+          expiresAt: Math.floor(Date.now() / 1000) + 300,
+        },
+        CAPABILITY_SECRET,
+      )
+    : SECRET;
+  headers["Authorization"] = `Bearer ${bearer}`;
+  if (project) headers[PROJECT_CAPABILITY_PROJECT_HEADER] = project;
   return headers;
 }
 
@@ -48,14 +65,20 @@ describe("agentmemory integration", () => {
   });
 
   describe("health", () => {
-    it("returns ok", async () => {
+    it("reports truthful typed health", async () => {
       const res = await fetch(url("/agentmemory/health"), {
         headers: authHeaders(),
       });
-      expect(res.status).toBe(200);
-      const body = (await json(res)) as { status: string; service: string };
-      expect(["ok", "healthy"]).toContain(body.status);
+      expect([200, 503]).toContain(res.status);
+      const body = (await json(res)) as {
+        status: string;
+        service: string;
+        components: Record<string, { status: string }>;
+      };
+      expect(["healthy", "degraded", "critical"]).toContain(body.status);
       expect(body.service).toBe("agentmemory");
+      expect(body.components.backend).toBeDefined();
+      if (body.status === "critical") expect(res.status).toBe(503);
     });
   });
 
@@ -63,7 +86,7 @@ describe("agentmemory integration", () => {
     it("starts a session", async () => {
       const res = await fetch(url("/agentmemory/session/start"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({
           sessionId: SESSION_ID,
           project: PROJECT,
@@ -83,7 +106,7 @@ describe("agentmemory integration", () => {
     it("lists sessions including the new one", async () => {
       const res = await fetch(
         url(`/agentmemory/sessions?project=${encodeURIComponent(PROJECT)}`),
-        { headers: authHeaders() },
+        { headers: authHeaders(PROJECT) },
       );
       expect(res.status).toBe(200);
       const body = (await json(res)) as {
@@ -97,7 +120,7 @@ describe("agentmemory integration", () => {
     it("ends the session", async () => {
       const res = await fetch(url("/agentmemory/session/end"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({ sessionId: SESSION_ID, project: PROJECT }),
       });
       expect(res.status).toBe(200);
@@ -108,7 +131,7 @@ describe("agentmemory integration", () => {
     it("session is marked completed", async () => {
       const res = await fetch(
         url(`/agentmemory/sessions?project=${encodeURIComponent(PROJECT)}`),
-        { headers: authHeaders() },
+        { headers: authHeaders(PROJECT) },
       );
       const body = (await json(res)) as {
         sessions: Array<{ id: string; status: string; endedAt?: string }>;
@@ -126,7 +149,7 @@ describe("agentmemory integration", () => {
     beforeAll(async () => {
       await fetch(url("/agentmemory/session/start"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({
           sessionId: OBS_SESSION,
           project: PROJECT,
@@ -138,7 +161,7 @@ describe("agentmemory integration", () => {
     afterAll(async () => {
       await fetch(url("/agentmemory/session/end"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({ sessionId: OBS_SESSION, project: PROJECT }),
       });
     });
@@ -146,12 +169,12 @@ describe("agentmemory integration", () => {
     it("captures an observation", async () => {
       const res = await fetch(url("/agentmemory/observe"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({
           hookType: "post_tool_use",
           sessionId: OBS_SESSION,
           project: PROJECT,
-          cwd: PROJECT,
+          cwd: PROJECT_ROOT,
           timestamp: new Date().toISOString(),
           data: {
             tool: "Edit",
@@ -166,12 +189,12 @@ describe("agentmemory integration", () => {
     it("captures a second observation", async () => {
       const res = await fetch(url("/agentmemory/observe"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({
           hookType: "post_tool_use",
           sessionId: OBS_SESSION,
           project: PROJECT,
-          cwd: PROJECT,
+          cwd: PROJECT_ROOT,
           timestamp: new Date().toISOString(),
           data: {
             tool: "Bash",
@@ -185,8 +208,10 @@ describe("agentmemory integration", () => {
 
     it("lists observations for the session", async () => {
       const res = await fetch(
-        url(`/agentmemory/observations?sessionId=${OBS_SESSION}`),
-        { headers: authHeaders() },
+        url(
+          `/agentmemory/observations?sessionId=${OBS_SESSION}&project=${encodeURIComponent(PROJECT)}`,
+        ),
+        { headers: authHeaders(PROJECT) },
       );
       expect(res.status).toBe(200);
       const body = (await json(res)) as {
@@ -196,9 +221,12 @@ describe("agentmemory integration", () => {
     });
 
     it("returns 400 without sessionId", async () => {
-      const res = await fetch(url("/agentmemory/observations"), {
-        headers: authHeaders(),
-      });
+      const res = await fetch(
+        url(`/agentmemory/observations?project=${encodeURIComponent(PROJECT)}`),
+        {
+          headers: authHeaders(PROJECT),
+        },
+      );
       expect(res.status).toBe(400);
       const body = (await json(res)) as { error: string };
       expect(body.error).toBe("sessionId required");
@@ -209,7 +237,7 @@ describe("agentmemory integration", () => {
     it("searches observations", async () => {
       const res = await fetch(url("/agentmemory/search"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({ query: "auth", limit: 5, project: PROJECT }),
       });
       expect(res.status).toBe(200);
@@ -220,7 +248,7 @@ describe("agentmemory integration", () => {
     it("returns results for empty limit", async () => {
       const res = await fetch(url("/agentmemory/search"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({ query: "test", project: PROJECT }),
       });
       expect(res.status).toBe(200);
@@ -231,7 +259,7 @@ describe("agentmemory integration", () => {
     it("generates context for a project", async () => {
       const res = await fetch(url("/agentmemory/context"), {
         method: "POST",
-        headers: authHeaders(),
+        headers: authHeaders(PROJECT),
         body: JSON.stringify({
           sessionId: "ctx-test",
           project: PROJECT,
@@ -335,7 +363,10 @@ describe("coding memory integration", () => {
   async function post(path: string, body: Record<string, unknown>) {
     const res = await fetch(url(path), {
       method: "POST",
-      headers: authHeaders(),
+      headers:
+        typeof body["project"] === "string"
+          ? authHeaders(body["project"])
+          : authHeaders(),
       body: JSON.stringify(body),
     });
     return { res, body: await json(res) };
@@ -406,8 +437,10 @@ describe("coding memory integration", () => {
     expect(duplicate.body).toMatchObject({ deduplicated: true });
 
     const observationsRes = await fetch(
-      url(`/agentmemory/observations?sessionId=${sessionA}`),
-      { headers: authHeaders() },
+      url(
+        `/agentmemory/observations?sessionId=${sessionA}&project=${encodeURIComponent(projectA)}`,
+      ),
+      { headers: authHeaders(projectA) },
     );
     expect(observationsRes.status).toBe(200);
     const observations = await json(observationsRes);
@@ -484,7 +517,7 @@ describe("coding memory integration", () => {
       url(
         `/agentmemory/project-health?project=${encodeURIComponent(projectA)}`,
       ),
-      { headers: authHeaders() },
+      { headers: authHeaders(projectA) },
     );
     expect(healthRes.status).toBe(200);
     const health = (await json(healthRes)) as {
