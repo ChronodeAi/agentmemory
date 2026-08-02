@@ -68,6 +68,7 @@ The REST API is the primary surface. All paths are under `http://localhost:3111`
 | POST | `/agentmemory/leases/release` |
 | POST | `/agentmemory/leases/renew` |
 | POST | `/agentmemory/lessons` |
+| POST | `/agentmemory/lessons/delete` |
 | POST | `/agentmemory/lessons/search` |
 | POST | `/agentmemory/lessons/strengthen` |
 | GET | `/agentmemory/livez` |
