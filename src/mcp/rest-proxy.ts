@@ -13,6 +13,10 @@ const DEFAULT_HEALTH_PROBE_TIMEOUT_MS = 2_000;
 const CALL_TIMEOUT_MS = 15_000;
 const LOCAL_MODE_TTL_MS = 30_000;
 const CAPABILITY_TTL_SECONDS = 300;
+const ADMINISTRATIVE_MCP_TOOLS = new Set([
+  "memory_diagnose",
+  "memory_heal",
+]);
 
 function probeTimeoutMs(): number {
   const raw = process.env["AGENTMEMORY_PROBE_TIMEOUT_MS"];
@@ -215,6 +219,7 @@ function requestAuthHeaders(
       ? (body["arguments"] as Record<string, unknown>)
       : {};
   const parsedUrl = new URL(path, DEFAULT_URL);
+  const toolName = typeof body["name"] === "string" ? body["name"] : "";
   const scope =
     body["scope"] ??
     argumentsBody["scope"] ??
@@ -229,7 +234,9 @@ function requestAuthHeaders(
   if (
     scope === "global" ||
     parsedUrl.pathname === "/agentmemory/migrate" ||
-    parsedUrl.pathname === "/agentmemory/mcp/tools"
+    parsedUrl.pathname === "/agentmemory/mcp/tools" ||
+    (parsedUrl.pathname === "/agentmemory/mcp/call" &&
+      ADMINISTRATIVE_MCP_TOOLS.has(toolName))
   ) {
     const adminSecret = secretFromEnvironmentOrFile(
       "AGENTMEMORY_ADMIN_SECRET",

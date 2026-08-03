@@ -1,4 +1,12 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -12,6 +20,12 @@ import {
   PROJECT_CAPABILITY_PROJECT_HEADER,
   verifyProjectCapabilityToken,
 } from "../src/auth.js";
+
+const { originalStandalonePersistPath } = vi.hoisted(() => {
+  const original = process.env["STANDALONE_PERSIST_PATH"];
+  process.env["STANDALONE_PERSIST_PATH"] = "/dev/null";
+  return { originalStandalonePersistPath: original };
+});
 
 type FetchMock = ReturnType<typeof vi.fn>;
 
@@ -47,12 +61,15 @@ function handleToolCall(
 
 describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
   const originalFetch = globalThis.fetch;
+  const originalHome = process.env["HOME"];
+  const isolatedHome = mkdtempSync(join(tmpdir(), "agentmemory-test-home-"));
   const originalAdminSecret = process.env["AGENTMEMORY_ADMIN_SECRET"];
   const originalAdminSecretFile =
     process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
 
   beforeEach(() => {
     resetHandleForTests();
+    process.env["HOME"] = isolatedHome;
     process.env["AGENTMEMORY_URL"] = BASE;
     delete process.env["AGENTMEMORY_SECRET"];
     delete process.env["AGENTMEMORY_SECRET_FILE"];
@@ -87,6 +104,20 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"];
     delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"];
     delete process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"];
+  });
+
+  afterAll(() => {
+    if (originalHome === undefined) {
+      delete process.env["HOME"];
+    } else {
+      process.env["HOME"] = originalHome;
+    }
+    if (originalStandalonePersistPath === undefined) {
+      delete process.env["STANDALONE_PERSIST_PATH"];
+    } else {
+      process.env["STANDALONE_PERSIST_PATH"] = originalStandalonePersistPath;
+    }
+    rmSync(isolatedHome, { recursive: true, force: true });
   });
 
   it("proxies memory_sessions to GET /agentmemory/sessions when server is up", async () => {
@@ -281,6 +312,46 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
       "Bearer admin-secret",
     );
   });
+
+  it.each(["memory_diagnose", "memory_heal"])(
+    "uses the administrative credential for server-wide %s",
+    async (toolName) => {
+      process.env["AGENTMEMORY_SECRET"] = "project-secret";
+      process.env["AGENTMEMORY_ADMIN_SECRET"] = "admin-secret";
+      const authByPath = new Map<string, string | undefined>();
+      let requestBody: unknown;
+      installFetch((url, init) => {
+        const path = new URL(url).pathname;
+        authByPath.set(
+          path,
+          (init?.headers as Record<string, string> | undefined)?.[
+            "authorization"
+          ],
+        );
+        if (path === "/agentmemory/livez") {
+          return new Response("ok", { status: 200 });
+        }
+        if (path === "/agentmemory/mcp/call") {
+          requestBody = init?.body ? JSON.parse(init.body as string) : null;
+          return new Response(JSON.stringify({ content: [] }), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      });
+
+      await rawHandleToolCall(toolName, {});
+
+      expect(authByPath.get("/agentmemory/livez")).toBe(
+        "Bearer project-secret",
+      );
+      expect(authByPath.get("/agentmemory/mcp/call")).toBe(
+        "Bearer admin-secret",
+      );
+      expect(requestBody).toEqual({ name: toolName, arguments: {} });
+    },
+  );
 
   it("uses the administrative secret file for server-wide tool discovery", async () => {
     const dir = mkdtempSync(join(tmpdir(), "agentmemory-secret-"));
