@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R17-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-17",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-17-context-dependency-truthfulness-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-05", "ICM-06"],
+  "requirements": ["FR-09", "FR-11", "FR-19"],
+  "traceability": ["TR-UCM-005", "TR-UCM-014"],
+  "accountable_owner_role": "Context Pipeline Owner",
+  "case_families": [
+    {"case_id": "R17-CF-01", "name": "five-source-six-outcome-corpus", "source_paths": ["src/functions/coding-memory.ts"], "governed_sinks": ["source-outcomes", "aggregate-outcome"], "expected_outcome": "each source emits exactly READY, EMPTY_VALID, DISABLED, NOT_REQUESTED, TIMEOUT, or ERROR"},
+    {"case_id": "R17-CF-02", "name": "required-failure-dominance", "source_paths": ["src/functions/coding-memory.ts"], "governed_sinks": ["context-packet", "domain-side-effects"], "expected_outcome": "required non-ready outcome returns non-success with zero packet and zero domain effects"},
+    {"case_id": "R17-CF-03", "name": "optional-truthful-degradation", "source_paths": ["src/functions/coding-memory.ts"], "governed_sinks": ["degraded-advisory-packet"], "expected_outcome": "allowed optional failure is explicit, incomplete, non-promotable, and attributable"}
+  ],
+  "external_or_protected_evidence": ["provider-delivery evidence remains dependent on R-04"],
+  "b1_mechanics_required": ["recording source adapters", "deterministic clock and timeout", "aggregate/fault/replay harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R21-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-21",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-21-capture-dedupe-integrity-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-03", "ICM-17"],
+  "requirements": ["FR-05", "FR-07", "FR-08"],
+  "traceability": ["TR-UCM-003", "TR-UCM-017"],
+  "accountable_owner_role": "Capture Integrity Owner",
+  "case_families": [
+    {"case_id": "R21-CF-01", "name": "full-event-identity-and-collision", "source_paths": ["src/functions/dedup.ts", "src/hooks/_capture.ts"], "governed_sinks": ["dedupe-reservation", "event-ledger"], "expected_outcome": "distinct full events remain distinct and exact retries share one identity"},
+    {"case_id": "R21-CF-02", "name": "concurrent-duplicate-and-restart", "source_paths": ["src/functions/dedup.ts"], "governed_sinks": ["reservation", "terminal-result"], "expected_outcome": "concurrent and post-restart retries converge to one durable terminal result"},
+    {"case_id": "R21-CF-03", "name": "partial-governed-side-effect", "source_paths": ["src/functions/observe.ts"], "governed_sinks": ["observation", "index", "count", "audit", "outbox"], "expected_outcome": "success or deduplicated is impossible until every declared effect is complete and reconcilable"}
+  ],
+  "external_or_protected_evidence": [],
+  "b1_mechanics_required": ["durable reservation/result store", "restart, concurrency, and collision harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

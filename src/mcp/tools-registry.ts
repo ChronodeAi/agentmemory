@@ -1197,7 +1197,7 @@ export function getAllTools(): McpToolDef[] {
 }
 
 // default switched from "core" (8 essential tools) to "all"
-// (full 58-tool surface). README and plugin manifests have always
+// (full 59-tool surface). README and plugin manifests have always
 // advertised the full tool surface; the old default left OpenCode /
 // Claude Code users seeing 8 with no indication the other tools existed.
 // Users who want the lean essentials can still set AGENTMEMORY_TOOLS=core.

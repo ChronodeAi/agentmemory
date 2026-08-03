@@ -1,0 +1,129 @@
+{
+  "schema_version": "agentmemory-architecture-fixture-catalog-v1",
+  "catalog_id": "COMMON-STRICT-CORE-V1",
+  "status": "PREPARATION_ONLY_NOT_FROZEN_NOT_ADMITTED",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "candidate_source": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "contains_real_secrets_or_production_data": false,
+  "execution_authorized": false,
+  "hard_veto_closed": false,
+  "fixture_families": [
+    {
+      "fixture_id": "CORE-ID-V1",
+      "hard_veto": "HV-01",
+      "icm_controls": ["ICM-01", "ICM-02", "ICM-12"],
+      "risks": ["R-01", "R-03", "R-10"],
+      "synthetic_cases": ["remote-form-equivalence", "host-port-distinction", "path-case-distinction", "alias-chain-cycle-collision", "colliding-basename", "worktree-shared-project-distinct-worktree", "no-remote-persisted-uuid", "two-project-viewer-and-recall-isolation"],
+      "oracle": "one owner-proven canonical project identity or typed zero-mutation denial; zero cross-project result"
+    },
+    {
+      "fixture_id": "CORE-PRIV-V1",
+      "hard_veto": "HV-02",
+      "icm_controls": ["ICM-03", "ICM-09", "ICM-10", "ICM-14"],
+      "risks": ["R-02", "R-15"],
+      "synthetic_cases": ["literal-encoded-structured-multiline-malformed-private-tag", "pem-like-short-key-error-url-header-environment", "image-metadata-synthetic-pii", "pre-transport-capture", "connector-backup", "queue-retry-log-export-snapshot-backup", "strict-local-zero-provider-attempt"],
+      "oracle": "zero unexpected raw canary in the complete frozen sink denominator and one attributable disposition per input"
+    },
+    {
+      "fixture_id": "CORE-AUTH-V1",
+      "hard_veto": "HV-03",
+      "icm_controls": ["ICM-02", "ICM-09"],
+      "risks": ["R-14", "R-18"],
+      "synthetic_cases": ["public-allowlist-exact", "missing-unreadable-secret", "issuer-audience-subject-project-operation-resource", "identity-generation-key-nonce-time-revocation", "wrong-header-body-query-tool-project", "proxy-timeout-401-403-404-409-429-500-malformed", "standalone-fallback-zero-side-effect"],
+      "oracle": "only exact authorized operations mutate; every wrong, stale, ambiguous, unavailable, or downgraded authority produces typed zero-mutation denial"
+    },
+    {
+      "fixture_id": "CORE-HEALTH-V1",
+      "hard_veto": "HV-04",
+      "icm_controls": ["ICM-05", "ICM-11", "ICM-12"],
+      "risks": ["R-08", "R-09", "R-17", "R-23"],
+      "synthetic_cases": ["required-optional-disabled-not-requested-timeout-error", "worker-disconnect", "queue-backlog", "startup-reconciliation", "pressure-degradation", "http-200-500-503-body-preservation", "viewer-fetch-compatibility-build-slot-project", "three-success-recovery-window"],
+      "oracle": "liveness, readiness, pressure, compatibility, reconciliation, fetch, and recovery remain distinct and no required failure reports healthy or success"
+    },
+    {
+      "fixture_id": "CORE-ACK-V1",
+      "hard_veto": "HV-05",
+      "icm_controls": ["ICM-05", "ICM-06"],
+      "risks": ["R-04", "R-17"],
+      "synthetic_cases": ["generated-dispatched-acknowledged-consumed", "timeout-retry", "late-duplicate-replayed-wrong-issuer-wrong-attempt-sibling", "atomic-source-suppression", "provider-without-native-ack"],
+      "oracle": "source suppression commits only with a matching provider-native acknowledgement; consumption is never inferred"
+    },
+    {
+      "fixture_id": "CORE-PROMOTE-V1",
+      "hard_veto": "HV-06",
+      "icm_controls": ["ICM-05", "ICM-07", "ICM-08"],
+      "risks": ["R-03", "R-05", "R-06"],
+      "synthetic_cases": ["stale-superseded-contradicted-uncommitted", "dirty-to-commit-lineage", "recalled-only", "cyclic-evidence-dag", "missing-accepted-adr", "wrong-project-or-worktree"],
+      "oracle": "only independently evidenced eligible content is promotable; recalled-only, cyclic, stale, unresolved, or wrong-project content rejects"
+    },
+    {
+      "fixture_id": "CORE-GEN-V1",
+      "hard_veto": "HV-07",
+      "icm_controls": ["ICM-07", "ICM-13", "ICM-17"],
+      "risks": ["R-06", "R-16", "R-22"],
+      "synthetic_cases": ["complete-state-manifest", "every-write-process-death", "concurrent-reader", "pointer-activation", "exact-restore", "idempotent-resume", "rollback-audit-preservation"],
+      "oracle": "every fault exposes either the byte-identical prior generation or the complete target generation with exact audit truth"
+    },
+    {
+      "fixture_id": "CORE-DENOM-V1",
+      "hard_veto": "HV-08",
+      "icm_controls": ["ICM-01", "ICM-02", "ICM-03", "ICM-04", "ICM-05", "ICM-06", "ICM-07", "ICM-08", "ICM-09", "ICM-10", "ICM-11", "ICM-12", "ICM-13", "ICM-14", "ICM-15", "ICM-16", "ICM-17", "ICM-18"],
+      "risks": ["R-10", "R-13"],
+      "synthetic_cases": ["136-functions", "135-http-routes", "59-mcp-tools", "13-hooks", "44-host-hook-events", "26-viewer-expressions", "15-provider-adapters", "49-provider-attempt-sites", "18-host-connectors", "148-governed-test-files"],
+      "oracle": "no missing, extra, stale, skipped, disabled, unclassified, or source-drifted denominator item"
+    },
+    {
+      "fixture_id": "CORE-FAULT-V1",
+      "hard_veto": "HV-11",
+      "icm_controls": ["ICM-01", "ICM-02", "ICM-03", "ICM-04", "ICM-05", "ICM-06", "ICM-07", "ICM-08", "ICM-09", "ICM-10", "ICM-11", "ICM-12", "ICM-13", "ICM-14", "ICM-15", "ICM-16", "ICM-17", "ICM-18"],
+      "risks": ["R-01", "R-02", "R-03", "R-04", "R-05", "R-06", "R-07", "R-08", "R-09", "R-10", "R-13", "R-14", "R-15", "R-16", "R-17", "R-18", "R-19", "R-20", "R-21", "R-22", "R-23"],
+      "synthetic_cases": ["observable-output", "deterministic-fault-id", "bounded-time-resource-and-side-effect-denominator", "typed-pass-fail-stop", "cleanup-and-retention-receipt"],
+      "oracle": "every admitted contract has complete observable outputs, deterministic fault injection, bounded criteria, stop behavior, and retained evidence"
+    },
+    {
+      "fixture_id": "CORE-AUTHORITY-V1",
+      "hard_veto": "HV-12",
+      "icm_controls": ["ICM-16"],
+      "risks": ["R-13"],
+      "synthetic_cases": ["source-profile-environment-denominator-manifest", "external-signer", "independent-verifier", "human-role-concurrence", "receipt-custody", "decision-separation"],
+      "oracle": "every evidence and decision claim resolves to its exact source, signer, verifier, authority, and non-combinable gate"
+    },
+    {
+      "fixture_id": "CORE-NATIVE-V1",
+      "hard_veto": "HV-13",
+      "icm_controls": ["ICM-02", "ICM-18"],
+      "risks": ["R-19"],
+      "synthetic_cases": ["automatic-path-zero-write", "explicit-action-project-source-destination-nonce", "two-project-global-negative", "wrong-source", "every-boundary-death", "destination-audit-reconciliation", "readback"],
+      "oracle": "only one explicit attributable action writes the exact authorized destination generation; every other path writes zero bytes"
+    },
+    {
+      "fixture_id": "CORE-SESSION-V1",
+      "hard_veto": "HV-14",
+      "icm_controls": ["ICM-04"],
+      "risks": ["R-20"],
+      "synthetic_cases": ["immutable-project-worktree-cwd-privacy-policy", "invalid-parent", "spoofed-parent", "resume-takeover", "stale-close-versus-resume", "version-cas", "crash-restart"],
+      "oracle": "unauthorized binding changes and stale closure produce typed zero-mutation denial; one versioned lifecycle transition wins"
+    },
+    {
+      "fixture_id": "CORE-INTEGRITY-V1",
+      "hard_veto": "HV-15",
+      "icm_controls": ["ICM-03", "ICM-17"],
+      "risks": ["R-21", "R-22"],
+      "synthetic_cases": ["full-event-identity", "prefix-collision", "concurrent-duplicate", "partial-side-effect", "restart-reconciliation", "immutable-compaction-generation", "ledger-digest-tamper", "concurrent-reader"],
+      "oracle": "duplicate success follows complete durable effects and readers observe one integrity-bound generation only"
+    },
+    {
+      "fixture_id": "CORE-REPLAY-V1",
+      "hard_veto": "HV-16",
+      "icm_controls": ["ICM-11", "ICM-14", "ICM-17"],
+      "risks": ["R-07", "R-08", "R-23"],
+      "synthetic_cases": ["accepted-queued-claimed-pending-terminal", "worker-death-every-boundary", "dual-start-singleton-fence", "restart-bounded-replay", "completed-unacknowledged", "reconciliation-before-readiness", "four-agent-capacity"],
+      "oracle": "every accepted event reaches one durable terminal disposition through one fenced worker and startup remains unavailable until reconciliation completes"
+    }
+  ],
+  "human_assignments": null,
+  "accepted_profiles": null,
+  "independent_signer": null,
+  "independent_verifier": null,
+  "successor_manifest": null
+}

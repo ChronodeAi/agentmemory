@@ -76,6 +76,9 @@ function mockKV() {
   let failNextList:
     | { scope: string; remaining: number; skip: number }
     | undefined;
+  let failNextDelete:
+    | { scope: string; key?: string; remaining: number; error: unknown }
+    | undefined;
   return {
     store,
     failSet(scope: string, key?: string, times = 1) {
@@ -86,6 +89,9 @@ function mockKV() {
     },
     failList(scope: string, times = 1, skip = 0) {
       failNextList = { scope, remaining: times, skip };
+    },
+    failDelete(scope: string, key?: string, error: unknown = new Error("injected delete failure")) {
+      failNextDelete = { scope, key, remaining: 1, error };
     },
     get: async <T>(scope: string, key: string): Promise<T | null> => {
       if (
@@ -123,6 +129,14 @@ function mockKV() {
       return (store.get(scope)?.get(key) as T) ?? (undefined as T);
     },
     delete: async (scope: string, key: string): Promise<void> => {
+      if (
+        failNextDelete?.remaining &&
+        failNextDelete.scope === scope &&
+        (failNextDelete.key === undefined || failNextDelete.key === key)
+      ) {
+        failNextDelete.remaining--;
+        throw failNextDelete.error;
+      }
       store.get(scope)?.delete(key);
     },
     list: async <T>(scope: string): Promise<T[]> => {
@@ -878,6 +892,91 @@ describe("staged migration", () => {
     });
   });
 
+  it("preserves object-shaped rollback diagnostics with target context", async () => {
+    const kv = mockKV();
+    const input = {
+      generation: "migration_delete_diagnostic",
+      sourceSha256: "d".repeat(64),
+      sourcePath: "/tmp/source.db",
+      targets: [
+        {
+          scope: "mem:sessions",
+          key: "created",
+          value: { id: "created", value: "migration" },
+        },
+      ],
+      counts: { sessionCount: 1, obsCount: 0, summaryCount: 0 },
+    };
+    await runStagedMigration(kv as never, input);
+    kv.failDelete("mem:sessions", "created", {
+      code: "state-delete-failed",
+      message: "synthetic object failure",
+    });
+
+    const result = await runStagedMigration(kv as never, {
+      ...input,
+      action: "rollback",
+    });
+
+    expect(result).toMatchObject({
+      status: "rollback-incomplete",
+      rollback: { restored: 0, success: false },
+    });
+    expect(result.error).toContain("state-delete-failed");
+    expect(result.error).toContain("synthetic object failure");
+    expect(result.error).toContain(
+      migrationTargetId("mem:sessions", "created"),
+    );
+    expect(result.error).not.toContain("[object Object]");
+  });
+
+  it("recovers a legacy journal that marked an undefined value as existing", async () => {
+    const kv = mockKV();
+    const generation = "migration_legacy_undefined";
+    const scope = "mem:sessions";
+    const key = "created";
+    const id = migrationTargetId(scope, key);
+    const value = { id: key, value: "migration" };
+    await kv.set(`mem:migration:staging:${generation}`, id, {
+      id,
+      scope,
+      key,
+      value,
+      before: undefined,
+      beforeExists: true,
+    });
+    await kv.set(scope, key, value);
+    await kv.set("mem:migration:reports", generation, {
+      id: generation,
+      generation,
+      sourceSha256: "e".repeat(64),
+      sourcePath: "/tmp/source.db",
+      status: "rollback-incomplete",
+      stageScope: `mem:migration:staging:${generation}`,
+      total: 1,
+      progress: 1,
+      promotedTargetIds: [id],
+      createdAt: "2026-08-03T00:00:00.000Z",
+      updatedAt: "2026-08-03T00:00:00.000Z",
+      counts: { sessionCount: 1, obsCount: 0, summaryCount: 0 },
+    });
+
+    const result = await runStagedMigration(kv as never, {
+      generation,
+      sourceSha256: "e".repeat(64),
+      sourcePath: "/tmp/source.db",
+      targets: [{ scope, key, value }],
+      counts: { sessionCount: 1, obsCount: 0, summaryCount: 0 },
+      action: "rollback",
+    });
+
+    expect(result).toMatchObject({
+      status: "rolled-back",
+      rollback: { restored: 1, success: true },
+    });
+    expect(await kv.get(scope, key)).toBeNull();
+  });
+
   it("rolls back a target written before its promotion journal update", async () => {
     const kv = mockKV();
     await kv.set("mem:sessions", "session", { id: "session", value: "old" });
@@ -952,7 +1051,7 @@ describe("migration CLI", () => {
 
     expect(exitCode).toBe(0);
     expect(output.stdout()).toContain("Usage:");
-    expect(output.stdout()).toContain("dist/functions/migrate.mjs");
+    expect(output.stdout()).toContain("agentmemory migrate");
     expect(output.stderr()).toBe("");
     expect(fetchImpl).not.toHaveBeenCalled();
   });

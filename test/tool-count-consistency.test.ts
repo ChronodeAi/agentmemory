@@ -49,6 +49,30 @@ describe("Tool count consistency", () => {
     expect(readText("README.md")).toContain(`${skillCount} skills`);
     expect(readText("AGENTS.md")).toContain(`12 hooks, ${skillCount} skills`);
     expect(readText("plugin/plugin.json")).toContain(`${skillCount} skills`);
+    expect(readText("plugin/.claude-plugin/plugin.json")).toContain(
+      `${skillCount} skills`,
+    );
+    expect(readText("plugin/.codex-plugin/plugin.json")).toContain(
+      `${skillCount} skills`,
+    );
+  });
+
+  it("every packaged provider surface advertises the current MCP tool count", () => {
+    expect(readText("plugin/plugin.json")).toContain(
+      `${EXPECTED_TOOL_COUNT} MCP tools`,
+    );
+    expect(readText("plugin/.claude-plugin/plugin.json")).toContain(
+      `${EXPECTED_TOOL_COUNT} MCP tools`,
+    );
+    expect(readText("plugin/.codex-plugin/plugin.json")).toContain(
+      `${EXPECTED_TOOL_COUNT} MCP tools`,
+    );
+    expect(readText("plugin/opencode/README.md")).toContain(
+      `MCP-${EXPECTED_TOOL_COUNT}_tools`,
+    );
+    expect(readText("INSTALL_FOR_AGENTS.md")).toContain(
+      `full set of ${EXPECTED_TOOL_COUNT} tools`,
+    );
   });
 
   it("INSTALL_FOR_AGENTS.md names the real core tool set", () => {

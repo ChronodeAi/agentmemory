@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R13-INPUT-V3",
+  "status": "PREPARATION_CANDIDATE_STAGE_A_INCOMPLETE",
+  "risk": "R-13",
+  "card_version": 3,
+  "card_path": ".aiwg/risks/poc-cards/R-13-portable-evidence-harness-v3.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-16"],
+  "requirements": ["NFR-01", "NFR-02", "NFR-03", "NFR-04", "NFR-05", "NFR-06", "NFR-07", "NFR-08", "NFR-09", "NFR-10", "NFR-11", "NFR-12"],
+  "traceability": ["TR-UCM-008", "TR-UCM-016"],
+  "accountable_owner_role": "Test Infrastructure Owner",
+  "case_families": [
+    {"case_id": "R13-CF-01", "name": "source-profile-environment-lock", "source_paths": ["scripts/run-deterministic-tests.mjs", ".github/workflows/ci.yml"], "governed_sinks": ["source-manifest", "profile-manifest", "environment-name-manifest"], "expected_outcome": "every run binds exact qualification source, profile, environment allowlist, and dependency identities"},
+    {"case_id": "R13-CF-02", "name": "file-assertion-authentication-denominator", "source_paths": ["test", "scripts"], "governed_sinks": ["file-results", "assertion-results", "authentication-results"], "expected_outcome": "zero missing, extra, skipped, pending, todo, disabled, or unclassified item"},
+    {"case_id": "R13-CF-03", "name": "cohort-replay-custody", "source_paths": ["scripts/run-deterministic-tests.mjs"], "governed_sinks": ["raw-receipts", "cohort-statement", "signed-manifest"], "expected_outcome": "four five-run cohorts are independently signed, replayable, and custody-bound"}
+  ],
+  "external_or_protected_evidence": ["Node and Ubuntu trust anchors", "CI identity", "iii provenance", "external signer", "independent verifier and custody"],
+  "b1_mechanics_required": ["disposable runner", "environment policy", "fixtures", "schema", "validator", "negative checks"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

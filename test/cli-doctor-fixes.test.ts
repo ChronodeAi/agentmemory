@@ -14,6 +14,7 @@ import {
   parseEnvFile,
   placeholderProviderKeys,
   realProviderKeys,
+  summarizePassiveChecks,
   type DoctorContext,
   type DoctorEffects,
 } from "../src/cli/doctor-diagnostics.js";
@@ -113,16 +114,35 @@ describe("doctor v2 diagnostic catalog", () => {
     expect(status.ok).toBe(true);
   });
 
-  it("no-llm-provider-key fails when env has only placeholders", async () => {
+  it("accepts zero-LLM mode when no LLM-backed feature is enabled", async () => {
     const diagnostics = buildDiagnostics(
       stubEffects({
         envFileExists: () => true,
         readEnvFile: () => ({ ANTHROPIC_API_KEY: "your-key-here" }),
+        runtimeEnv: () => ({ ANTHROPIC_API_KEY: "your-key-here" }),
       }),
     );
     const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
     const status = await check.check(stubCtx());
-    expect(status.ok).toBe(false);
+    expect(status).toMatchObject({
+      ok: true,
+      detail: "zero-LLM mode (optional provider not configured)",
+    });
+  });
+
+  it("requires a provider when an LLM-backed feature is enabled", async () => {
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        runtimeEnv: () => ({
+          AGENTMEMORY_AUTO_COMPRESS: "true",
+        }),
+      }),
+    );
+    const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
+    await expect(check.check(stubCtx())).resolves.toMatchObject({
+      ok: false,
+      detail: "an LLM-backed feature is enabled but no provider key is set",
+    });
   });
 
   it("no-llm-provider-key passes when one real key is set", async () => {
@@ -130,6 +150,22 @@ describe("doctor v2 diagnostic catalog", () => {
     const check = diagnostics.find((d) => d.id === "no-llm-provider-key")!;
     const status = await check.check(stubCtx());
     expect(status.ok).toBe(true);
+  });
+
+  it("separates required health from optional capabilities", () => {
+    expect(
+      summarizePassiveChecks([
+        { name: "Server reachable", ok: true },
+        { name: "Health status", ok: true },
+        { name: "LLM provider", ok: false, optional: true },
+        { name: "Knowledge graph populated", ok: false, optional: true },
+      ]),
+    ).toEqual({
+      requiredPassed: 2,
+      requiredTotal: 2,
+      optionalActive: 0,
+      optionalTotal: 2,
+    });
   });
 
   it("project capability credentials fail closed in strict mode", async () => {
@@ -222,6 +258,40 @@ describe("doctor v2 diagnostic catalog", () => {
     const check = diagnostics.find((d) => d.id === "engine-version-mismatch")!;
     const status = await check.check(stubCtx());
     expect(status.ok).toBe(true);
+  });
+
+  it("accepts the pinned private iii when PATH has no iii", async () => {
+    const privateBin = "/Users/test/.agentmemory/bin/iii";
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        findIiiBinary: () => null,
+        localBinIiiPath: () => privateBin,
+        iiiBinaryVersion: (path) =>
+          path === privateBin ? "0.11.2" : null,
+      }),
+    );
+    const check = diagnostics.find((d) => d.id === "engine-version-mismatch")!;
+    await expect(check.check(stubCtx())).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringContaining(privateBin),
+    });
+  });
+
+  it("accepts the pinned private iii when PATH has another version", async () => {
+    const privateBin = "/Users/test/.agentmemory/bin/iii";
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        findIiiBinary: () => "/opt/homebrew/bin/iii",
+        localBinIiiPath: () => privateBin,
+        iiiBinaryVersion: (path) =>
+          path === privateBin ? "0.11.2" : "0.13.0",
+      }),
+    );
+    const check = diagnostics.find((d) => d.id === "engine-version-mismatch")!;
+    await expect(check.check(stubCtx())).resolves.toMatchObject({
+      ok: true,
+      detail: expect.stringContaining(privateBin),
+    });
   });
 
   it("viewer-unreachable fails when viewer probe returns false", async () => {

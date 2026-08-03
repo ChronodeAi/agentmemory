@@ -1,0 +1,106 @@
+{
+  "schema_version": "iteration-4-operator-decision-addendum-v1",
+  "recorded_at": "2026-07-28T08:48:19Z",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "candidate_source": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "controlling_frozen_evidence_revision": 21,
+  "human_readable_record": {
+    "path": ".aiwg/reports/iteration-4-operator-decision-addendum-2026-07-28.md",
+    "sha256": "20fe19cc07a4f09f03cce8791b00fdfaa41a2bd2f3c4307490b3b5a5a206e87a"
+  },
+  "operator_instruction": "GO",
+  "go_semantics": "execute_only_complete_selected_authorizations",
+  "annotations": [
+    {
+      "annotation": 1,
+      "selection": [
+        "SELECT HEALTH OPTION B.",
+        "AUTHORIZE MINIMAL EXTERNAL-MODEL FRESH-HOST PROBES."
+      ],
+      "disposition": "previously_recorded_and_satisfied",
+      "new_external_calls_authorized": 0
+    },
+    {
+      "annotation": 2,
+      "selection": [
+        "SELECT HEALTH OPTION B.",
+        "AUTHORIZE MINIMAL EXTERNAL-MODEL FRESH-HOST PROBES."
+      ],
+      "disposition": "duplicate_of_annotation_1",
+      "new_external_calls_authorized": 0
+    },
+    {
+      "annotation": 3,
+      "selection": [
+        "SELECT HEALTH OPTION B.",
+        "AUTHORIZE MINIMAL EXTERNAL-MODEL FRESH-HOST PROBES."
+      ],
+      "disposition": "duplicate_of_annotation_1",
+      "new_external_calls_authorized": 0
+    },
+    {
+      "annotation": 4,
+      "selection": [
+        "ACCEPT temporary containment.",
+        "DEFER upstream supervisor handoff until containment probes pass."
+      ],
+      "disposition": "recorded",
+      "temporary_containment": "accepted_and_applied",
+      "predecessor_upstream_supervisor_handoff": "deferred_and_not_revived"
+    },
+    {
+      "annotation": 5,
+      "disposition": "field_normalized",
+      "fields": {
+        "railway_account_project_scopes": "open_no_named_scope_or_selected_answer",
+        "architecture_evidence_preparation": "authorized_preparation_only",
+        "r13_stage_a_specification": "intent_to_accept_formal_acceptance_incomplete",
+        "poc_card_input_completion": "authorized_preparation_only",
+        "temporary_runtime_containment": "accepted",
+        "upstream_supervisor_handoff": "deferred",
+        "aiwg_authorization_normalization": "deferred",
+        "human_role_assignments": "open"
+      }
+    },
+    {
+      "annotation": 6,
+      "disposition": "no_selection_recorded",
+      "reason": "all decision lines retain alternatives and all role lines are blank"
+    }
+  ],
+  "effective_authorizations": {
+    "architecture_evidence_preparation_only": true,
+    "poc_card_input_completion_only": true,
+    "temporary_containment": true,
+    "health_option_b": true,
+    "fresh_host_external_model_probe_runs_total": 2
+  },
+  "deferred": {
+    "predecessor_upstream_supervisor_handoff": true,
+    "aiwg_authorization_normalization": true
+  },
+  "open_or_incomplete": {
+    "railway_named_scope_inventory": true,
+    "r13_complete_stage_a_human_decision": true,
+    "official_rollback_stage_a_exact_phrase": true,
+    "poc_b1_mechanics_authorization": true,
+    "poc_b2_execution_admission": true,
+    "architecture_selection_and_acceptance": true,
+    "abm_rerun": true,
+    "construction_authorization": true
+  },
+  "explicit_non_authorizations": {
+    "railway_access_or_secret_handling": false,
+    "additional_external_model_or_human_transfer": false,
+    "product_or_governed_test_changes": false,
+    "runtime_or_supervisor_changes": false,
+    "official_rollback_stage_a_execution": false,
+    "poc_execution": false,
+    "risk_disposition": false,
+    "architecture_acceptance": false,
+    "abm_passage": false,
+    "construction": false,
+    "canary_release_distribution_or_rollout": false
+  },
+  "requires_successor_manifest_before_decision_use": true
+}

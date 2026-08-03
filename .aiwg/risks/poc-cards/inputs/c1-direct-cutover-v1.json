@@ -1,0 +1,53 @@
+{
+  "schema_version": "agentmemory-configuration-fixture-input-v1",
+  "configuration_id": "C1",
+  "catalog_id": "C1-DIRECT-CUTOVER-V1",
+  "status": "PREPARATION_ONLY_NOT_FROZEN_NOT_ADMITTED",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "candidate_source": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "semantic_authority": "strict_project_scoped_fail_closed_core",
+  "compatibility_strategy": "direct_cutover_no_gateway",
+  "evidence_placement": "embedded_transactional_outbox_no_external_relay",
+  "host_connector_denominator": [
+    "antigravity",
+    "claudeCode",
+    "cline",
+    "codex",
+    "continueDev",
+    "copilotCli",
+    "cursor",
+    "droid",
+    "geminiCli",
+    "hermes",
+    "kiro",
+    "openclaw",
+    "opencode",
+    "openhuman",
+    "pi",
+    "qwen",
+    "warp",
+    "zed"
+  ],
+  "prepared_cases": [
+    "all-connectors-strict-capability-or-typed-denial",
+    "legacy-shared-secret-zero-accepted-path",
+    "client-cutover-complete-inventory",
+    "provider-native-acknowledgement",
+    "generation-fenced-migration-and-exact-restore",
+    "embedded-state-and-receipt-atomicity",
+    "rollback-checkpoints-and-zero-legacy-path-oracle"
+  ],
+  "open_human_inputs": [
+    "client_cutover_owner",
+    "cutover_sequence",
+    "rollback_tiers",
+    "rpo_rto",
+    "accepted_profiles",
+    "receipt_signer",
+    "independent_verifier"
+  ],
+  "hard_veto_closed": false,
+  "scoreable": false,
+  "execution_authorized": false
+}
+

@@ -1,0 +1,73 @@
+{
+  "schema_version": "agentmemory-configuration-fixture-input-v1",
+  "configuration_id": "C2",
+  "catalog_id": "C2-GATEWAY-V1",
+  "status": "PREPARATION_ONLY_PROPOSED_ALLOWLIST_NOT_ACCEPTED",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "candidate_source": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "strict_core_catalog": "COMMON-STRICT-CORE-V1",
+  "gateway_global_authority": false,
+  "candidate_client_classes": [
+    "antigravity",
+    "claudeCode",
+    "cline",
+    "codex",
+    "continueDev",
+    "copilotCli",
+    "cursor",
+    "droid",
+    "geminiCli",
+    "hermes",
+    "kiro",
+    "openclaw",
+    "opencode",
+    "openhuman",
+    "pi",
+    "qwen",
+    "warp",
+    "zed"
+  ],
+  "candidate_operations_not_accepted": [
+    "project_scoped_advisory_recall",
+    "observational_capture",
+    "session_lifecycle"
+  ],
+  "always_denied_operations": [
+    "global_scope",
+    "gate_critical_context",
+    "acknowledgement_fabrication",
+    "source_suppression",
+    "promotion",
+    "mesh_authority",
+    "provider_authority",
+    "native_memory_sync",
+    "migration",
+    "restore",
+    "administrator_operation"
+  ],
+  "prepared_cases": [
+    "client-project-operation-capability-mapping",
+    "unknown-client-denial",
+    "unlisted-operation-denial",
+    "wrong-project-and-global-denial",
+    "expired-ownerless-or-revoked-gateway-denial",
+    "gateway-receipt-without-credential-material",
+    "strict-core-policy-recheck",
+    "zero-use-retirement-observation"
+  ],
+  "open_human_inputs": {
+    "accepted_client_classes": null,
+    "accepted_operation_allowlist": null,
+    "gateway_owner": null,
+    "maximum_expiry": null,
+    "retirement_deadline": null,
+    "zero_use_threshold": null,
+    "accepted_profiles": null,
+    "receipt_signer": null,
+    "independent_verifier": null
+  },
+  "hard_veto_closed": false,
+  "scoreable": false,
+  "execution_authorized": false
+}
+

@@ -5,7 +5,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 interface IiiWorker {
@@ -53,19 +53,38 @@ function localOrigins(restPort: number, viewerPort: number): string[] {
   ];
 }
 
+function normalizeFileBasedStorage(
+  worker: IiiWorker,
+  sourcePath: string,
+  managedDataDir: string,
+  defaultFileName: string,
+): void {
+  const workerConfig = asRecord(worker.config);
+  const adapter = asRecord(workerConfig.adapter);
+  const adapterConfig = asRecord(adapter.config);
+  if (adapterConfig.store_method !== "file_based") return;
+
+  const configuredPath = adapterConfig.file_path;
+  if (typeof configuredPath !== "string" || !configuredPath.trim()) return;
+
+  const normalized = configuredPath.replaceAll("\\", "/").replace(/^\.\//, "");
+  adapterConfig.file_path =
+    normalized === `data/${defaultFileName}`
+      ? join(managedDataDir, defaultFileName)
+      : isAbsolute(configuredPath)
+        ? configuredPath
+        : resolve(dirname(sourcePath), configuredPath);
+  adapter.config = adapterConfig;
+  workerConfig.adapter = adapter;
+  worker.config = workerConfig;
+}
+
 export function materializeIiiRuntimeConfig(
   sourcePath: string,
   ports: IiiRuntimePorts,
   runtimeDir = join(homedir(), ".agentmemory", "runtime"),
+  dataRoot = join(homedir(), ".agentmemory", "data"),
 ): string {
-  if (
-    ports.restPort === 3111 &&
-    ports.streamPort === 3112 &&
-    ports.enginePort === 49134
-  ) {
-    return sourcePath;
-  }
-
   const parsed = parseYaml(readFileSync(sourcePath, "utf8")) as IiiConfig;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("iii config must be a YAML object");
@@ -77,8 +96,29 @@ export function materializeIiiRuntimeConfig(
   const workers = parsed.workers as IiiWorker[];
   const http = requireWorker(workers, "iii-http");
   const stream = requireWorker(workers, "iii-stream");
+  const state = workers.find((candidate) => candidate.name === "iii-state");
   setWorkerPort(http, ports.restPort);
   setWorkerPort(stream, ports.streamPort);
+
+  const managedDataDir =
+    ports.restPort === 3111
+      ? dataRoot
+      : join(dataRoot, `instance-${ports.restPort}`);
+  mkdirSync(managedDataDir, { recursive: true, mode: 0o700 });
+  if (state) {
+    normalizeFileBasedStorage(
+      state,
+      sourcePath,
+      managedDataDir,
+      "state_store.db",
+    );
+  }
+  normalizeFileBasedStorage(
+    stream,
+    sourcePath,
+    managedDataDir,
+    "stream_store",
+  );
 
   const httpConfig = asRecord(http.config);
   const cors = asRecord(httpConfig.cors);

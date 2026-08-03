@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R03-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-03",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-03-authority-eligibility-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-02", "ICM-05", "ICM-08"],
+  "requirements": ["FR-03", "FR-04", "FR-09", "FR-13", "FR-19"],
+  "traceability": ["TR-UCM-002", "TR-UCM-005", "TR-UCM-008", "TR-UCM-012"],
+  "accountable_owner_role": "Product and Requirements Owners",
+  "case_families": [
+    {"case_id": "R03-CF-01", "name": "eligibility-before-relevance", "source_paths": ["src/functions/coding-memory.ts", "src/functions/search.ts"], "governed_sinks": ["ranked-set", "context-packet"], "expected_outcome": "eligibility resolves before any relevance score"},
+    {"case_id": "R03-CF-02", "name": "stale-contradicted-superseded-corpus", "source_paths": ["src/functions/promotions.ts", "src/functions/verify.ts"], "governed_sinks": ["ranked-set", "promotion-attempt"], "expected_outcome": "ineligible candidates contribute zero items, bytes, and authority"},
+    {"case_id": "R03-CF-03", "name": "indeterminate-gate-critical-denial", "source_paths": ["src/functions/coding-memory.ts"], "governed_sinks": ["gate-critical-packet"], "expected_outcome": "gate-critical indeterminate status fails closed with zero packet"}
+  ],
+  "external_or_protected_evidence": ["provider acknowledgement dependency remains owned by R-04"],
+  "b1_mechanics_required": ["recording eligibility/ranker/packet harness", "deterministic clock and tokenizer"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

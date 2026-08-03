@@ -43,6 +43,7 @@ function criticalCollectionSnapshot(error: string): HealthSnapshot {
 export function registerHealthMonitor(
   sdk: ISdk,
   kv: StateKV,
+  options: { collectImmediately?: boolean } = {},
 ): { stop: () => void; collectNow: () => Promise<HealthSnapshot> } {
   let connectionState = "connected";
   let prevCpuUsage = process.cpuUsage();
@@ -216,7 +217,9 @@ export function registerHealthMonitor(
     latestInMemoryHealth = criticalCollectionSnapshot(message);
     logger.error("Health collection failed", { error: message });
   };
-  collectHealth().catch(recordCollectionFailure);
+  if (options.collectImmediately !== false) {
+    collectHealth().catch(recordCollectionFailure);
+  }
   const interval = setInterval(() => {
     collectHealth().catch(recordCollectionFailure);
   }, HEALTH_INTERVAL_MS);

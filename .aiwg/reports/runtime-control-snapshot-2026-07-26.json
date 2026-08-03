@@ -1,0 +1,99 @@
+{
+  "schema_version": 1,
+  "observed_at_utc": "2026-07-26T13:39:51Z",
+  "evidence_scope": "current local rollback control only",
+  "qualifying_fork_evidence": false,
+  "collection": {
+    "collector": "local Codex orchestration session",
+    "independent": false,
+    "point_in_time": true,
+    "raw_responses_retained": false,
+    "authenticated_health_evidence": false,
+    "commands": [
+      "curl -fsS http://127.0.0.1:3113/agentmemory/livez",
+      "curl -fsS http://127.0.0.1:3113/agentmemory/health",
+      "/Users/base/.nvm/versions/node/v24.16.0/bin/agentmemory --version",
+      "lsof -nP -iTCP:3111 -iTCP:3112 -iTCP:3113 -sTCP:LISTEN"
+    ]
+  },
+  "runtime": {
+    "distribution": "upstream",
+    "package": "@agentmemory/agentmemory",
+    "agentmemory_version": "0.9.28",
+    "binary": "/Users/base/.nvm/versions/node/v24.16.0/bin/agentmemory",
+    "chronode_fork_deployed": false
+  },
+  "probes": {
+    "liveness": {
+      "endpoint": "/agentmemory/livez",
+      "service": "agentmemory",
+      "status": "ok",
+      "viewer_port": 3113,
+      "viewer_skipped": false
+    },
+    "health": {
+      "endpoint": "/agentmemory/health",
+      "service": "agentmemory",
+      "status": "healthy",
+      "connection_state": "connected",
+      "kv_connectivity": {
+        "status": "ok",
+        "latency_ms": 0.73
+      },
+      "alerts": [],
+      "notes": [
+        "memory_heap_tight_95%_rss342mb"
+      ],
+      "memory_bytes": {
+        "rss": 359038976,
+        "heap_total": 94552064,
+        "heap_used": 89476528,
+        "external": 31430968
+      },
+      "uptime_seconds": 4653.466440792
+    }
+  },
+  "worker": {
+    "name": "agentmemory",
+    "status": "connected",
+    "runtime": "node",
+    "iii_runtime_version": "0.11.2",
+    "os": "darwin 25.5.0 (arm64)",
+    "pid": 38396,
+    "function_count": 280
+  },
+  "listeners": [
+    {
+      "process": "iii",
+      "pid": 32483,
+      "address": "127.0.0.1",
+      "port": 3111
+    },
+    {
+      "process": "iii",
+      "pid": 32483,
+      "address": "127.0.0.1",
+      "port": 3112
+    },
+    {
+      "process": "node",
+      "pid": 38396,
+      "address": "127.0.0.1",
+      "port": 3113
+    }
+  ],
+  "interpretation": {
+    "service_alive_observed": true,
+    "health_endpoint_reported_healthy": true,
+    "readiness_qualified": false,
+    "viewer_declared_available": true,
+    "viewer_listener_observed": true,
+    "browser_rendering_verified": false,
+    "persistent_service_verified": false,
+    "restart_recovery_verified": false,
+    "rollback_recovery_verified": false,
+    "memory_pressure_warning": true,
+    "fork_candidate_validated": false,
+    "note": "This volatile point-in-time snapshot records the upstream process and endpoint self-report only. It does not establish sustained readiness, supervisor persistence, restart or rollback recovery, browser rendering, ChronodeAi candidate qualification, or runtime-switch authority."
+  }
+}

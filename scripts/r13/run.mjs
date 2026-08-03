@@ -14,13 +14,20 @@ import {
 } from "node:fs";
 import { homedir, platform, release, tmpdir, totalmem } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { StringDecoder } from "node:string_decoder";
 
 import {
-  isAcceptedNode,
+  isPackageCompatibilityNode,
+  localProcessTreeMetrics,
+  matchesR13LocalProfile,
   normalizeTestPath,
-  processTreeMetrics,
+  parseWorkerPidLedger,
+  R13_LOCAL_PROFILE,
+  r13ChildEnvironment,
   sha256,
   terminateProcessTree,
+  validateFinalWorkerLedger,
 } from "./lib.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
@@ -37,11 +44,16 @@ if (!Number.isInteger(repeat) || repeat < 1 || repeat > 5) {
 }
 
 function exec(command, commandArgs) {
-  return spawnSync(command, commandArgs, {
+  const result = spawnSync(command, commandArgs, {
     cwd: root,
     encoding: "utf8",
     env: process.env,
-  }).stdout.trim();
+  });
+  if (result.error || result.status !== 0 || typeof result.stdout !== "string") {
+    const detail = result.error?.message ?? result.stderr?.trim() ?? `exit ${result.status}`;
+    throw new Error(`${command} ${commandArgs.join(" ")} failed: ${detail}`);
+  }
+  return result.stdout.trim();
 }
 
 function trackedTests() {
@@ -75,7 +87,8 @@ function testContentSha(tests) {
 }
 
 function npmVersion() {
-  return exec("npm", ["--version"]);
+  const npm = join(dirname(process.execPath), platform() === "win32" ? "npm.cmd" : "npm");
+  return exec(npm, ["--version"]);
 }
 
 function sourceSha() {
@@ -125,26 +138,21 @@ function sourceState() {
   };
 }
 
-function sanitizedEnvironment(home, port, secret, capabilitySecret) {
-  const env = { ...process.env };
-  for (const key of Object.keys(env)) {
-    if (
-      /(?:OPENAI|ANTHROPIC|COHERE|VOYAGE|GEMINI|OPENROUTER|MINIMAX|AWS|AZURE|GOOGLE).*(?:KEY|TOKEN|SECRET|CREDENTIAL)/i.test(
-        key,
-      )
-    ) {
-      delete env[key];
-    }
-  }
+function observedEnvironment() {
+  const environment = {
+    profile_id: R13_LOCAL_PROFILE.id,
+    platform: platform(),
+    macos_version: exec("/usr/bin/sw_vers", ["-productVersion"]),
+    macos_build: exec("/usr/bin/sw_vers", ["-buildVersion"]),
+    kernel_release: release(),
+    architecture: process.arch,
+    node: process.version,
+    npm: npmVersion(),
+  };
   return {
-    ...env,
-    HOME: home,
-    CI: "1",
-    NO_COLOR: "1",
-    AGENTMEMORY_SECRET: secret,
-    AGENTMEMORY_PROJECT_CAPABILITY_SECRET: capabilitySecret,
-    AGENTMEMORY_URL: `http://127.0.0.1:${port}`,
-    AGENTMEMORY_INJECT_CONTEXT: "false",
+    ...environment,
+    exact_local_profile: matchesR13LocalProfile(environment),
+    package_compatibility_ci_node: isPackageCompatibilityNode(environment.node),
   };
 }
 
@@ -208,9 +216,16 @@ function installEngine(home) {
   return { source, sha256: digest, verified };
 }
 
-async function waitForService(base, timeout = 45_000) {
+async function waitForService(base, child, failureProvider, timeout = 45_000) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    const failure = failureProvider();
+    if (failure) throw new Error(failure);
+    if (child.exitCode !== null || child.signalCode !== null) {
+      throw new Error(
+        `Agentmemory service exited before readiness: exit=${child.exitCode} signal=${child.signalCode}`,
+      );
+    }
     try {
       const response = await fetch(`${base}/agentmemory/livez`, {
         signal: AbortSignal.timeout(1000),
@@ -224,24 +239,67 @@ async function waitForService(base, timeout = 45_000) {
   throw new Error(`Agentmemory did not become live at ${base}`);
 }
 
-function psRows() {
-  const result = spawnSync("ps", ["-axo", "pid=,ppid=,rss=,command="], {
-    encoding: "utf8",
-  });
-  if (result.error || result.status !== 0 || typeof result.stdout !== "string") {
-    const detail =
-      result.error?.message ?? result.stderr?.trim() ?? `exit ${result.status}`;
-    throw new Error(`R-13 process telemetry unavailable: ${detail}`);
-  }
-  return result.stdout;
-}
-
-async function terminate(child) {
-  return terminateProcessTree(child, psRows);
+async function terminate(child, sampledPids = []) {
+  return terminateProcessTree(
+    child,
+    (roots) => localProcessTreeMetrics(roots),
+    { sampledPids },
+  );
 }
 
 function fileSha(path) {
   return createHash("sha256").update(readFileSync(path)).digest("hex");
+}
+
+export function redactText(value, sensitiveValues) {
+  let redacted = value;
+  for (const sensitive of sensitiveValues) {
+    if (sensitive) redacted = redacted.replaceAll(sensitive, "[REDACTED]");
+  }
+  return redacted;
+}
+
+export function redactingAppender(path, sensitiveValues) {
+  const decoder = new StringDecoder("utf8");
+  const secrets = [...new Set(sensitiveValues.filter(Boolean))];
+  let tail = "";
+
+  function safePrefixLength(value) {
+    let safeLength = value.length;
+    for (const secret of secrets) {
+      const longestPartialLength = Math.min(value.length, secret.length - 1);
+      for (let length = longestPartialLength; length > 0; length -= 1) {
+        if (value.endsWith(secret.slice(0, length))) {
+          safeLength = Math.min(safeLength, value.length - length);
+          break;
+        }
+      }
+    }
+    return safeLength;
+  }
+
+  return {
+    write(chunk) {
+      const combined = tail + decoder.write(chunk);
+      const emitLength = safePrefixLength(combined);
+      if (emitLength > 0) {
+        appendFileSync(path, redactText(combined.slice(0, emitLength), secrets));
+      }
+      tail = combined.slice(emitLength);
+    },
+    finish() {
+      tail += decoder.end();
+      if (tail) appendFileSync(path, redactText(tail, secrets));
+      tail = "";
+    },
+  };
+}
+
+function scrubSensitiveFile(path, sensitiveValues) {
+  if (!existsSync(path)) return;
+  const original = readFileSync(path, "utf8");
+  const redacted = redactText(original, sensitiveValues);
+  if (redacted !== original) writeFileSync(path, redacted);
 }
 
 const governedArtifacts = [
@@ -268,10 +326,13 @@ function writeReceipt(receiptDir, receipt) {
 
 function resultFiles(vitestJson) {
   const parsed = JSON.parse(readFileSync(vitestJson, "utf8"));
-  const files = (parsed.testResults ?? [])
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.testResults)) {
+    throw new Error("Vitest JSON must contain a testResults array");
+  }
+  const files = parsed.testResults
     .map((result) => normalizeTestPath(root, result.name))
     .sort();
-  const assertions = (parsed.testResults ?? []).flatMap(
+  const assertions = parsed.testResults.flatMap(
     (result) => result.assertionResults ?? [],
   );
   return {
@@ -288,7 +349,7 @@ function resultFiles(vitestJson) {
 function commonReceipt(
   runId,
   tests,
-  qualifiedNode,
+  environment,
   source,
   secret,
   capabilitySecret,
@@ -302,12 +363,7 @@ function commonReceipt(
     source_worktree_dirty: source.dirty,
     qualification_waivers: [],
     environment: {
-      platform: platform(),
-      release: release(),
-      architecture: process.arch,
-      node: process.version,
-      npm: npmVersion(),
-      qualified_node_profile: qualifiedNode,
+      ...environment,
       mandatory_auth_configured: Boolean(secret),
       mandatory_project_capability_auth_configured:
         Boolean(capabilitySecret),
@@ -322,7 +378,7 @@ function commonReceipt(
       expected_manifest_sha256: sha256(`${tests.join("\n")}\n`),
       expected_content_sha256: testContentSha(tests),
     },
-    process: {},
+    process: { stage: "preflight" },
     artifact_sha256: {},
   };
 }
@@ -330,12 +386,13 @@ function commonReceipt(
 async function runOnce(index) {
   const tests = trackedTests();
   const source = sourceState();
-  const qualifiedNode = isAcceptedNode(process.version);
-  const allowUnqualified = process.env.R13_ALLOW_UNQUALIFIED_NODE === "1";
+  const environment = observedEnvironment();
   const allowDirty = process.env.R13_ALLOW_DIRTY_TREE === "1";
   const secret = process.env.AGENTMEMORY_SECRET ?? "";
   const capabilitySecret =
     process.env.AGENTMEMORY_PROJECT_CAPABILITY_SECRET ?? "";
+  const sensitiveValues = [secret, capabilitySecret].filter(Boolean);
+  const redact = (value) => redactText(String(value), sensitiveValues);
   const runId = `${Date.now()}-${index}-${randomBytes(4).toString("hex")}`;
   const receiptBase =
     process.env.R13_RECEIPT_DIR ?? join(root, ".r13-receipts");
@@ -345,15 +402,12 @@ async function runOnce(index) {
   const receipt = commonReceipt(
     runId,
     tests,
-    qualifiedNode,
+    environment,
     source,
     secret,
     capabilitySecret,
   );
   const failures = [];
-  if (!qualifiedNode && allowUnqualified) {
-    receipt.qualification_waivers.push("unqualified-node-profile");
-  }
   if (source.dirty && allowDirty) {
     receipt.qualification_waivers.push("dirty-source");
   }
@@ -379,8 +433,10 @@ async function runOnce(index) {
   if (!capabilitySecret) {
     failures.push("MISSING_PROJECT_CAPABILITY_AUTH");
   }
-  if (!qualifiedNode && !allowUnqualified) {
-    failures.push(`unsupported Node profile ${process.version}`);
+  if (!environment.exact_local_profile) {
+    failures.push(
+      `off-profile environment; required ${R13_LOCAL_PROFILE.id}`,
+    );
   }
   if (source.dirty && !allowDirty) {
     failures.push(
@@ -399,93 +455,197 @@ async function runOnce(index) {
     return;
   }
 
-  if (!existsSync(join(root, "dist/cli.mjs"))) {
-    throw new Error("dist/cli.mjs is missing; run npm run build before npm test");
-  }
-
-  const home = mkdtempSync(join(tmpdir(), "agentmemory-r13-"));
-  writePreferences(home);
-  const engine = installEngine(home);
-  if (!engine.verified) {
-    receipt.qualification_waivers.push("unverified-iii-provenance");
-  }
   const port = Number(process.env.R13_PORT ?? 4311 + index * 100);
-  const env = sanitizedEnvironment(home, port, secret, capabilitySecret);
   const vitestJson = join(receiptDir, "vitest.json");
   const workerPids = join(receiptDir, "worker-pids.txt");
   const stdoutPath = join(receiptDir, "stdout.log");
   const stderrPath = join(receiptDir, "stderr.log");
-  env.R13_VITEST_JSON = vitestJson;
-  env.R13_WORKER_PID_FILE = workerPids;
-  writeFileSync(workerPids, "");
-  writeFileSync(stdoutPath, "");
-  writeFileSync(stderrPath, "");
+  const telemetryPath = join(receiptDir, "telemetry.jsonl");
 
-  const service = spawn(process.execPath, ["dist/cli.mjs", "--port", String(port)], {
-    cwd: root,
-    env,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  service.stdout.on("data", (chunk) => appendFileSync(stdoutPath, chunk));
-  service.stderr.on("data", (chunk) => appendFileSync(stderrPath, chunk));
-
+  let home;
+  let testHome;
+  let env;
+  let testEnv;
+  let service;
   let testProcess;
+  let telemetry;
+  let emergencyCleanupPromise;
+  let stdoutAppender;
+  let stderrAppender;
+  let engine = { source: null, sha256: null, verified: false };
+  let serviceError;
+  let testError;
   let peakRss = 0;
   let peakConcurrentWorkers = 0;
+  let descendantChurnCount = 0;
   let timedOut = false;
   let rssBreached = false;
   let telemetryFailure;
+  const sampledByRoot = new Map();
+  const observedLiveWorkerPids = new Set();
+  const cleanup = {
+    attempted: false,
+    service_sampled_pids: [],
+    test_sampled_pids: [],
+    service_verified_gone: true,
+    test_verified_gone: true,
+    fallback_stop_required: false,
+    fallback_stop_succeeded: false,
+    temp_home_removed: false,
+  };
+  const recordTerminationFailure = (error) => {
+    const detail = redact(error instanceof Error ? error.message : String(error));
+    failures.push(`R-13 deterministic cleanup failed: ${detail}`);
+  };
+  const requestEmergencyCleanup = () => {
+    emergencyCleanupPromise ??= Promise.allSettled([
+      terminate(testProcess, sampledByRoot.get(testProcess?.pid) ?? []),
+      terminate(service, sampledByRoot.get(service?.pid) ?? []),
+    ]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") recordTerminationFailure(result.reason);
+      }
+    });
+  };
   const startedAt = Date.now();
-  const telemetryPath = join(receiptDir, "telemetry.jsonl");
-  writeFileSync(telemetryPath, "");
-  const telemetry = setInterval(() => {
-    let rss;
-    try {
-      const metrics = processTreeMetrics(psRows(), [
-        service.pid,
-        testProcess?.pid,
-      ]);
-      rss = metrics.rssBytes;
-      peakConcurrentWorkers = Math.max(
-        peakConcurrentWorkers,
-        metrics.workerCount,
-      );
-    } catch (error) {
-      telemetryFailure = error instanceof Error ? error.message : String(error);
-      void terminate(testProcess);
-      void terminate(service);
-      return;
-    }
-    peakRss = Math.max(peakRss, rss);
-    appendFileSync(
-      telemetryPath,
-      `${JSON.stringify({
-        at: new Date().toISOString(),
-        rss_bytes: rss,
-        worker_count: peakConcurrentWorkers,
-      })}\n`,
-    );
-    if (rss > rssLimit) {
-      rssBreached = true;
-      void terminate(testProcess);
-    }
-  }, 250);
-
+  receipt.result = "fail";
+  receipt.failures = failures;
+  receipt.process = {
+    stage: "post-preflight-initialization",
+    argv: ["vitest", "run", "--config", "vitest.r13.config.ts", "--no-color"],
+    started_at: new Date(startedAt).toISOString(),
+    ended_at: new Date(startedAt).toISOString(),
+    duration_ms: 0,
+    exit_code: null,
+    signal: null,
+    peak_rss_bytes: 0,
+    service_pid: null,
+    worker_pids: [],
+    peak_concurrent_workers: 0,
+    descendant_churn_count: 0,
+    iii_sha256: null,
+    iii_sha_verified: false,
+    cleanup,
+  };
   try {
-    await waitForService(env.AGENTMEMORY_URL);
+    receipt.process.stage = "artifact-initialization";
+    writeFileSync(workerPids, "");
+    writeFileSync(stdoutPath, "");
+    writeFileSync(stderrPath, "");
+    writeFileSync(vitestJson, "");
+    writeFileSync(telemetryPath, "");
+    stdoutAppender = redactingAppender(stdoutPath, sensitiveValues);
+    stderrAppender = redactingAppender(stderrPath, sensitiveValues);
+    if (!Number.isSafeInteger(port) || port < 1024 || port > 65535) {
+      throw new Error(`invalid R13_PORT ${process.env.R13_PORT ?? ""}`);
+    }
+    receipt.process.stage = "build-check";
+    if (!existsSync(join(root, "dist/cli.mjs"))) {
+      throw new Error("dist/cli.mjs is missing; run npm run build before npm test");
+    }
+
+    receipt.process.stage = "engine-setup";
+    home = mkdtempSync(join(tmpdir(), "agentmemory-r13-"));
+    testHome = join(home, "test-home");
+    mkdirSync(testHome, { recursive: true });
+    writePreferences(home);
+    engine = installEngine(home);
+    if (!engine.verified) receipt.qualification_waivers.push("unverified-iii-provenance");
+    env = r13ChildEnvironment(process.env, {
+      home,
+      port,
+      secret,
+      capabilitySecret,
+      nodeBinDirectory: dirname(process.execPath),
+      vitestJson,
+      workerPidFile: workerPids,
+    });
+    testEnv = { ...env, HOME: testHome };
+
+    receipt.process.stage = "service-spawn";
+    service = spawn(process.execPath, ["dist/cli.mjs", "--port", String(port)], {
+      cwd: root,
+      env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    await new Promise((resolvePromise, rejectPromise) => {
+      service.once("spawn", resolvePromise);
+      service.once("error", rejectPromise);
+    });
+    receipt.process.service_pid = service.pid;
+    service.stdout?.on("data", (chunk) => stdoutAppender.write(chunk));
+    service.stderr?.on("data", (chunk) => stderrAppender.write(chunk));
+    service.on("error", (error) => {
+      serviceError ??= `Agentmemory service error event: ${redact(error.message)}`;
+    });
+
+    telemetry = setInterval(() => {
+      let metrics;
+      try {
+        const roots = [service?.pid, testProcess?.pid].filter((pid) =>
+          Number.isSafeInteger(pid) && pid > 1,
+        );
+        metrics = localProcessTreeMetrics(
+          roots,
+          parseWorkerPidLedger(readFileSync(workerPids, "utf8")),
+        );
+        for (const tree of metrics.trees) sampledByRoot.set(tree.rootPid, tree.pids);
+        for (const pid of metrics.liveWorkerPids) observedLiveWorkerPids.add(pid);
+        peakRss = Math.max(peakRss, metrics.rssBytes);
+        peakConcurrentWorkers = Math.max(peakConcurrentWorkers, metrics.workerCount);
+        descendantChurnCount += metrics.churnedPids.length;
+        appendFileSync(
+          telemetryPath,
+          `${JSON.stringify({
+            at: new Date().toISOString(),
+            rss_bytes: metrics.rssBytes,
+            worker_count: metrics.workerCount,
+            churned_process_count: metrics.churnedPids.length,
+          })}\n`,
+        );
+        if (metrics.rssBytes > rssLimit) {
+          rssBreached = true;
+          requestEmergencyCleanup();
+        }
+      } catch (error) {
+        telemetryFailure ??= redact(error instanceof Error ? error.message : String(error));
+        requestEmergencyCleanup();
+      }
+    }, 250);
+
+    receipt.process.stage = "service-readiness";
+    await waitForService(
+      env.AGENTMEMORY_URL,
+      service,
+      () => serviceError ?? telemetryFailure,
+    );
+    if (telemetryFailure) throw new Error(telemetryFailure);
+
+    receipt.process.stage = "test-spawn";
     testProcess = spawn(
       join(root, "node_modules", ".bin", "vitest"),
       ["run", "--config", "vitest.r13.config.ts", "--no-color"],
-      { cwd: root, env, stdio: ["ignore", "pipe", "pipe"] },
+      { cwd: root, env: testEnv, stdio: ["ignore", "pipe", "pipe"] },
     );
-    testProcess.stdout.on("data", (chunk) => appendFileSync(stdoutPath, chunk));
-    testProcess.stderr.on("data", (chunk) => appendFileSync(stderrPath, chunk));
+    await new Promise((resolvePromise, rejectPromise) => {
+      testProcess.once("spawn", resolvePromise);
+      testProcess.once("error", rejectPromise);
+    });
+    testProcess.stdout?.on("data", (chunk) => stdoutAppender.write(chunk));
+    testProcess.stderr?.on("data", (chunk) => stderrAppender.write(chunk));
+    testProcess.on("error", (error) => {
+      testError ??= `Vitest child error event: ${redact(error.message)}`;
+    });
 
+    receipt.process.stage = "test-execution";
     let deadlineTimer;
     const outcome = await Promise.race([
       new Promise((resolvePromise) => {
-        testProcess.on("exit", (code, signal) =>
+        testProcess.once("exit", (code, signal) =>
           resolvePromise({ code, signal }),
+        );
+        testProcess.once("error", (error) =>
+          resolvePromise({ code: null, signal: "ERROR", error }),
         );
       }),
       new Promise((resolvePromise) =>
@@ -495,7 +655,7 @@ async function runOnce(index) {
             try {
               await terminate(testProcess);
             } catch (error) {
-              telemetryFailure = error instanceof Error ? error.message : String(error);
+              telemetryFailure = redact(error instanceof Error ? error.message : String(error));
             }
             resolvePromise({ code: null, signal: "TIMEOUT" });
           }, timeoutMs);
@@ -504,18 +664,26 @@ async function runOnce(index) {
     ]);
     clearTimeout(deadlineTimer);
 
-    const observed = existsSync(vitestJson)
-      ? resultFiles(vitestJson)
-      : { files: [], assertions: [], skipped: [] };
+    if (testError || outcome.error) {
+      throw new Error(testError ?? `Vitest child error event: ${outcome.error.message}`);
+    }
+    receipt.process.stage = "evidence-validation";
+    if (!existsSync(vitestJson) || statSync(vitestJson).size === 0) {
+      throw new Error("Vitest JSON output is missing or empty");
+    }
+    let observed;
+    try {
+      observed = resultFiles(vitestJson);
+    } catch (error) {
+      throw new Error(`Vitest JSON output is malformed: ${error.message}`);
+    }
     const missing = tests.filter((path) => !observed.files.includes(path));
     const extra = observed.files.filter((path) => !tests.includes(path));
-    const pids = [
-      ...new Set(
-        readFileSync(workerPids, "utf8")
-          .split("\n")
-          .filter(Boolean),
-      ),
-    ];
+    const pids = validateFinalWorkerLedger(
+      readFileSync(workerPids, "utf8"),
+      observedLiveWorkerPids,
+      peakConcurrentWorkers,
+    ).map(String);
     const requiredAuthTests = [
       "rejects unauthenticated requests",
       "rejects wrong bearer token",
@@ -539,28 +707,22 @@ async function runOnce(index) {
       ...(observed.skipped.length
         ? [`skipped tests: ${observed.skipped.join(", ")}`]
         : []),
-      ...(peakConcurrentWorkers <= 1
+      ...(peakConcurrentWorkers === 1
         ? []
-        : [`expected at most one concurrent worker, found ${peakConcurrentWorkers}`]),
+        : [`expected exactly one concurrent worker, found ${peakConcurrentWorkers}`]),
+      ...(serviceError ? [serviceError] : []),
+      ...(testError ? [testError] : []),
       ...(missingAuthTests.length
         ? [`missing auth tests: ${missingAuthTests.join(", ")}`]
         : []),
     );
 
-    receipt.process = {
-      argv: ["vitest", "run", "--config", "vitest.r13.config.ts", "--no-color"],
-      started_at: new Date(startedAt).toISOString(),
-      ended_at: new Date().toISOString(),
-      duration_ms: Date.now() - startedAt,
+    Object.assign(receipt.process, {
+      stage: "cleanup",
       exit_code: outcome.code,
       signal: outcome.signal,
-      peak_rss_bytes: peakRss,
-      service_pid: service.pid,
       worker_pids: pids,
-      peak_concurrent_workers: peakConcurrentWorkers,
-      iii_sha256: engine.sha256,
-      iii_sha_verified: engine.verified,
-    };
+    });
     receipt.tests = {
       ...receipt.tests,
       observed_count: observed.files.length,
@@ -570,29 +732,91 @@ async function runOnce(index) {
       mandatory_auth_tests: requiredAuthTests,
       missing_auth_tests: missingAuthTests,
     };
-    receipt.result =
-      failures.length > 0
-        ? "fail"
-        : receipt.qualification_waivers.length > 0
-          ? "provisional-pass"
-          : "pass";
-    receipt.failures = failures;
-  } finally {
-    clearInterval(telemetry);
-    await terminate(testProcess);
-    await terminate(service);
-    spawnSync(
-      process.execPath,
-      ["dist/cli.mjs", "stop", "--force", "--port", String(port)],
-      { cwd: root, env, encoding: "utf8", timeout: 15_000 },
+  } catch (error) {
+    failures.push(
+      `${receipt.process.stage}: ${redact(error instanceof Error ? error.message : String(error))}`,
     );
-    if (process.env.R13_KEEP_HOME !== "1") rmSync(home, { recursive: true, force: true });
+  } finally {
+    if (telemetry) clearInterval(telemetry);
+    if (emergencyCleanupPromise) await emergencyCleanupPromise;
+    cleanup.attempted = true;
+    for (const [label, child] of [["test", testProcess], ["service", service]]) {
+      const sampledPids = sampledByRoot.get(child?.pid) ?? [];
+      try {
+        const report = await terminate(child, sampledPids);
+        cleanup[`${label}_sampled_pids`] = report.sampledPids;
+        cleanup[`${label}_verified_gone`] = report.verifiedGone;
+      } catch (error) {
+        const report = error?.cleanupReport;
+        if (report) {
+          cleanup[`${label}_sampled_pids`] = report.sampledPids;
+          cleanup[`${label}_verified_gone`] = report.verifiedGone;
+        } else {
+          cleanup[`${label}_verified_gone`] = false;
+        }
+        recordTerminationFailure(error);
+      }
+    }
+    if (serviceError) failures.push(serviceError);
+    if (testError) failures.push(testError);
+    if (telemetryFailure) failures.push(telemetryFailure);
+    cleanup.fallback_stop_required = Boolean(
+      env &&
+      !cleanup.service_verified_gone &&
+      existsSync(join(root, "dist/cli.mjs")),
+    );
+    if (cleanup.fallback_stop_required) {
+      const stop = spawnSync(
+        process.execPath,
+        ["dist/cli.mjs", "stop", "--force", "--port", String(port)],
+        { cwd: root, env, encoding: "utf8", timeout: 15_000 },
+      );
+      cleanup.fallback_stop_succeeded = !stop.error && stop.status === 0 && !stop.signal;
+      if (!cleanup.fallback_stop_succeeded) {
+        const detail = redact(
+          stop.error?.message || stop.stderr?.trim() ||
+            `exit=${stop.status} signal=${stop.signal}`,
+        );
+        failures.push(`fallback stop failed: ${detail}`);
+      }
+    }
+    if (home) {
+      try {
+        rmSync(home, { recursive: true, force: true });
+        cleanup.temp_home_removed = !existsSync(home);
+      } catch (error) {
+        failures.push(`temporary HOME cleanup failed: ${redact(error.message)}`);
+      }
+      if (!cleanup.temp_home_removed) failures.push("temporary HOME was not removed");
+    } else {
+      cleanup.temp_home_removed = true;
+    }
+    Object.assign(receipt.process, {
+      stage: failures.length > 0 ? "failed" : "complete",
+      ended_at: new Date().toISOString(),
+      duration_ms: Date.now() - startedAt,
+      peak_rss_bytes: peakRss,
+      service_pid: service?.pid ?? null,
+      peak_concurrent_workers: peakConcurrentWorkers,
+      descendant_churn_count: descendantChurnCount,
+      iii_sha256: engine.sha256,
+      iii_sha_verified: engine.verified,
+    });
+    receipt.failures = [...new Set(failures)];
+    receipt.result = receipt.failures.length > 0
+      ? "fail"
+      : receipt.qualification_waivers.length > 0
+        ? "provisional-pass"
+        : "pass";
+    stdoutAppender?.finish();
+    stderrAppender?.finish();
+    scrubSensitiveFile(stdoutPath, sensitiveValues);
+    scrubSensitiveFile(stderrPath, sensitiveValues);
+    writeReceipt(receiptDir, receipt);
   }
 
-  writeReceipt(receiptDir, receipt);
-
   if (receipt.result !== "pass" && receipt.result !== "provisional-pass") {
-    throw new Error(`R-13 failed: ${failures.join("; ")}`);
+    throw new Error(`R-13 failed: ${receipt.failures.join("; ")}`);
   }
   console.log(
     receipt.result === "pass"
@@ -601,6 +825,8 @@ async function runOnce(index) {
   );
 }
 
-for (let index = 0; index < repeat; index += 1) {
-  await runOnce(index);
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  for (let index = 0; index < repeat; index += 1) {
+    await runOnce(index);
+  }
 }

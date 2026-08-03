@@ -22,7 +22,7 @@
     "start": "node dist/cli.mjs",
     "migrate": "node dist/functions/migrate.mjs",
     "test": "node scripts/r13/run.mjs",
-    "test:unit": "vitest run test --exclude test/integration.test.ts",
+    "test:unit": "node scripts/run-unit.mjs",
     "test:watch": "vitest --exclude test/integration.test.ts",
     "test:integration": "vitest run --config vitest.r13.config.ts test/integration.test.ts",
     "test:all": "node scripts/r13/run.mjs",

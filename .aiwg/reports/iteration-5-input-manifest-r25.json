@@ -1,0 +1,321 @@
+{
+  "schema_version": 1,
+  "manifest_revision": 25,
+  "manifest_kind": "layered-successor",
+  "generated_at_utc": "2026-07-29T16:44:26.100Z",
+  "manifest_status": "candidate-unsigned-local-advisory",
+  "project": "github.com/chronodeai/agentmemory",
+  "repository": "https://github.com/ChronodeAi/agentmemory.git",
+  "upstream": "https://github.com/rohitg00/agentmemory.git",
+  "branch": "codex/agentmemory-elab-iter2",
+  "candidate_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "predecessor": {
+    "revision": 24,
+    "manifest_path": ".aiwg/reports/iteration-4-input-manifest.json",
+    "manifest_sha256": "6ca664d7a2b3f5b842960470cf7eb71a0cf878824c2908b5dd0e1aa6099f91e5",
+    "predecessor_sha256": "50c0e2669c46b34843d3cd2c4576879a8f47d410abcb1298fc52836806d33619",
+    "deterministic_receipt_path": ".aiwg/reports/iteration-4-manifest-verification-r24.json",
+    "deterministic_receipt_sha256": "f9d79039047c29ae84b94aef979321ba0ecb926a44e16682b6bb3e9ac9914f85",
+    "adversarial_review_path": ".aiwg/reports/iteration-4-adversarial-review-r24-2026-07-28.md",
+    "adversarial_review_sha256": "b359da0cfcc3cc14e85d0503bd8954a92c000980ee01bf04cd1777e724878ab8",
+    "entry_count": 236,
+    "verification": "accepted-freeze-only"
+  },
+  "decision_boundary": "Revision 25 is an unsigned layered governance/evidence freeze. It does not accept requirements, realizations, DEC-15 completion, architecture, ADRs, MTP, Stage A, risks, ABM, Construction, canary, deployment, release, or rollout, and it authorizes no product/runtime/cloud mutation.",
+  "target_versions": {
+    "agentmemory": "0.9.28-candidate",
+    "codebase_memory_fork": "0.9.1",
+    "codebase_memory_upstream_latest_published": "0.9.0"
+  },
+  "aiwg_provenance": {
+    "launcher_version": "2026.7.24",
+    "launcher_root": "/opt/homebrew/lib/node_modules/aiwg",
+    "active_source_version": "2026.7.16",
+    "active_source_root": "/Users/base/my-aiwg",
+    "channel": "edge",
+    "dev_mode": true,
+    "active_source_commit": "fdbed5d0344d0e4a161c38bb7b46a3139265afd9",
+    "doctor": {
+      "passing": 35,
+      "warnings": 3,
+      "artifact_index": "current",
+      "graphs_total": 5,
+      "graphs_built": 4,
+      "graph_warnings": 0
+    }
+  },
+  "runtime_baseline": {
+    "shell_path_cli": "unavailable",
+    "absolute_cli": "/Users/base/.nvm/versions/node/v24.16.0/bin/agentmemory",
+    "absolute_cli_version": "0.9.28",
+    "launch_agent": "not-loaded",
+    "local_port_3111": "live",
+    "livez": "http-200-service-ok",
+    "legacy_health_route": "http-404",
+    "protected_health_without_credential": "http-200-policy-nonconformance",
+    "service_reported_status": "healthy",
+    "service_version": "0.9.28",
+    "connected_worker_count": 1,
+    "connected_worker_version": "0.11.2",
+    "worker_kv": "ok",
+    "cli_status": "exit-1-false-not-running",
+    "cli_doctor": "exit-0-server-0-of-1-viewer-unreachable",
+    "viewer_port": 3113,
+    "viewer": "intermittent-http-200-then-ten-probe-failure",
+    "supervision": "split-ad-hoc-engine-and-terminal-worker",
+    "codex_plugin_version": "0.9.28",
+    "codex_plugin_enabled": false,
+    "mcp_surface": "responsive-provenance-unestablished",
+    "slot_list": "http-500",
+    "project_context_sources": 0,
+    "commit_coverage": 0,
+    "nonconformance_links": [
+      "R-08",
+      "R-09",
+      "R-14",
+      "R-23",
+      "DPA-025",
+      "DPA-026",
+      "DPA-027"
+    ]
+  },
+  "codebase_memory": {
+    "status": "ready",
+    "mode": "moderate",
+    "generation": "2026-07-28T20:08:52Z",
+    "nodes": 13427,
+    "edges": 25342,
+    "excluded_test_files": 148,
+    "test_scope_gap_records": 151,
+    "parse_partial_files": 3,
+    "rtm_subjects": 49,
+    "rtm_subjects_no_recorded_gap": 11,
+    "dec15_graph_condition": "not-met"
+  },
+  "requirements": {
+    "parents": 33,
+    "children": 130,
+    "rtm_children": 130,
+    "memberships": 288,
+    "realization_memberships": {
+      "DES-UCR-001": 61,
+      "DES-UCR-002": 121,
+      "DES-UCR-003": 106
+    },
+    "trace_rows": 19,
+    "accepted_requirements": 0,
+    "accepted_realizations": 0
+  },
+  "realizations": [
+    {
+      "id": "DES-UCR-001",
+      "denominator": 23,
+      "threshold": 19,
+      "numerator": 0
+    },
+    {
+      "id": "DES-UCR-002",
+      "denominator": 54,
+      "threshold": 44,
+      "numerator": 0
+    },
+    {
+      "id": "DES-UCR-003",
+      "denominator": 27,
+      "threshold": 22,
+      "numerator": 0
+    }
+  ],
+  "architecture": {
+    "sad": "draft",
+    "icm": "draft",
+    "adrs_proposed": 7,
+    "configurations": [
+      "C1",
+      "C2",
+      "C3",
+      "C4"
+    ],
+    "selected": null,
+    "open_hard_vetoes": 16
+  },
+  "risks": {
+    "total": 23,
+    "P0": 0,
+    "P1": 17,
+    "P2": 5,
+    "P3": 1,
+    "statuses": {
+      "IDENTIFIED": 23
+    },
+    "mitigated": 0,
+    "retired": 0,
+    "p1_cards": 17,
+    "p1_admitted": 0,
+    "p1_executed": 0
+  },
+  "lifecycle": {
+    "stage_a": "pending",
+    "b1": "blocked",
+    "b2": "blocked",
+    "stage_c": "not-executed",
+    "stage_d": "not-executed",
+    "stage_e": "not-executed",
+    "abm": "fail-no-go",
+    "construction": "unauthorized",
+    "memetics_canary": "not-authorized",
+    "release": "unauthorized"
+  },
+  "signatures": [],
+  "independent_custody": false,
+  "qualifying_evidence_admitted": false,
+  "excluded": [
+    {
+      "path": ".aiwg/sessions.json",
+      "reason": "mutable AIWG session registry"
+    },
+    {
+      "path": ".aiwg/working/**",
+      "reason": "no new working entry may enter R25"
+    },
+    {
+      "path": "scripts/evidence/generate-interface-inventory.mjs",
+      "reason": "protected product-evidence tooling unchanged and retained under R24"
+    },
+    {
+      "path": "scripts/evidence/generate-interface-inventory.test.mjs",
+      "reason": "protected product-evidence tooling unchanged and retained under R24"
+    }
+  ],
+  "delta_entries": [
+    {
+      "path": ".aiwg/architecture/architecture-evolution-iteration-5.md",
+      "sha256": "008f1e515eed91cc3a20beaadfb76113b2b8029c658acf790bf2e1268c97d617",
+      "role": "architecture_decision_input"
+    },
+    {
+      "path": ".aiwg/planning/iteration-plan-005.md",
+      "sha256": "bafb41e5b84304c5a5d470c39aac5d98f340ca753339c224b180f5bf79f14dfb",
+      "role": "iteration_plan"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-human-decision-packet.md",
+      "sha256": "affcf96717cde4cb63ef764b449b9bd3c066a92e9a46c210e350c79b537b35d9",
+      "role": "superseded_historical_input_refreshed"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-traceability-status-r11-2026-07-27.md",
+      "sha256": "157bf8a37a1291dcd81ed59e31816a2f556c524147d313408de258b69c5743eb",
+      "role": "superseded_historical_input_refreshed"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-aiwg-diagnostics-disposition-2026-07-29.md",
+      "sha256": "175fde4ffaaa3cc30754f4295c25b48779131c65b1120c7af52c718698e53b5f",
+      "role": "framework_diagnostics_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-codebase-memory-coverage-diagnosis-2026-07-29.md",
+      "sha256": "1e4a4df2a463fbe7a9a28dfc9d72972a6a093972ed92fa00a198496643f57e9f",
+      "role": "tooling_coverage_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-dec15-traceability-verification-2026-07-29.md",
+      "sha256": "25e34e6546143336fca79f872bacd7cc2b756a2f8b1a8f6b586b4d176cae1bc5",
+      "role": "independent_graph_coverage_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-elaboration-closure-packet-2026-07-29.md",
+      "sha256": "9c0dec8b6a72e1baf69342238f4018fb3061a63c076ee2183d51dce167f80fbd",
+      "role": "elaboration_closure_packet"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-evidence-refreeze-r25-2026-07-29.md",
+      "sha256": "a04da36245ede2f544708e4da3d14ca31093cbc83f444c03aa6a96dd5fbf515d",
+      "role": "successor_refreeze_contract"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-traceability-and-requirements-reconciliation-2026-07-29.md",
+      "sha256": "f91485e5ee9e665464a7c150a77690ec1984f2e1edcb0f152784f94b22aaaa0c",
+      "role": "traceability_reconciliation"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-worktree-ownership-and-live-baseline-2026-07-29.md",
+      "sha256": "2e07b9101219bb4e2ada5dddb7bbdd820b2cf7982b4d66b13cdbd0c4b93e8380",
+      "role": "runtime_and_ownership_evidence"
+    },
+    {
+      "path": ".aiwg/requirements/contracts/ER-CBM-001-codebase-memory-interoperability.md",
+      "sha256": "59a6b75eea3b371b03811bfcf3a9b6ada77be1d24c9668d9623156103263d5d0",
+      "role": "external_requirements_contract"
+    },
+    {
+      "path": ".aiwg/requirements/iteration-5-open-authority-matrix.md",
+      "sha256": "b83a01a15504b5274205d76b8e58e74a549bbd3eb4e6d9ea38e846e954b72ffd",
+      "role": "requirements_authority_input"
+    },
+    {
+      "path": ".aiwg/requirements/iteration-5-requirements-decision-packet-2026-07-29.md",
+      "sha256": "fa58130fe8958ccd94755b3f918f99acee2b16492e03c51d934e0e92eb201f9e",
+      "role": "requirements_decision_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-001-traceability-worksheet-iteration-5.md",
+      "sha256": "5939442f9004fe769d95b7ec910a5532d11e632dd0421a280cfce57de3092e98",
+      "role": "realization_traceability_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-002-traceability-worksheet-iteration-5.md",
+      "sha256": "afd924aae794b71ef5e7cc35f34e6a86f6466387c13e98a246ba0f8a2db5ead3",
+      "role": "realization_traceability_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-003-traceability-worksheet-iteration-5.md",
+      "sha256": "b6ee9e6f1b7477d1a5e33a4062477ecce0a01196a7008e1ca41e5906cb19c172",
+      "role": "realization_traceability_input"
+    },
+    {
+      "path": ".aiwg/requirements/traceability-matrix.md",
+      "sha256": "5fa67a657966fce9bb53cfd230ec40915b66cf371c896045cf7e0bfb6ffc7db0",
+      "role": "requirements_input_refreshed"
+    },
+    {
+      "path": ".aiwg/risks/iteration-5-bounded-poc-candidates.md",
+      "sha256": "2e5a5850216bbcbbb5a934a11898825e9dcfdd07e1c7ef2c195ef8cd5483fdf4",
+      "role": "risk_decision_input"
+    },
+    {
+      "path": ".aiwg/risks/poc-plan-2026-07-25.md",
+      "sha256": "e45fe3593a96ca7ae22b4a7e4fac8c9e4d2073346e76f7f0e254f66315f171d4",
+      "role": "risk_input_refreshed"
+    },
+    {
+      "path": ".aiwg/testing/iteration-5-dpa-finding-dispositions.md",
+      "sha256": "aeab5adf67fabfd1ba97d09501face617e554dc1fbbbe996a3bd4e02904c0ae6",
+      "role": "test_finding_disposition_input"
+    },
+    {
+      "path": ".aiwg/testing/iteration-5-retrieval-and-load-profile-specification.md",
+      "sha256": "958d22c04e15cfa3ba8941552dd9496657ef060c8a335f6435490d26951b62b7",
+      "role": "test_method_input"
+    },
+    {
+      "path": ".aiwg/testing/iteration-5-stage-a-input-classification.md",
+      "sha256": "aee62417deb2bca8e6845b573aaa18a00ff86eb742be2257613a20c2ef6f517c",
+      "role": "stage_a_input_classification"
+    },
+    {
+      "path": ".aiwg/testing/stage-a-decision-packet-iteration-5.md",
+      "sha256": "710002ff13954329e44b60dff7b9f484ffa561ae1de828e5925d5e92068a84f3",
+      "role": "stage_a_decision_input"
+    }
+  ],
+  "delta_entry_count": 24,
+  "post_generation_review": "required-outside-manifest-to-avoid-self-reference",
+  "superseded_unsigned_candidate": {
+    "manifest_sha256": "7e64b407cb47a336daf1c3b64c2079d0588a5e6d1ecb5d33aa002a63efd03b65",
+    "deterministic_receipt_sha256": "d108aec2b0ea7571076a041bb5b44c2fc0d34817dfe4e6a5de4d3faf71d05a8c",
+    "review_disposition": "RETURN",
+    "reason": "Fresh runtime evidence contradicted the frozen unavailable-runtime baseline.",
+    "authority_effect": "none"
+  }
+}

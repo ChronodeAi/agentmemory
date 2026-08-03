@@ -3,18 +3,18 @@
   "control_id": "G-ICM-01",
   "project_id": "github.com/chronodeai/agentmemory",
   "source_identity": {
-    "commit_sha": "3b6794e409dcc4bbd644904ffbb6edc93761adee",
-    "commit_tree_sha": "869592ae5f4226d01e75e1a71492099ea581ee32",
-    "inventory_input_sha256": "6b3b918167885d87ea23f40c9f66da304a5910aa3801957aca2c8d1910916fb8"
+    "commit_sha": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+    "commit_tree_sha": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+    "inventory_input_sha256": "331d5bd77186c7e794277651e860988a8031bbd88eb743b9cc337128d402df6a"
   },
   "public_route_allowlist": [
     "GET /agentmemory/livez"
   ],
   "counts": {
-    "registered_api_functions": 136,
-    "http_routes": 135,
+    "registered_api_functions": 137,
+    "http_routes": 136,
     "public_routes": 1,
-    "protected_routes": 134,
+    "protected_routes": 135,
     "missing_auth_routes": 0,
     "mcp_tools": 59,
     "mcp_transport_routes": 6,
@@ -38,7 +38,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3327"
+      "source": "src/triggers/api.ts:3375"
     },
     {
       "surface_id": "REST:POST:/agentmemory/actions",
@@ -48,7 +48,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3283"
+      "source": "src/triggers/api.ts:3331"
     },
     {
       "surface_id": "REST:POST:/agentmemory/actions/edges",
@@ -58,7 +58,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3368"
+      "source": "src/triggers/api.ts:3416"
     },
     {
       "surface_id": "REST:GET:/agentmemory/actions/get",
@@ -68,7 +68,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3345"
+      "source": "src/triggers/api.ts:3393"
     },
     {
       "surface_id": "REST:POST:/agentmemory/actions/update",
@@ -78,7 +78,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3309"
+      "source": "src/triggers/api.ts:3357"
     },
     {
       "surface_id": "REST:GET:/agentmemory/audit",
@@ -88,7 +88,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2747"
+      "source": "src/triggers/api.ts:2795"
     },
     {
       "surface_id": "REST:POST:/agentmemory/auto-forget",
@@ -98,7 +98,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2207"
+      "source": "src/triggers/api.ts:2255"
     },
     {
       "surface_id": "REST:GET:/agentmemory/branch/detect",
@@ -108,7 +108,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3884"
+      "source": "src/triggers/api.ts:3932"
     },
     {
       "surface_id": "REST:GET:/agentmemory/branch/sessions",
@@ -118,7 +118,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3914"
+      "source": "src/triggers/api.ts:3962"
     },
     {
       "surface_id": "REST:GET:/agentmemory/branch/worktrees",
@@ -128,7 +128,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3899"
+      "source": "src/triggers/api.ts:3947"
     },
     {
       "surface_id": "REST:POST:/agentmemory/cascade-update",
@@ -138,7 +138,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4209"
+      "source": "src/triggers/api.ts:4257"
     },
     {
       "surface_id": "REST:GET:/agentmemory/checkpoints",
@@ -148,7 +148,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3651"
+      "source": "src/triggers/api.ts:3699"
     },
     {
       "surface_id": "REST:POST:/agentmemory/checkpoints",
@@ -158,7 +158,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3610"
+      "source": "src/triggers/api.ts:3658"
     },
     {
       "surface_id": "REST:POST:/agentmemory/checkpoints/resolve",
@@ -168,7 +168,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3634"
+      "source": "src/triggers/api.ts:3682"
     },
     {
       "surface_id": "REST:GET:/agentmemory/claude-bridge/read",
@@ -178,7 +178,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2228"
+      "source": "src/triggers/api.ts:2276"
     },
     {
       "surface_id": "REST:POST:/agentmemory/claude-bridge/sync",
@@ -188,7 +188,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2249"
+      "source": "src/triggers/api.ts:2297"
     },
     {
       "surface_id": "REST:POST:/agentmemory/commit-link",
@@ -244,7 +244,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1811"
+      "source": "src/triggers/api.ts:1859"
     },
     {
       "surface_id": "REST:POST:/agentmemory/consolidate-pipeline",
@@ -254,7 +254,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2662"
+      "source": "src/triggers/api.ts:2710"
     },
     {
       "surface_id": "REST:POST:/agentmemory/context",
@@ -300,7 +300,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4109"
+      "source": "src/triggers/api.ts:4157"
     },
     {
       "surface_id": "REST:POST:/agentmemory/crystals/auto",
@@ -310,7 +310,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4121"
+      "source": "src/triggers/api.ts:4169"
     },
     {
       "surface_id": "REST:POST:/agentmemory/crystals/create",
@@ -320,7 +320,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4067"
+      "source": "src/triggers/api.ts:4115"
     },
     {
       "surface_id": "REST:POST:/agentmemory/diagnostics",
@@ -330,7 +330,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4130"
+      "source": "src/triggers/api.ts:4178"
     },
     {
       "surface_id": "REST:GET:/agentmemory/diagnostics/followup",
@@ -342,7 +342,7 @@
       ],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2022"
+      "source": "src/triggers/api.ts:2070"
     },
     {
       "surface_id": "REST:POST:/agentmemory/diagnostics/heal",
@@ -352,7 +352,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4139"
+      "source": "src/triggers/api.ts:4187"
     },
     {
       "surface_id": "REST:POST:/agentmemory/enrich",
@@ -362,7 +362,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1695"
+      "source": "src/triggers/api.ts:1743"
     },
     {
       "surface_id": "REST:POST:/agentmemory/evict",
@@ -372,7 +372,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1930"
+      "source": "src/triggers/api.ts:1978"
     },
     {
       "surface_id": "REST:POST:/agentmemory/evolve",
@@ -382,7 +382,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2191"
+      "source": "src/triggers/api.ts:2239"
     },
     {
       "surface_id": "REST:GET:/agentmemory/export",
@@ -392,7 +392,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2121"
+      "source": "src/triggers/api.ts:2169"
     },
     {
       "surface_id": "REST:GET:/agentmemory/facets",
@@ -402,7 +402,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4178"
+      "source": "src/triggers/api.ts:4226"
     },
     {
       "surface_id": "REST:POST:/agentmemory/facets",
@@ -412,7 +412,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4149"
+      "source": "src/triggers/api.ts:4197"
     },
     {
       "surface_id": "REST:POST:/agentmemory/facets/query",
@@ -422,7 +422,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4168"
+      "source": "src/triggers/api.ts:4216"
     },
     {
       "surface_id": "REST:POST:/agentmemory/facets/remove",
@@ -432,7 +432,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4159"
+      "source": "src/triggers/api.ts:4207"
     },
     {
       "surface_id": "REST:GET:/agentmemory/facets/stats",
@@ -442,7 +442,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4187"
+      "source": "src/triggers/api.ts:4235"
     },
     {
       "surface_id": "REST:POST:/agentmemory/file-context",
@@ -452,7 +452,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1630"
+      "source": "src/triggers/api.ts:1678"
     },
     {
       "surface_id": "REST:POST:/agentmemory/flow/compress",
@@ -462,7 +462,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3869"
+      "source": "src/triggers/api.ts:3917"
     },
     {
       "surface_id": "REST:POST:/agentmemory/forget",
@@ -472,7 +472,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1773"
+      "source": "src/triggers/api.ts:1821"
     },
     {
       "surface_id": "REST:GET:/agentmemory/frontier",
@@ -482,7 +482,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3387"
+      "source": "src/triggers/api.ts:3435"
     },
     {
       "surface_id": "REST:POST:/agentmemory/generate-rules",
@@ -492,7 +492,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1839"
+      "source": "src/triggers/api.ts:1887"
     },
     {
       "surface_id": "REST:POST:/agentmemory/governance/bulk-delete",
@@ -502,7 +502,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2794"
+      "source": "src/triggers/api.ts:2842"
     },
     {
       "surface_id": "REST:DELETE:/agentmemory/governance/memories",
@@ -512,7 +512,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2769"
+      "source": "src/triggers/api.ts:2817"
     },
     {
       "surface_id": "REST:POST:/agentmemory/graph/build",
@@ -522,7 +522,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2628"
+      "source": "src/triggers/api.ts:2676"
     },
     {
       "surface_id": "REST:POST:/agentmemory/graph/extract",
@@ -532,7 +532,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2504"
+      "source": "src/triggers/api.ts:2552"
     },
     {
       "surface_id": "REST:POST:/agentmemory/graph/query",
@@ -542,7 +542,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2305"
+      "source": "src/triggers/api.ts:2353"
     },
     {
       "surface_id": "REST:POST:/agentmemory/graph/reset",
@@ -552,7 +552,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2445"
+      "source": "src/triggers/api.ts:2493"
     },
     {
       "surface_id": "REST:POST:/agentmemory/graph/snapshot-rebuild",
@@ -562,7 +562,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2399"
+      "source": "src/triggers/api.ts:2447"
     },
     {
       "surface_id": "REST:GET:/agentmemory/graph/stats",
@@ -572,7 +572,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2346"
+      "source": "src/triggers/api.ts:2394"
     },
     {
       "surface_id": "REST:GET:/agentmemory/health",
@@ -592,7 +592,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2143"
+      "source": "src/triggers/api.ts:2191"
     },
     {
       "surface_id": "REST:POST:/agentmemory/index/rebuild",
@@ -614,7 +614,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4394"
+      "source": "src/triggers/api.ts:4442"
     },
     {
       "surface_id": "REST:POST:/agentmemory/insights/search",
@@ -624,7 +624,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4416"
+      "source": "src/triggers/api.ts:4464"
     },
     {
       "surface_id": "REST:POST:/agentmemory/leases/acquire",
@@ -634,7 +634,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3423"
+      "source": "src/triggers/api.ts:3471"
     },
     {
       "surface_id": "REST:POST:/agentmemory/leases/release",
@@ -644,7 +644,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3442"
+      "source": "src/triggers/api.ts:3490"
     },
     {
       "surface_id": "REST:POST:/agentmemory/leases/renew",
@@ -654,7 +654,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3461"
+      "source": "src/triggers/api.ts:3509"
     },
     {
       "surface_id": "REST:GET:/agentmemory/lessons",
@@ -664,7 +664,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4273"
+      "source": "src/triggers/api.ts:4321"
     },
     {
       "surface_id": "REST:POST:/agentmemory/lessons",
@@ -674,7 +674,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4238"
+      "source": "src/triggers/api.ts:4286"
     },
     {
       "surface_id": "REST:POST:/agentmemory/lessons/search",
@@ -684,7 +684,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4293"
+      "source": "src/triggers/api.ts:4341"
     },
     {
       "surface_id": "REST:POST:/agentmemory/lessons/strengthen",
@@ -694,7 +694,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4324"
+      "source": "src/triggers/api.ts:4372"
     },
     {
       "surface_id": "REST:GET:/agentmemory/livez",
@@ -714,7 +714,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2939"
+      "source": "src/triggers/api.ts:2987"
     },
     {
       "surface_id": "REST:GET:/agentmemory/memories/:id",
@@ -724,7 +724,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2960"
+      "source": "src/triggers/api.ts:3008"
     },
     {
       "surface_id": "REST:GET:/agentmemory/mesh/export",
@@ -734,7 +734,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3842"
+      "source": "src/triggers/api.ts:3890"
     },
     {
       "surface_id": "REST:GET:/agentmemory/mesh/peers",
@@ -744,7 +744,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3696"
+      "source": "src/triggers/api.ts:3744"
     },
     {
       "surface_id": "REST:POST:/agentmemory/mesh/peers",
@@ -754,7 +754,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3676"
+      "source": "src/triggers/api.ts:3724"
     },
     {
       "surface_id": "REST:POST:/agentmemory/mesh/receive",
@@ -764,7 +764,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3738"
+      "source": "src/triggers/api.ts:3786"
     },
     {
       "surface_id": "REST:POST:/agentmemory/mesh/sync",
@@ -774,7 +774,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3718"
+      "source": "src/triggers/api.ts:3766"
     },
     {
       "surface_id": "REST:POST:/agentmemory/migrate",
@@ -784,7 +784,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1914"
+      "source": "src/triggers/api.ts:1962"
     },
     {
       "surface_id": "REST:GET:/agentmemory/next",
@@ -794,7 +794,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3404"
+      "source": "src/triggers/api.ts:3452"
     },
     {
       "surface_id": "REST:GET:/agentmemory/observations",
@@ -804,7 +804,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1601"
+      "source": "src/triggers/api.ts:1649"
     },
     {
       "surface_id": "REST:POST:/agentmemory/observe",
@@ -826,7 +826,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4341"
+      "source": "src/triggers/api.ts:4389"
     },
     {
       "surface_id": "REST:POST:/agentmemory/patterns",
@@ -836,7 +836,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1825"
+      "source": "src/triggers/api.ts:1873"
     },
     {
       "surface_id": "REST:GET:/agentmemory/procedural",
@@ -846,7 +846,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2988"
+      "source": "src/triggers/api.ts:3036"
     },
     {
       "surface_id": "REST:GET:/agentmemory/profile",
@@ -856,7 +856,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2075"
+      "source": "src/triggers/api.ts:2123"
     },
     {
       "surface_id": "REST:GET:/agentmemory/project-health",
@@ -902,7 +902,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4360"
+      "source": "src/triggers/api.ts:4408"
     },
     {
       "surface_id": "REST:GET:/agentmemory/relations",
@@ -912,7 +912,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3002"
+      "source": "src/triggers/api.ts:3050"
     },
     {
       "surface_id": "REST:POST:/agentmemory/relations",
@@ -922,7 +922,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2165"
+      "source": "src/triggers/api.ts:2213"
     },
     {
       "surface_id": "REST:POST:/agentmemory/remember",
@@ -932,7 +932,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1747"
+      "source": "src/triggers/api.ts:1795"
     },
     {
       "surface_id": "REST:POST:/agentmemory/replay/import-jsonl",
@@ -972,7 +972,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3499"
+      "source": "src/triggers/api.ts:3547"
     },
     {
       "surface_id": "REST:POST:/agentmemory/routines",
@@ -982,7 +982,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3483"
+      "source": "src/triggers/api.ts:3531"
     },
     {
       "surface_id": "REST:POST:/agentmemory/routines/run",
@@ -992,7 +992,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3518"
+      "source": "src/triggers/api.ts:3566"
     },
     {
       "surface_id": "REST:GET:/agentmemory/routines/status",
@@ -1002,7 +1002,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3536"
+      "source": "src/triggers/api.ts:3584"
     },
     {
       "surface_id": "REST:POST:/agentmemory/search",
@@ -1024,7 +1024,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2974"
+      "source": "src/triggers/api.ts:3022"
     },
     {
       "surface_id": "REST:GET:/agentmemory/sentinels",
@@ -1034,7 +1034,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3995"
+      "source": "src/triggers/api.ts:4043"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sentinels",
@@ -1044,7 +1044,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3958"
+      "source": "src/triggers/api.ts:4006"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sentinels/cancel",
@@ -1054,7 +1054,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3986"
+      "source": "src/triggers/api.ts:4034"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sentinels/check",
@@ -1064,7 +1064,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3976"
+      "source": "src/triggers/api.ts:4024"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sentinels/trigger",
@@ -1074,7 +1074,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3968"
+      "source": "src/triggers/api.ts:4016"
     },
     {
       "surface_id": "REST:GET:/agentmemory/session/by-commit",
@@ -1125,6 +1125,16 @@
       "source": "src/triggers/api.ts:1223"
     },
     {
+      "surface_id": "REST:DELETE:/agentmemory/sessions",
+      "method": "DELETE",
+      "path": "/agentmemory/sessions",
+      "function_id": "api::sessions-delete",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:1606"
+    },
+    {
       "surface_id": "REST:GET:/agentmemory/sessions",
       "method": "GET",
       "path": "/agentmemory/sessions",
@@ -1142,7 +1152,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3585"
+      "source": "src/triggers/api.ts:3633"
     },
     {
       "surface_id": "REST:POST:/agentmemory/signals/send",
@@ -1152,7 +1162,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3561"
+      "source": "src/triggers/api.ts:3609"
     },
     {
       "surface_id": "REST:GET:/agentmemory/sketches",
@@ -1162,7 +1172,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4044"
+      "source": "src/triggers/api.ts:4092"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sketches",
@@ -1172,7 +1182,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4005"
+      "source": "src/triggers/api.ts:4053"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sketches/add",
@@ -1182,7 +1192,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4015"
+      "source": "src/triggers/api.ts:4063"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sketches/discard",
@@ -1192,7 +1202,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4035"
+      "source": "src/triggers/api.ts:4083"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sketches/gc",
@@ -1202,7 +1212,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4052"
+      "source": "src/triggers/api.ts:4100"
     },
     {
       "surface_id": "REST:POST:/agentmemory/sketches/promote",
@@ -1212,7 +1222,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4025"
+      "source": "src/triggers/api.ts:4073"
     },
     {
       "surface_id": "REST:DELETE:/agentmemory/slot",
@@ -1222,7 +1232,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3233"
+      "source": "src/triggers/api.ts:3281"
     },
     {
       "surface_id": "REST:GET:/agentmemory/slot",
@@ -1232,7 +1242,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3112"
+      "source": "src/triggers/api.ts:3160"
     },
     {
       "surface_id": "REST:POST:/agentmemory/slot",
@@ -1242,7 +1252,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3163"
+      "source": "src/triggers/api.ts:3211"
     },
     {
       "surface_id": "REST:POST:/agentmemory/slot/append",
@@ -1252,7 +1262,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3187"
+      "source": "src/triggers/api.ts:3235"
     },
     {
       "surface_id": "REST:POST:/agentmemory/slot/reflect",
@@ -1262,7 +1272,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3255"
+      "source": "src/triggers/api.ts:3303"
     },
     {
       "surface_id": "REST:POST:/agentmemory/slot/replace",
@@ -1272,7 +1282,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3213"
+      "source": "src/triggers/api.ts:3261"
     },
     {
       "surface_id": "REST:GET:/agentmemory/slots",
@@ -1282,7 +1292,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3092"
+      "source": "src/triggers/api.ts:3140"
     },
     {
       "surface_id": "REST:POST:/agentmemory/smart-search",
@@ -1292,7 +1302,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:1994"
+      "source": "src/triggers/api.ts:2042"
     },
     {
       "surface_id": "REST:POST:/agentmemory/snapshot/create",
@@ -1302,7 +1312,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2834"
+      "source": "src/triggers/api.ts:2882"
     },
     {
       "surface_id": "REST:POST:/agentmemory/snapshot/restore",
@@ -1312,7 +1322,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2855"
+      "source": "src/triggers/api.ts:2903"
     },
     {
       "surface_id": "REST:GET:/agentmemory/snapshots",
@@ -1322,7 +1332,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2815"
+      "source": "src/triggers/api.ts:2863"
     },
     {
       "surface_id": "REST:POST:/agentmemory/summarize",
@@ -1344,7 +1354,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2711"
+      "source": "src/triggers/api.ts:2759"
     },
     {
       "surface_id": "REST:GET:/agentmemory/team/profile",
@@ -1354,7 +1364,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2729"
+      "source": "src/triggers/api.ts:2777"
     },
     {
       "surface_id": "REST:POST:/agentmemory/team/share",
@@ -1364,7 +1374,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2691"
+      "source": "src/triggers/api.ts:2739"
     },
     {
       "surface_id": "REST:POST:/agentmemory/timeline",
@@ -1374,7 +1384,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:2050"
+      "source": "src/triggers/api.ts:2098"
     },
     {
       "surface_id": "REST:POST:/agentmemory/verify",
@@ -1384,7 +1394,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4197"
+      "source": "src/triggers/api.ts:4245"
     },
     {
       "surface_id": "REST:GET:/agentmemory/viewer",
@@ -1394,7 +1404,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3944"
+      "source": "src/triggers/api.ts:3992"
     },
     {
       "surface_id": "REST:POST:/agentmemory/vision-embed",
@@ -1404,7 +1414,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3077"
+      "source": "src/triggers/api.ts:3125"
     },
     {
       "surface_id": "REST:POST:/agentmemory/vision-search",
@@ -1414,7 +1424,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:3045"
+      "source": "src/triggers/api.ts:3093"
     }
   ],
   "mcp_transport": [
@@ -2193,28 +2203,28 @@
   ],
   "provider_attempt_sites": [
     {
-      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:139:summarize",
+      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:142:summarize",
       "purpose": "query",
       "kind": "invocation",
       "method": "summarize",
       "receiver": null,
-      "source": "src/cli/connect/index.ts:139"
+      "source": "src/cli/connect/index.ts:142"
     },
     {
-      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:156:summarize",
+      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:159:summarize",
       "purpose": "query",
       "kind": "invocation",
       "method": "summarize",
       "receiver": null,
-      "source": "src/cli/connect/index.ts:156"
+      "source": "src/cli/connect/index.ts:159"
     },
     {
-      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:169:summarize",
+      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:172:summarize",
       "purpose": "query",
       "kind": "invocation",
       "method": "summarize",
       "receiver": null,
-      "source": "src/cli/connect/index.ts:169"
+      "source": "src/cli/connect/index.ts:172"
     },
     {
       "surface_id": "PROVIDER:ATTEMPT:src/eval/self-correct.ts:14:compress",
@@ -2609,7 +2619,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/actions",
       "type": "rest",
-      "source": "src/triggers/api.ts:3327",
+      "source": "src/triggers/api.ts:3375",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2634,7 +2644,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/actions",
       "type": "rest",
-      "source": "src/triggers/api.ts:3283",
+      "source": "src/triggers/api.ts:3331",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2659,7 +2669,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/actions/edges",
       "type": "rest",
-      "source": "src/triggers/api.ts:3368",
+      "source": "src/triggers/api.ts:3416",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2684,7 +2694,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/actions/get",
       "type": "rest",
-      "source": "src/triggers/api.ts:3345",
+      "source": "src/triggers/api.ts:3393",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2709,7 +2719,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/actions/update",
       "type": "rest",
-      "source": "src/triggers/api.ts:3309",
+      "source": "src/triggers/api.ts:3357",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2734,7 +2744,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/audit",
       "type": "rest",
-      "source": "src/triggers/api.ts:2747",
+      "source": "src/triggers/api.ts:2795",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2759,7 +2769,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/auto-forget",
       "type": "rest",
-      "source": "src/triggers/api.ts:2207",
+      "source": "src/triggers/api.ts:2255",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2784,7 +2794,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/branch/detect",
       "type": "rest",
-      "source": "src/triggers/api.ts:3884",
+      "source": "src/triggers/api.ts:3932",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2809,7 +2819,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/branch/sessions",
       "type": "rest",
-      "source": "src/triggers/api.ts:3914",
+      "source": "src/triggers/api.ts:3962",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2834,7 +2844,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/branch/worktrees",
       "type": "rest",
-      "source": "src/triggers/api.ts:3899",
+      "source": "src/triggers/api.ts:3947",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2859,7 +2869,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/cascade-update",
       "type": "rest",
-      "source": "src/triggers/api.ts:4209",
+      "source": "src/triggers/api.ts:4257",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2884,7 +2894,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/checkpoints",
       "type": "rest",
-      "source": "src/triggers/api.ts:3651",
+      "source": "src/triggers/api.ts:3699",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2909,7 +2919,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/checkpoints",
       "type": "rest",
-      "source": "src/triggers/api.ts:3610",
+      "source": "src/triggers/api.ts:3658",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2934,7 +2944,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/checkpoints/resolve",
       "type": "rest",
-      "source": "src/triggers/api.ts:3634",
+      "source": "src/triggers/api.ts:3682",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2959,7 +2969,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/claude-bridge/read",
       "type": "rest",
-      "source": "src/triggers/api.ts:2228",
+      "source": "src/triggers/api.ts:2276",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -2984,7 +2994,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/claude-bridge/sync",
       "type": "rest",
-      "source": "src/triggers/api.ts:2249",
+      "source": "src/triggers/api.ts:2297",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3099,7 +3109,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/consolidate",
       "type": "rest",
-      "source": "src/triggers/api.ts:1811",
+      "source": "src/triggers/api.ts:1859",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3124,7 +3134,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/consolidate-pipeline",
       "type": "rest",
-      "source": "src/triggers/api.ts:2662",
+      "source": "src/triggers/api.ts:2710",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3224,7 +3234,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/crystals",
       "type": "rest",
-      "source": "src/triggers/api.ts:4109",
+      "source": "src/triggers/api.ts:4157",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3249,7 +3259,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/crystals/auto",
       "type": "rest",
-      "source": "src/triggers/api.ts:4121",
+      "source": "src/triggers/api.ts:4169",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3274,7 +3284,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/crystals/create",
       "type": "rest",
-      "source": "src/triggers/api.ts:4067",
+      "source": "src/triggers/api.ts:4115",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3299,7 +3309,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/diagnostics",
       "type": "rest",
-      "source": "src/triggers/api.ts:4130",
+      "source": "src/triggers/api.ts:4178",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3324,7 +3334,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/diagnostics/followup",
       "type": "rest",
-      "source": "src/triggers/api.ts:2022",
+      "source": "src/triggers/api.ts:2070",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3349,7 +3359,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/diagnostics/heal",
       "type": "rest",
-      "source": "src/triggers/api.ts:4139",
+      "source": "src/triggers/api.ts:4187",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3374,7 +3384,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/enrich",
       "type": "rest",
-      "source": "src/triggers/api.ts:1695",
+      "source": "src/triggers/api.ts:1743",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3399,7 +3409,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/evict",
       "type": "rest",
-      "source": "src/triggers/api.ts:1930",
+      "source": "src/triggers/api.ts:1978",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3424,7 +3434,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/evolve",
       "type": "rest",
-      "source": "src/triggers/api.ts:2191",
+      "source": "src/triggers/api.ts:2239",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3449,7 +3459,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/export",
       "type": "rest",
-      "source": "src/triggers/api.ts:2121",
+      "source": "src/triggers/api.ts:2169",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3474,7 +3484,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/facets",
       "type": "rest",
-      "source": "src/triggers/api.ts:4178",
+      "source": "src/triggers/api.ts:4226",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3499,7 +3509,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/facets",
       "type": "rest",
-      "source": "src/triggers/api.ts:4149",
+      "source": "src/triggers/api.ts:4197",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3524,7 +3534,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/facets/query",
       "type": "rest",
-      "source": "src/triggers/api.ts:4168",
+      "source": "src/triggers/api.ts:4216",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3549,7 +3559,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/facets/remove",
       "type": "rest",
-      "source": "src/triggers/api.ts:4159",
+      "source": "src/triggers/api.ts:4207",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3574,7 +3584,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/facets/stats",
       "type": "rest",
-      "source": "src/triggers/api.ts:4187",
+      "source": "src/triggers/api.ts:4235",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3599,7 +3609,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/file-context",
       "type": "rest",
-      "source": "src/triggers/api.ts:1630",
+      "source": "src/triggers/api.ts:1678",
       "auth_control": "required",
       "control_ids": [
         "ICM-05",
@@ -3624,7 +3634,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/flow/compress",
       "type": "rest",
-      "source": "src/triggers/api.ts:3869",
+      "source": "src/triggers/api.ts:3917",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3649,7 +3659,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/forget",
       "type": "rest",
-      "source": "src/triggers/api.ts:1773",
+      "source": "src/triggers/api.ts:1821",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3674,7 +3684,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/frontier",
       "type": "rest",
-      "source": "src/triggers/api.ts:3387",
+      "source": "src/triggers/api.ts:3435",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3699,7 +3709,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/generate-rules",
       "type": "rest",
-      "source": "src/triggers/api.ts:1839",
+      "source": "src/triggers/api.ts:1887",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3724,7 +3734,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/governance/bulk-delete",
       "type": "rest",
-      "source": "src/triggers/api.ts:2794",
+      "source": "src/triggers/api.ts:2842",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3749,7 +3759,7 @@
     {
       "surface_id": "REST:DELETE:/agentmemory/governance/memories",
       "type": "rest",
-      "source": "src/triggers/api.ts:2769",
+      "source": "src/triggers/api.ts:2817",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3774,7 +3784,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/graph/build",
       "type": "rest",
-      "source": "src/triggers/api.ts:2628",
+      "source": "src/triggers/api.ts:2676",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3799,7 +3809,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/graph/extract",
       "type": "rest",
-      "source": "src/triggers/api.ts:2504",
+      "source": "src/triggers/api.ts:2552",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3824,7 +3834,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/graph/query",
       "type": "rest",
-      "source": "src/triggers/api.ts:2305",
+      "source": "src/triggers/api.ts:2353",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3849,7 +3859,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/graph/reset",
       "type": "rest",
-      "source": "src/triggers/api.ts:2445",
+      "source": "src/triggers/api.ts:2493",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3874,7 +3884,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/graph/snapshot-rebuild",
       "type": "rest",
-      "source": "src/triggers/api.ts:2399",
+      "source": "src/triggers/api.ts:2447",
       "auth_control": "required",
       "control_ids": [
         "ICM-13"
@@ -3895,7 +3905,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/graph/stats",
       "type": "rest",
-      "source": "src/triggers/api.ts:2346",
+      "source": "src/triggers/api.ts:2394",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3944,7 +3954,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/import",
       "type": "rest",
-      "source": "src/triggers/api.ts:2143",
+      "source": "src/triggers/api.ts:2191",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -3990,7 +4000,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/insights",
       "type": "rest",
-      "source": "src/triggers/api.ts:4394",
+      "source": "src/triggers/api.ts:4442",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4010,7 +4020,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/insights/search",
       "type": "rest",
-      "source": "src/triggers/api.ts:4416",
+      "source": "src/triggers/api.ts:4464",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4030,7 +4040,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/leases/acquire",
       "type": "rest",
-      "source": "src/triggers/api.ts:3423",
+      "source": "src/triggers/api.ts:3471",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4055,7 +4065,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/leases/release",
       "type": "rest",
-      "source": "src/triggers/api.ts:3442",
+      "source": "src/triggers/api.ts:3490",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4080,7 +4090,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/leases/renew",
       "type": "rest",
-      "source": "src/triggers/api.ts:3461",
+      "source": "src/triggers/api.ts:3509",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4105,7 +4115,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/lessons",
       "type": "rest",
-      "source": "src/triggers/api.ts:4273",
+      "source": "src/triggers/api.ts:4321",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4125,7 +4135,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/lessons",
       "type": "rest",
-      "source": "src/triggers/api.ts:4238",
+      "source": "src/triggers/api.ts:4286",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4145,7 +4155,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/lessons/search",
       "type": "rest",
-      "source": "src/triggers/api.ts:4293",
+      "source": "src/triggers/api.ts:4341",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4165,7 +4175,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/lessons/strengthen",
       "type": "rest",
-      "source": "src/triggers/api.ts:4324",
+      "source": "src/triggers/api.ts:4372",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4210,7 +4220,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/memories",
       "type": "rest",
-      "source": "src/triggers/api.ts:2939",
+      "source": "src/triggers/api.ts:2987",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4235,7 +4245,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/memories/:id",
       "type": "rest",
-      "source": "src/triggers/api.ts:2960",
+      "source": "src/triggers/api.ts:3008",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4260,7 +4270,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/mesh/export",
       "type": "rest",
-      "source": "src/triggers/api.ts:3842",
+      "source": "src/triggers/api.ts:3890",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4285,7 +4295,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/mesh/peers",
       "type": "rest",
-      "source": "src/triggers/api.ts:3696",
+      "source": "src/triggers/api.ts:3744",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4310,7 +4320,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/mesh/peers",
       "type": "rest",
-      "source": "src/triggers/api.ts:3676",
+      "source": "src/triggers/api.ts:3724",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4335,7 +4345,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/mesh/receive",
       "type": "rest",
-      "source": "src/triggers/api.ts:3738",
+      "source": "src/triggers/api.ts:3786",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4360,7 +4370,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/mesh/sync",
       "type": "rest",
-      "source": "src/triggers/api.ts:3718",
+      "source": "src/triggers/api.ts:3766",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4385,7 +4395,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/migrate",
       "type": "rest",
-      "source": "src/triggers/api.ts:1914",
+      "source": "src/triggers/api.ts:1962",
       "auth_control": "required",
       "control_ids": [
         "ICM-13"
@@ -4406,7 +4416,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/next",
       "type": "rest",
-      "source": "src/triggers/api.ts:3404",
+      "source": "src/triggers/api.ts:3452",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4431,7 +4441,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/observations",
       "type": "rest",
-      "source": "src/triggers/api.ts:1601",
+      "source": "src/triggers/api.ts:1649",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4481,7 +4491,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/obsidian/export",
       "type": "rest",
-      "source": "src/triggers/api.ts:4341",
+      "source": "src/triggers/api.ts:4389",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4506,7 +4516,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/patterns",
       "type": "rest",
-      "source": "src/triggers/api.ts:1825",
+      "source": "src/triggers/api.ts:1873",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4531,7 +4541,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/procedural",
       "type": "rest",
-      "source": "src/triggers/api.ts:2988",
+      "source": "src/triggers/api.ts:3036",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4556,7 +4566,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/profile",
       "type": "rest",
-      "source": "src/triggers/api.ts:2075",
+      "source": "src/triggers/api.ts:2123",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4645,7 +4655,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/reflect",
       "type": "rest",
-      "source": "src/triggers/api.ts:4360",
+      "source": "src/triggers/api.ts:4408",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4670,7 +4680,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/relations",
       "type": "rest",
-      "source": "src/triggers/api.ts:3002",
+      "source": "src/triggers/api.ts:3050",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4695,7 +4705,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/relations",
       "type": "rest",
-      "source": "src/triggers/api.ts:2165",
+      "source": "src/triggers/api.ts:2213",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4720,7 +4730,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/remember",
       "type": "rest",
-      "source": "src/triggers/api.ts:1747",
+      "source": "src/triggers/api.ts:1795",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4815,7 +4825,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/routines",
       "type": "rest",
-      "source": "src/triggers/api.ts:3499",
+      "source": "src/triggers/api.ts:3547",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4840,7 +4850,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/routines",
       "type": "rest",
-      "source": "src/triggers/api.ts:3483",
+      "source": "src/triggers/api.ts:3531",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4865,7 +4875,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/routines/run",
       "type": "rest",
-      "source": "src/triggers/api.ts:3518",
+      "source": "src/triggers/api.ts:3566",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4890,7 +4900,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/routines/status",
       "type": "rest",
-      "source": "src/triggers/api.ts:3536",
+      "source": "src/triggers/api.ts:3584",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4940,7 +4950,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/semantic",
       "type": "rest",
-      "source": "src/triggers/api.ts:2974",
+      "source": "src/triggers/api.ts:3022",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4965,7 +4975,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/sentinels",
       "type": "rest",
-      "source": "src/triggers/api.ts:3995",
+      "source": "src/triggers/api.ts:4043",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4990,7 +5000,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sentinels",
       "type": "rest",
-      "source": "src/triggers/api.ts:3958",
+      "source": "src/triggers/api.ts:4006",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5015,7 +5025,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sentinels/cancel",
       "type": "rest",
-      "source": "src/triggers/api.ts:3986",
+      "source": "src/triggers/api.ts:4034",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5040,7 +5050,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sentinels/check",
       "type": "rest",
-      "source": "src/triggers/api.ts:3976",
+      "source": "src/triggers/api.ts:4024",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5065,7 +5075,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sentinels/trigger",
       "type": "rest",
-      "source": "src/triggers/api.ts:3968",
+      "source": "src/triggers/api.ts:4016",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5178,6 +5188,31 @@
       ]
     },
     {
+      "surface_id": "REST:DELETE:/agentmemory/sessions",
+      "type": "rest",
+      "source": "src/triggers/api.ts:1606",
+      "auth_control": "required",
+      "control_ids": [
+        "ICM-04",
+        "ICM-14"
+      ],
+      "requirements": [
+        "FR-06",
+        "FR-17",
+        "FR-18"
+      ],
+      "risks": [
+        "R-06",
+        "R-07",
+        "R-11"
+      ],
+      "tests": [
+        "test/observe-implicit-session.test.ts",
+        "test/codex-connect-hooks.test.ts",
+        "test/integration.test.ts"
+      ]
+    },
+    {
       "surface_id": "REST:GET:/agentmemory/sessions",
       "type": "rest",
       "source": "src/triggers/api.ts:1558",
@@ -5205,7 +5240,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/signals",
       "type": "rest",
-      "source": "src/triggers/api.ts:3585",
+      "source": "src/triggers/api.ts:3633",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5230,7 +5265,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/signals/send",
       "type": "rest",
-      "source": "src/triggers/api.ts:3561",
+      "source": "src/triggers/api.ts:3609",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5255,7 +5290,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/sketches",
       "type": "rest",
-      "source": "src/triggers/api.ts:4044",
+      "source": "src/triggers/api.ts:4092",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5280,7 +5315,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sketches",
       "type": "rest",
-      "source": "src/triggers/api.ts:4005",
+      "source": "src/triggers/api.ts:4053",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5305,7 +5340,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sketches/add",
       "type": "rest",
-      "source": "src/triggers/api.ts:4015",
+      "source": "src/triggers/api.ts:4063",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5330,7 +5365,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sketches/discard",
       "type": "rest",
-      "source": "src/triggers/api.ts:4035",
+      "source": "src/triggers/api.ts:4083",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5355,7 +5390,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sketches/gc",
       "type": "rest",
-      "source": "src/triggers/api.ts:4052",
+      "source": "src/triggers/api.ts:4100",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5380,7 +5415,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/sketches/promote",
       "type": "rest",
-      "source": "src/triggers/api.ts:4025",
+      "source": "src/triggers/api.ts:4073",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5405,7 +5440,7 @@
     {
       "surface_id": "REST:DELETE:/agentmemory/slot",
       "type": "rest",
-      "source": "src/triggers/api.ts:3233",
+      "source": "src/triggers/api.ts:3281",
       "auth_control": "required",
       "control_ids": [
         "ICM-11",
@@ -5429,7 +5464,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/slot",
       "type": "rest",
-      "source": "src/triggers/api.ts:3112",
+      "source": "src/triggers/api.ts:3160",
       "auth_control": "required",
       "control_ids": [
         "ICM-11",
@@ -5453,7 +5488,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/slot",
       "type": "rest",
-      "source": "src/triggers/api.ts:3163",
+      "source": "src/triggers/api.ts:3211",
       "auth_control": "required",
       "control_ids": [
         "ICM-11",
@@ -5477,7 +5512,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/slot/append",
       "type": "rest",
-      "source": "src/triggers/api.ts:3187",
+      "source": "src/triggers/api.ts:3235",
       "auth_control": "required",
       "control_ids": [
         "ICM-11",
@@ -5501,7 +5536,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/slot/reflect",
       "type": "rest",
-      "source": "src/triggers/api.ts:3255",
+      "source": "src/triggers/api.ts:3303",
       "auth_control": "required",
       "control_ids": [
         "ICM-11",
@@ -5525,7 +5560,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/slot/replace",
       "type": "rest",
-      "source": "src/triggers/api.ts:3213",
+      "source": "src/triggers/api.ts:3261",
       "auth_control": "required",
       "control_ids": [
         "ICM-11",
@@ -5549,7 +5584,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/slots",
       "type": "rest",
-      "source": "src/triggers/api.ts:3092",
+      "source": "src/triggers/api.ts:3140",
       "auth_control": "required",
       "control_ids": [
         "ICM-11",
@@ -5573,7 +5608,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/smart-search",
       "type": "rest",
-      "source": "src/triggers/api.ts:1994",
+      "source": "src/triggers/api.ts:2042",
       "auth_control": "required",
       "control_ids": [
         "ICM-05",
@@ -5598,7 +5633,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/snapshot/create",
       "type": "rest",
-      "source": "src/triggers/api.ts:2834",
+      "source": "src/triggers/api.ts:2882",
       "auth_control": "required",
       "control_ids": [
         "ICM-13"
@@ -5619,7 +5654,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/snapshot/restore",
       "type": "rest",
-      "source": "src/triggers/api.ts:2855",
+      "source": "src/triggers/api.ts:2903",
       "auth_control": "required",
       "control_ids": [
         "ICM-13"
@@ -5640,7 +5675,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/snapshots",
       "type": "rest",
-      "source": "src/triggers/api.ts:2815",
+      "source": "src/triggers/api.ts:2863",
       "auth_control": "required",
       "control_ids": [
         "ICM-13"
@@ -5686,7 +5721,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/team/feed",
       "type": "rest",
-      "source": "src/triggers/api.ts:2711",
+      "source": "src/triggers/api.ts:2759",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5711,7 +5746,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/team/profile",
       "type": "rest",
-      "source": "src/triggers/api.ts:2729",
+      "source": "src/triggers/api.ts:2777",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5736,7 +5771,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/team/share",
       "type": "rest",
-      "source": "src/triggers/api.ts:2691",
+      "source": "src/triggers/api.ts:2739",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5761,7 +5796,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/timeline",
       "type": "rest",
-      "source": "src/triggers/api.ts:2050",
+      "source": "src/triggers/api.ts:2098",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5786,7 +5821,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/verify",
       "type": "rest",
-      "source": "src/triggers/api.ts:4197",
+      "source": "src/triggers/api.ts:4245",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5811,7 +5846,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/viewer",
       "type": "rest",
-      "source": "src/triggers/api.ts:3944",
+      "source": "src/triggers/api.ts:3992",
       "auth_control": "required",
       "control_ids": [
         "ICM-11",
@@ -5835,7 +5870,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/vision-embed",
       "type": "rest",
-      "source": "src/triggers/api.ts:3077",
+      "source": "src/triggers/api.ts:3125",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -5860,7 +5895,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/vision-search",
       "type": "rest",
-      "source": "src/triggers/api.ts:3045",
+      "source": "src/triggers/api.ts:3093",
       "auth_control": "required",
       "control_ids": [
         "ICM-05",
@@ -10530,12 +10565,12 @@
       ]
     },
     {
-      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:139:summarize",
+      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:142:summarize",
       "purpose": "query",
       "kind": "invocation",
       "method": "summarize",
       "receiver": null,
-      "source": "src/cli/connect/index.ts:139",
+      "source": "src/cli/connect/index.ts:142",
       "type": "provider-attempt",
       "auth_control": "processing-policy",
       "control_ids": [
@@ -10556,12 +10591,12 @@
       ]
     },
     {
-      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:156:summarize",
+      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:159:summarize",
       "purpose": "query",
       "kind": "invocation",
       "method": "summarize",
       "receiver": null,
-      "source": "src/cli/connect/index.ts:156",
+      "source": "src/cli/connect/index.ts:159",
       "type": "provider-attempt",
       "auth_control": "processing-policy",
       "control_ids": [
@@ -10582,12 +10617,12 @@
       ]
     },
     {
-      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:169:summarize",
+      "surface_id": "PROVIDER:ATTEMPT:src/cli/connect/index.ts:172:summarize",
       "purpose": "query",
       "kind": "invocation",
       "method": "summarize",
       "receiver": null,
-      "source": "src/cli/connect/index.ts:169",
+      "source": "src/cli/connect/index.ts:172",
       "type": "provider-attempt",
       "auth_control": "processing-policy",
       "control_ids": [

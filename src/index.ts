@@ -412,8 +412,6 @@ async function main() {
     DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
   );
 
-  const healthMonitor = registerHealthMonitor(sdk, kv);
-
   const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
   // Wire the persistence hook so delete paths can flush BM25/vector
   // index mutations to disk. Without this, an in-memory remove can be
@@ -557,7 +555,7 @@ async function main() {
     `Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
   );
   bootLog(
-    `REST API: 135 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
+    `REST API: 136 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
   );
   bootLog(
     `MCP surface (opt-in via \`npx @agentmemory/mcp\`): ${getAllTools().length} tools · 5 resources · 3 prompts`,
@@ -577,6 +575,14 @@ async function main() {
       strictCapabilityMode,
     },
   );
+  // Collect the first health snapshot only after the worker, indexes, and
+  // viewer have finished startup. Collecting during function registration
+  // records an expected empty worker list as critical and leaves a healthy
+  // first run in the recovery window for up to 90 seconds.
+  const healthMonitor = registerHealthMonitor(sdk, kv, {
+    collectImmediately: false,
+  });
+  await healthMonitor.collectNow();
 
   const autoForgetIntervalMs = parseInt(process.env.AUTO_FORGET_INTERVAL_MS || "3600000", 10);
   const consolidationIntervalMs = parseInt(process.env.CONSOLIDATION_INTERVAL_MS || "7200000", 10);

@@ -1,0 +1,64 @@
+{
+  "schema_version": "agentmemory-p1-card-input-control-v1",
+  "status": "PREPARATION_ONLY_NOT_FROZEN_NOT_ADMITTED",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "design_source": {
+    "commit_sha": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+    "tree_sha": "8c479b95bb9753911df212089d7faf3d6f35a28d"
+  },
+  "qualification_source": null,
+  "disposable_poc_bundle": null,
+  "g_icm_01": {
+    "artifact_path": ".aiwg/reports/g-icm-01-interface-inventory.json",
+    "artifact_sha256": "6821edf7525d5e8f844e2c68922b882df8e531f550220244e9d45721bfba1f42",
+    "inventory_input_count": 194,
+    "inventory_input_sha256": "6b3b918167885d87ea23f40c9f66da304a5910aa3801957aca2c8d1910916fb8",
+    "source_commit_sha": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+    "source_tree_sha": "8c479b95bb9753911df212089d7faf3d6f35a28d"
+  },
+  "revision_21": {
+    "manifest_path": ".aiwg/reports/iteration-4-input-manifest.json",
+    "manifest_sha256": "cbdb7cde5f25167a79c13e21e06297750837339465576e72362e40ac1cd5c555",
+    "manifest_available": false,
+    "verification_path": ".aiwg/reports/iteration-4-manifest-verification-r21.json",
+    "verification_artifact_sha256": "7f59853ceaf5734cbd64f357fd4e7148af14b57765c3093d2f52f4c85c4401b4",
+    "verification_available": true,
+    "disposition": "historical_receipt_only_predecessor_manifest_unavailable_not_admitted",
+    "continuity_claimed": false,
+    "signed": false,
+    "independent_custody": false,
+    "qualifying_evidence": false
+  },
+  "superseded_candidate_profiles": [
+    "R13-DEV-MAC26.5.1-25F80-ARM64-N22.23.1-NPM10.9.8-V2",
+    "R13-DEV-MAC26.5.1-25F80-ARM64-N24.18.0-NPM11.16.0-V2",
+    "R13-CI-UBU24.04.4-20260720.247.2-X64-N22.23.1-NPM10.9.8-V2",
+    "R13-CI-UBU24.04.4-20260720.247.2-X64-N24.18.0-NPM11.16.0-V2"
+  ],
+  "candidate_profiles": [
+    "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1"
+  ],
+  "profile_specification_source": {
+    "artifact_path": ".aiwg/testing/local-macos-qualification-profile-candidate.md",
+    "artifact_sha256": "aee34c1a42c9130f622d4b6d448fcf685fe22e4796851998424845bd78805a38",
+    "decision_id": "DEC-12",
+    "authority_effect": "STAGE_A_SPECIFICATION_ONLY_EXECUTION_BLOCKED"
+  },
+  "profile_status": "DEC_12_ACCEPTED_FOR_STAGE_A_SPECIFICATION_ONLY_EXECUTION_BLOCKED",
+  "selected_profile": "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1",
+  "assertion_identity_manifest": null,
+  "authentication_identity_manifest": null,
+  "human_assignments": null,
+  "receipt_signer": null,
+  "independent_verifier": null,
+  "b1": {"authorized": false, "decision_id": null, "mechanics_bundle": null},
+  "b2": {"authorized": false, "decision_id": null, "admitted_input_root": null},
+  "execution_authorized": false,
+  "risk_status_before": "IDENTIFIED",
+  "risk_status_after": "IDENTIFIED",
+  "architecture_decision": "NOT_DECIDED",
+  "abm_decision": "NOT_DECIDED",
+  "construction_authorized": false,
+  "external_calls_authorized": false,
+  "card_and_input_hashes_must_be_stored_in_successor_manifest": true
+}

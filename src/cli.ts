@@ -43,10 +43,12 @@ import {
   diagnosticFixConfirmed,
   dryRunPlan,
   parseEnvFile,
+  summarizePassiveChecks,
   type Diagnostic,
   type DiagnosticFixResult,
   type DoctorContext,
   type DoctorEffects,
+  type PassiveDoctorCheck,
 } from "./cli/doctor-diagnostics.js";
 import {
   buildRemovePlan,
@@ -58,6 +60,7 @@ import {
 import { renderSplash } from "./cli/splash.js";
 import { isFirstRun, readPrefs, resetPrefs, writePrefs } from "./cli/preferences.js";
 import { runOnboarding } from "./cli/onboarding.js";
+import { ensureLocalAccessConfiguration } from "./cli/local-access.js";
 import { setBootVerbose } from "./logger.js";
 import { VERSION } from "./version.js";
 import { getAllTools, ESSENTIAL_TOOLS } from "./mcp/tools-registry.js";
@@ -71,6 +74,7 @@ import {
   resolveClientRequestScope,
 } from "./client-auth.js";
 import { isStrictCapabilityMode } from "./auth.js";
+import { runMigrationCli } from "./functions/migrate.js";
 
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
@@ -163,7 +167,10 @@ function wrapList(items: readonly string[], indent: number, width = 78): string 
   return lines.join(`\n${" ".repeat(indent)}`);
 }
 
-if (args.includes("--help") || args.includes("-h")) {
+if (
+  (args.includes("--help") || args.includes("-h")) &&
+  args[0] !== "migrate"
+) {
   console.log(`
 agentmemory — persistent memory for AI coding agents
 
@@ -195,6 +202,8 @@ Commands:
   import-jsonl [p]   Import Claude Code JSONL transcripts (default: ~/.claude/projects)
                      --max-files <N> | --max-files=<N>: override scan cap (default 200, max 1000;
                      out-of-range is rejected; for trees >1000 files, batch by subdirectory)
+  migrate            Migrate legacy SQLite data or normalize project scope.
+                     Run agentmemory migrate --help for bounded operations.
 
 Options:
   --help, -h         Show this help
@@ -224,6 +233,7 @@ Quick start:
   npx @agentmemory/agentmemory demo     # see semantic recall in 30 seconds
   npx @agentmemory/agentmemory doctor   # diagnose config + feature flags
   npx @agentmemory/agentmemory status   # health + memory count + flags
+  npx @agentmemory/agentmemory migrate --help
   npx @agentmemory/agentmemory upgrade  # upgrade agentmemory + iii runtime
   npx @agentmemory/agentmemory mcp      # standalone MCP server (no engine)
   npx @agentmemory/mcp                  # same as above (shim package)
@@ -1235,6 +1245,8 @@ async function main() {
 
   if (firstRun || IS_RESET) {
     await runOnboarding();
+  } else {
+    ensureLocalAccessConfiguration();
   }
 
   if (skipEngine) {
@@ -1553,11 +1565,16 @@ async function runStatus() {
   }
 }
 
-type DoctorCheck = { name: string; ok: boolean; hint?: string };
-
-function formatChecks(checks: DoctorCheck[]): string {
+function formatChecks(checks: PassiveDoctorCheck[]): string {
   return checks
-    .map((c) => `${c.ok ? pc.green("✓") : pc.red("✗")} ${c.name}${c.hint ? `\n   ${c.hint}` : ""}`)
+    .map((check) => {
+      const marker = check.ok
+        ? pc.green("✓")
+        : check.optional
+          ? pc.yellow("○")
+          : pc.red("✗");
+      return `${marker} ${check.name}${check.hint ? `\n   ${check.hint}` : ""}`;
+    })
     .join("\n");
 }
 
@@ -1793,10 +1810,10 @@ function buildDoctorEffects(): DoctorEffects {
   };
 }
 
-async function passiveServerChecks(): Promise<DoctorCheck[]> {
+async function passiveServerChecks(): Promise<PassiveDoctorCheck[]> {
   const base = getBaseUrl();
   const project = resolveProjectConfig(process.cwd()).project_id;
-  const checks: DoctorCheck[] = [];
+  const checks: PassiveDoctorCheck[] = [];
 
   const serverUp = await isEngineRunning();
   checks.push({
@@ -1837,11 +1854,13 @@ async function passiveServerChecks(): Promise<DoctorCheck[]> {
     {
       name: "LLM provider",
       ok: hasLlm,
+      optional: true,
       hint: hasLlm ? undefined : "set ANTHROPIC_API_KEY (or GEMINI/OPENROUTER/MINIMAX) in ~/.agentmemory/.env",
     },
     {
       name: "Embedding provider",
       ok: hasEmbed,
+      optional: true,
       hint: hasEmbed
         ? undefined
         : "Running BM25-only. Add OPENAI_API_KEY / VOYAGE_API_KEY / COHERE_API_KEY / OLLAMA_HOST",
@@ -1856,6 +1875,7 @@ async function passiveServerChecks(): Promise<DoctorCheck[]> {
     checks.push({
       name: f.label,
       ok: f.enabled,
+      optional: true,
       hint: f.enabled ? undefined : f.enableHow,
     });
   }
@@ -1884,11 +1904,18 @@ async function passiveServerChecks(): Promise<DoctorCheck[]> {
         return undefined;
     }
   })();
-  if (ccCheck) checks.push({ name: "Claude Code plugin hooks registered", ...ccCheck });
+  if (ccCheck) {
+    checks.push({
+      name: "Claude Code plugin hooks registered",
+      optional: true,
+      ...ccCheck,
+    });
+  }
 
   checks.push({
     name: "Knowledge graph populated",
     ok: graphHas,
+    optional: true,
     hint: graphHas
       ? undefined
       : "Graph is empty. Run a session with GRAPH_EXTRACTION_ENABLED=true.",
@@ -1943,13 +1970,20 @@ async function runDoctor() {
 
   // Passive server checks (informational).
   const passive = await passiveServerChecks();
-  const passivePassed = passive.filter((c) => c.ok).length;
+  const passiveSummary = summarizePassiveChecks(passive);
   const criticalPassiveFailures = passive.filter(
     (c) =>
       !c.ok &&
       (c.name === "Server reachable" || c.name === "Health status"),
   ).length;
-  p.note(formatChecks(passive), `server: ${passivePassed}/${passive.length} passing`);
+  const optionalSummary =
+    passiveSummary.optionalTotal > 0
+      ? ` · ${passiveSummary.optionalActive}/${passiveSummary.optionalTotal} optional active`
+      : "";
+  p.note(
+    formatChecks(passive),
+    `server: ${passiveSummary.requiredPassed}/${passiveSummary.requiredTotal} required passing${optionalSummary}`,
+  );
 
   // Doctor v2 interactive catalog.
   const ctx = buildDoctorContext();
@@ -2272,6 +2306,7 @@ async function runInit() {
   const dir = dirname(target);
   const { mkdir, copyFile } = await import("node:fs/promises");
   const { constants: fsConstants } = await import("node:fs");
+  let createdEnv = false;
   try {
     await mkdir(dir, { recursive: true });
     // COPYFILE_EXCL collapses the exists-check + copy into one syscall —
@@ -2281,24 +2316,28 @@ async function runInit() {
     // wrote. EEXIST out of copyFile is the only "already configured"
     // signal we trust.
     await copyFile(template, target, fsConstants.COPYFILE_EXCL);
+    createdEnv = true;
   } catch (err) {
     if ((err as NodeJS.ErrnoException)?.code === "EEXIST") {
       p.log.warn(`${target} already exists — leaving it untouched.`);
       p.log.info(
         `Compare against the latest template: diff ${target} ${template}`,
       );
-      p.outro("Nothing changed.");
-      return;
+    } else {
+      p.log.error(
+        `Failed to copy template: ${err instanceof Error ? err.message : String(err)}`,
+      );
+      process.exit(1);
     }
-    p.log.error(
-      `Failed to copy template: ${err instanceof Error ? err.message : String(err)}`,
-    );
-    process.exit(1);
   }
-  p.log.success(`Wrote ${target}`);
+  const access = ensureLocalAccessConfiguration(target);
+  if (createdEnv) p.log.success(`Wrote ${target}`);
+  if (access.createdFiles.length > 0) {
+    p.log.success("Created private local access files.");
+  }
   p.note(
     [
-      "All keys are commented out by default. Uncomment the ones you want.",
+      "Local API access is configured automatically; optional provider keys remain commented out.",
       "",
       "Common next steps:",
       "  1. Pick an LLM provider key (ANTHROPIC_API_KEY / OPENAI_API_KEY / GEMINI_API_KEY / etc.)",
@@ -2374,18 +2413,20 @@ async function runDemo() {
     process.exit(1);
   }
 
+  let demoPassed = false;
   try {
-    await runDemoBody(base);
+    demoPassed = await runDemoBody(base);
   } finally {
     await teardown();
   }
 
   if (serve) {
-    process.exit(0);
+    process.exit(demoPassed ? 0 : 1);
   }
+  if (!demoPassed) process.exitCode = 1;
 }
 
-async function runDemoBody(base: string) {
+async function runDemoBody(base: string): Promise<boolean> {
   const demoProject = "/tmp/agentmemory-demo";
   const sessions = buildDemoSessions();
 
@@ -2401,7 +2442,7 @@ async function runDemoBody(base: string) {
 
   const queries = [
     "jwt auth middleware",
-    "database performance optimization",
+    "N+1 Prisma query",
     "rate limiting",
   ];
 
@@ -2414,6 +2455,7 @@ async function runDemoBody(base: string) {
   }
 
   sQuery.stop("Search complete");
+  const missingResults = results.filter((result) => result.hits === 0);
 
   const lines = [
     `Project:       ${demoProject}`,
@@ -2425,15 +2467,23 @@ async function runDemoBody(base: string) {
       `    ${c.dim("→")} ${c.ok(`${r.hits} hit(s)`)}, top: ${r.topTitle.slice(0, 60)}`,
     ]),
     "",
-    c.accent(`Notice: searching "database performance optimization"`),
-    c.accent(`found the N+1 query fix — keyword matching can't do that.`),
+    missingResults.length === 0
+      ? c.accent("All demo searches returned saved coding context.")
+      : c.warn(
+          `${missingResults.length} demo search(es) returned no saved context.`,
+        ),
     "",
     `Viewer:        ${c.url(getViewerUrl())}`,
-    `Clean up with: ${c.dim(`curl -X DELETE "${base}/agentmemory/sessions?project=${demoProject}"`)}`,
+    `Clean up with: ${c.dim(`curl -X DELETE "${getViewerUrl()}/agentmemory/sessions?project=${demoProject}"`)}`,
   ];
 
   p.note(lines.join("\n"), "demo complete");
+  if (missingResults.length > 0) {
+    p.log.error("Demo retrieval verification failed. Check service health and retry.");
+    return false;
+  }
   p.log.success("agentmemory is working. Point your agent at it and get back to coding.");
+  return true;
 }
 
 function runCommand(
@@ -3156,6 +3206,10 @@ async function runRemove(): Promise<void> {
   );
 }
 
+async function runMigrate(): Promise<void> {
+  process.exitCode = await runMigrationCli(args.slice(1));
+}
+
 const commands: Record<string, () => Promise<void>> = {
   init: runInit,
   connect: runConnectCmd,
@@ -3166,6 +3220,7 @@ const commands: Record<string, () => Promise<void>> = {
   stop: runStop,
   remove: runRemove,
   mcp: runMcp,
+  migrate: runMigrate,
   "import-jsonl": runImportJsonl,
 };
 

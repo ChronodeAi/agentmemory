@@ -1,0 +1,50 @@
+{
+  "schema_version": "agentmemory-configuration-fixture-input-v1",
+  "configuration_id": "C3",
+  "catalog_id": "C3-RELAY-V1",
+  "status": "PREPARATION_ONLY_VALUE_HYPOTHESIS_NOT_ACCEPTED",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "candidate_source": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "strict_core_catalog": "COMMON-STRICT-CORE-V1",
+  "gateway_catalog": "C2-GATEWAY-V1",
+  "atomic_receipt_authority": "embedded_transactional_outbox",
+  "relay_role": "advisory_read_model_only",
+  "relay_enforcement_authority": false,
+  "prepared_state_model": [
+    "outbox_committed",
+    "relay_unseen",
+    "relay_claimed",
+    "relay_delivered",
+    "relay_indexed",
+    "relay_reconciled",
+    "relay_failed_terminal"
+  ],
+  "prepared_cases": [
+    "outbox-before-relay-crash",
+    "relay-partition-and-reconnect",
+    "duplicate-and-reordered-delivery",
+    "relay-process-restart",
+    "index-partial-write",
+    "retention-boundary",
+    "lag-threshold-crossing",
+    "reconciliation-after-completed-unacknowledged",
+    "relay-bypass-attempt",
+    "relay-unavailable-core-authority-unchanged",
+    "wrong-project-receipt-isolation"
+  ],
+  "open_human_inputs": {
+    "receipt_relay_value_hypothesis": null,
+    "relay_owner": null,
+    "lag_threshold": null,
+    "retention_policy": null,
+    "availability_objective": null,
+    "reconciliation_window": null,
+    "accepted_profiles": null,
+    "receipt_signer": null,
+    "independent_verifier": null
+  },
+  "hard_veto_closed": false,
+  "scoreable": false,
+  "execution_authorized": false
+}
+

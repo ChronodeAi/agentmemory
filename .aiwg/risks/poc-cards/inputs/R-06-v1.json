@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R06-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-06",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-06-dirty-to-commit-provenance-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-04", "ICM-07"],
+  "requirements": ["FR-06", "FR-10", "FR-12"],
+  "traceability": ["TR-UCM-004", "TR-UCM-007"],
+  "accountable_owner_role": "Git and Runtime Owner",
+  "case_families": [
+    {"case_id": "R06-CF-01", "name": "dirty-event-identity", "source_paths": ["src/functions/branch-aware.ts", "src/functions/coding-memory.ts"], "governed_sinks": ["dirty-event-ledger"], "expected_outcome": "each event binds project, worktree, base, path transition, digests, session, invocation, and time"},
+    {"case_id": "R06-CF-02", "name": "git-lineage-and-rename", "source_paths": ["src/hooks/post-commit.ts"], "governed_sinks": ["commit-link", "commit-history"], "expected_outcome": "only server-verified descendant path/blob transitions link"},
+    {"case_id": "R06-CF-03", "name": "reconcile-crash-and-concurrency", "source_paths": ["src/hooks/session-end.ts", "src/hooks/post-commit.ts"], "governed_sinks": ["dirty-event-ledger", "commit-link"], "expected_outcome": "unmatched or unverifiable events remain explicitly dirty or uncertain"}
+  ],
+  "external_or_protected_evidence": ["immutable synthetic Git bundle only; no live repository mutation"],
+  "b1_mechanics_required": ["synthetic Git witness", "reconciliation and crash harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

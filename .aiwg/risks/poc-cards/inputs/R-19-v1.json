@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R19-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-19",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-19-native-memory-cross-project-export-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-18"],
+  "requirements": ["FR-14"],
+  "traceability": ["TR-UCM-018"],
+  "accountable_owner_role": "Native Memory Integration Owner",
+  "case_families": [
+    {"case_id": "R19-CF-01", "name": "explicit-action-authority", "source_paths": ["src/functions/claude-bridge.ts"], "governed_sinks": ["native-sync-attempt", "audit", "outbox"], "expected_outcome": "one explicit action binds exact project, source IDs, destination, policy, and nonce"},
+    {"case_id": "R19-CF-02", "name": "two-project-global-negative", "source_paths": ["src/functions/claude-bridge.ts"], "governed_sinks": ["recording-native-destination"], "expected_outcome": "zero other-project, global, or unscoped content enters the destination"},
+    {"case_id": "R19-CF-03", "name": "destination-atomicity-and-rollback", "source_paths": ["src/functions/claude-bridge.ts"], "governed_sinks": ["destination-generation", "backup", "audit", "outbox"], "expected_outcome": "every fault converges to exact target or byte-identical prior image"}
+  ],
+  "external_or_protected_evidence": ["recording destination only; no real provider home or native memory"],
+  "b1_mechanics_required": ["synthetic provider-file writer", "failpoints", "authority-consumption and rollback harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

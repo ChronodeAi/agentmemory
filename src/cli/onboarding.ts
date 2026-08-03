@@ -28,6 +28,7 @@ import * as p from "@clack/prompts";
 import { appendFileSync, readFileSync } from "node:fs";
 import { readPrefs, writePrefs } from "./preferences.js";
 import { ADAPTERS, resolveAdapter, runAdapter } from "./connect/index.js";
+import { ensureLocalAccessConfiguration } from "./local-access.js";
 import type { ConnectResult } from "./connect/types.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -163,6 +164,8 @@ function writeDefaultOnboardingPrefs(): OnboardingResult {
 
 export async function runOnboarding(): Promise<OnboardingResult> {
   if (shouldSkipInteractiveOnboarding()) {
+    const envPath = await seedEnvFile(null);
+    ensureLocalAccessConfiguration(envPath ?? undefined);
     return writeDefaultOnboardingPrefs();
   }
 
@@ -221,6 +224,7 @@ export async function runOnboarding(): Promise<OnboardingResult> {
   }
 
   const envPath = await seedEnvFile(provider);
+  ensureLocalAccessConfiguration(envPath ?? undefined);
 
   await maybePromptContextInjection(envPath);
 

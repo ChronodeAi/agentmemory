@@ -2,7 +2,10 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { handleToolCall as rawHandleToolCall } from "../src/mcp/standalone.js";
+import {
+  handleToolCall as rawHandleToolCall,
+  handleToolsList,
+} from "../src/mcp/standalone.js";
 import { resetHandleForTests } from "../src/mcp/rest-proxy.js";
 import { InMemoryKV } from "../src/mcp/in-memory-kv.js";
 import {
@@ -279,6 +282,59 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     );
   });
 
+  it("uses the administrative secret file for server-wide tool discovery", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "agentmemory-secret-"));
+    const secretFile = join(dir, "secret");
+    const adminSecretFile = join(dir, "admin-secret");
+    writeFileSync(secretFile, "project-secret\n", { mode: 0o600 });
+    writeFileSync(adminSecretFile, "admin-secret\n", { mode: 0o600 });
+    process.env["AGENTMEMORY_SECRET_FILE"] = secretFile;
+    process.env["AGENTMEMORY_ADMIN_SECRET_FILE"] = adminSecretFile;
+    let toolListAuthorization: string | undefined;
+    installFetch((url, init) => {
+      if (url.endsWith("/agentmemory/livez")) {
+        return new Response("ok", { status: 200 });
+      }
+      if (url.endsWith("/agentmemory/mcp/tools")) {
+        toolListAuthorization = (
+          init?.headers as Record<string, string> | undefined
+        )?.["authorization"];
+        return toolListAuthorization === "Bearer admin-secret"
+          ? new Response(JSON.stringify({ tools: [{ name: "remote-tool" }] }), {
+              status: 200,
+              headers: { "content-type": "application/json" },
+            })
+          : new Response("unauthorized", {
+              status: 401,
+              statusText: "Unauthorized",
+            });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    try {
+      const result = await handleToolsList();
+      expect(toolListAuthorization).toBe("Bearer admin-secret");
+      expect(result.tools).toEqual([{ name: "remote-tool" }]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("surfaces tool-list authorization failures instead of degrading locally", async () => {
+    installFetch((url) => {
+      if (url.endsWith("/agentmemory/livez")) {
+        return new Response("ok", { status: 200 });
+      }
+      return new Response("unauthorized", {
+        status: 401,
+        statusText: "Unauthorized",
+      });
+    });
+
+    await expect(handleToolsList()).rejects.toThrow("401 Unauthorized");
+  });
+
   it("mints and transports exact-project capabilities for direct and generic tools", async () => {
     const project = "github.com/chronodeai/project-a";
     const signingSecret = "project-capability-signing-secret";
@@ -417,7 +473,7 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     expect(out.results[0].content).toBe("local only");
   });
 
-  it("invalidates the handle on proxy failure, so the next call re-probes", async () => {
+  it("surfaces a reachable proxy failure, then re-probes before local fallback", async () => {
     let probeCount = 0;
     let serverUp = true;
     installFetch((url) => {
@@ -428,11 +484,21 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
       return new Response("boom", { status: 500, statusText: "Internal Server Error" });
     });
     const localKv = new InMemoryKV(undefined);
-    await handleToolCall("memory_save", { content: "first fallback" }, localKv);
+    await expect(
+      handleToolCall("memory_save", { content: "must not persist locally" }, localKv),
+    ).rejects.toThrow("500 Internal Server Error");
     expect(probeCount).toBe(1);
     serverUp = false;
     await handleToolCall("memory_save", { content: "second fallback" }, localKv);
     expect(probeCount).toBe(2);
+    const recall = await handleToolCall(
+      "memory_recall",
+      { query: "fallback" },
+      localKv,
+    );
+    const body = JSON.parse(recall.content[0].text);
+    expect(body.results).toHaveLength(1);
+    expect(body.results[0].content).toBe("second fallback");
   });
 
   it("forwards non-essential tools to /agentmemory/mcp/call (#234)", async () => {
@@ -579,6 +645,12 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
       if (url.endsWith("/agentmemory/livez")) {
         probeStarted++;
         return new Response("ok", { status: 200 });
+      }
+      if (url.endsWith("/agentmemory/remember")) {
+        return new Response(JSON.stringify({ id: "memory-timeout-knob" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
       return new Response("not found", { status: 404 });
     });

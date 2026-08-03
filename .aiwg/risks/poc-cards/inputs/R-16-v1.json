@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R16-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-16",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-16-atomic-migration-restore-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-13", "ICM-18"],
+  "requirements": ["FR-02", "FR-14", "FR-19"],
+  "traceability": ["TR-UCM-013"],
+  "accountable_owner_role": "State Migration and Recovery Owner",
+  "case_families": [
+    {"case_id": "R16-CF-01", "name": "complete-namespace-manifest", "source_paths": ["src/functions/migrate.ts", "src/functions/snapshot.ts", "src/state"], "governed_sinks": ["records", "indexes", "counts", "leases", "audit", "outbox", "native-destination"], "expected_outcome": "every persisted data and control namespace is inventoried and hash-bound"},
+    {"case_id": "R16-CF-02", "name": "generation-activation-and-reader-fencing", "source_paths": ["src/functions/migrate.ts", "src/functions/snapshot.ts"], "governed_sinks": ["staged-generation", "active-pointer", "reader-view"], "expected_outcome": "readers observe exact pre-generation or complete validated target"},
+    {"case_id": "R16-CF-03", "name": "every-boundary-crash-restore-rollback", "source_paths": ["src/functions/migrate.ts", "src/functions/snapshot.ts"], "governed_sinks": ["migration-receipt", "restore-receipt", "rollback-audit"], "expected_outcome": "restart converges idempotently with exact audit truth and no additive partial restore"}
+  ],
+  "external_or_protected_evidence": ["disposable backend only; no live state"],
+  "b1_mechanics_required": ["runtime-observed namespace inventory", "generation CAS", "reader/writer and restart harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

@@ -4,10 +4,14 @@ export class StateKV {
   constructor(private sdk: ISdk) {}
 
   async get<T = unknown>(scope: string, key: string): Promise<T | null> {
-    return this.sdk.trigger<{ scope: string; key: string }, T | null>({
+    const value = await this.sdk.trigger<
+      { scope: string; key: string },
+      T | null | undefined
+    >({
       function_id: 'state::get',
       payload: { scope, key },
     })
+    return value ?? null
   }
 
   async set<T = unknown>(scope: string, key: string, value: T): Promise<T> {

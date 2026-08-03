@@ -1,0 +1,1233 @@
+{
+  "schema_version": 2,
+  "manifest_revision": 27,
+  "manifest_kind": "verified-predecessor-successor",
+  "generated_at_utc": "2026-07-30T15:20:18Z",
+  "manifest_status": "candidate-unsigned-local-advisory",
+  "project": "github.com/chronodeai/agentmemory",
+  "repository": "https://github.com/ChronodeAi/agentmemory.git",
+  "upstream": "https://github.com/rohitg00/agentmemory.git",
+  "worktree": "/private/tmp/chronode-agentmemory-r27",
+  "branch": "codex/agentmemory-elab-r27",
+  "candidate_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "candidate_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+  "predecessor_continuity": {
+    "status": "r26-anchors-verified",
+    "predecessor_revision": 26,
+    "predecessor_candidate_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+    "predecessor_candidate_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+    "imported_entry_count": 142,
+    "imported_entries_verified_before_successor_changes": true,
+    "anchors": {
+      "manifest": {
+        "path": ".aiwg/reports/iteration-6-input-manifest-r26.json",
+        "sha256": "7adc635a58faacd1dd04b5712df75bc5aeb0e33df10cc614ad1961126321c5dc"
+      },
+      "deterministic_receipt": {
+        "path": ".aiwg/reports/iteration-6-manifest-verification-r26.json",
+        "sha256": "b4043e4c963bae015f8220d943ce271d9ff9b487dc4bd32efeaeaf4a19e57ad2"
+      },
+      "adversarial_review": {
+        "path": ".aiwg/reports/iteration-6-adversarial-review-r26-2026-07-30.md",
+        "sha256": "4681a1ede80be25c4451397efa3b4b270935fa1a19f12c97ed7a2f42b6ba8131"
+      }
+    }
+  },
+  "decision_boundary": "R27 is an unsigned local documentary successor freeze. It does not accept requirements, realizations, architecture, ADRs, the MTP, Stage A, B1, B2, risks, ABM, Construction, canary, package work, deployment, release, or rollout, and it authorizes no containment, product, provider, supervisor, runtime, or cloud mutation.",
+  "target_versions": {
+    "agentmemory_candidate": "0.9.28",
+    "installed_agentmemory_label": "0.9.28",
+    "codebase_memory_fork": "0.9.1"
+  },
+  "runtime_baseline": {
+    "classification": "specification-input-only-not-qualifying-execution-evidence",
+    "service_reported_status": "healthy",
+    "context_injection": false,
+    "installed_artifact_binding": "unproved",
+    "direct_global_sessions_without_credential": "http-401",
+    "viewer_3113_global_sessions_without_credential": "http-200-policy-nonconformance",
+    "viewer_3114_global_sessions_without_credential": "http-200-policy-nonconformance",
+    "detailed_health_without_credential": "http-200-policy-nonconformance",
+    "worker_viewer_processes": 2,
+    "engine_processes": 1,
+    "managed_worker_launchd_target": "gui/501/com.agentmemory.server",
+    "manual_worker_launchd_target": null,
+    "iii_launchd_target": null,
+    "security_disposition": "p0-emergency-containment-decision-required-unanswered"
+  },
+  "interface_inventory": {
+    "path": ".aiwg/reports/g-icm-01-interface-inventory.json",
+    "sha256": "6821edf7525d5e8f844e2c68922b882df8e531f550220244e9d45721bfba1f42",
+    "inventory_input_count": 194,
+    "inventory_input_sha256": "6b3b918167885d87ea23f40c9f66da304a5910aa3801957aca2c8d1910916fb8",
+    "source_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+    "source_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+    "regeneration": "two-runs-byte-identical",
+    "classification": "specification-input-only"
+  },
+  "selected_stage_a_profile": {
+    "id": "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1",
+    "specification_path": ".aiwg/testing/local-macos-qualification-profile-candidate.md",
+    "specification_sha256": "aee34c1a42c9130f622d4b6d448fcf685fe22e4796851998424845bd78805a38",
+    "decision_id": "DEC-12",
+    "decision_source_path": ".aiwg/reports/iteration-4-local-macos-human-disposition-2026-07-28.json",
+    "decision_source_sha256": "58ca761f4ebed1842c23372b5b3a7c52a559be4bae6efb7adf10541757d5272b",
+    "authority_effect": "specification-only-execution-blocked"
+  },
+  "human_decision_provenance": {
+    "status": "direct-source-chain-included",
+    "decision_request": {
+      "path": ".aiwg/reports/iteration-4-local-macos-human-decision-request-2026-07-28.md",
+      "sha256": "969c49a14dfa254d8887df43069343d729e6e5ae157559b7e51e8d67d0b407f8"
+    },
+    "reconciliation": {
+      "path": ".aiwg/reports/iteration-4-local-macos-elaboration-reconciliation-2026-07-28.md",
+      "sha256": "6fc384a62e40b78a2d6784bb21fe6d58525167bdbbd133dacacce64e9902b1f0"
+    },
+    "validation_receipt": {
+      "path": ".aiwg/reports/iteration-4-local-macos-validation-receipt-2026-07-28.md",
+      "sha256": "6d1338474310082d725abe9664faf56f800c187ff6e76c1c971f44ff63d9fffa"
+    },
+    "disposition_markdown": {
+      "path": ".aiwg/reports/iteration-4-local-macos-human-disposition-2026-07-28.md",
+      "sha256": "d4391291fbd04b49721c0ba6e2110192e56724c2dbc20d94c474cdbe2166dcf5"
+    },
+    "disposition_json": {
+      "path": ".aiwg/reports/iteration-4-local-macos-human-disposition-2026-07-28.json",
+      "sha256": "58ca761f4ebed1842c23372b5b3a7c52a559be4bae6efb7adf10541757d5272b"
+    },
+    "authority_effect": "DEC-12 profile specification selected; Stage A, B1, B2, and execution remain open or blocked"
+  },
+  "incomplete_historical_anchors": {
+    "revision_21": {
+      "manifest_path": ".aiwg/reports/iteration-4-input-manifest.json",
+      "manifest_sha256": "cbdb7cde5f25167a79c13e21e06297750837339465576e72362e40ac1cd5c555",
+      "manifest_available": false,
+      "receipt_path": ".aiwg/reports/iteration-4-manifest-verification-r21.json",
+      "receipt_sha256": "7f59853ceaf5734cbd64f357fd4e7148af14b57765c3093d2f52f4c85c4401b4",
+      "continuity_claimed": false,
+      "qualifying_evidence_admitted": false
+    }
+  },
+  "package_consistency": {
+    "status": "FAIL",
+    "verification": "offline-lock-closure-check",
+    "observed_npm_ci_result": "FAIL-EUSAGE-lockfile-out-of-sync",
+    "package_lock_mismatch_count": 1,
+    "disposition": "open-stage-a-preparation-blocker-product-repair-not-authorized"
+  },
+  "codebase_memory": {
+    "project": "github.com-chronodeai-agentmemory-r27",
+    "mode": "fast",
+    "status": "indexed",
+    "nodes": 7170,
+    "edges": 12840,
+    "skipped_files": 0,
+    "parse_partial_files": 0,
+    "deliberately_not_indexed_files": 155,
+    "completeness_claimed": false
+  },
+  "risks": {
+    "canonical_total": 23,
+    "canonical_statuses": {
+      "IDENTIFIED": 23
+    },
+    "mitigated": 0,
+    "retired": 0,
+    "r14_score_refresh": {
+      "status": "proposed-owner-calibration-pending",
+      "from": {
+        "probability": 4,
+        "impact": 5,
+        "score": 20,
+        "priority": "P1"
+      },
+      "to": {
+        "probability": 5,
+        "impact": 5,
+        "score": 25,
+        "priority": "P0"
+      }
+    }
+  },
+  "lifecycle": {
+    "stage_a": "not-submission-ready",
+    "b1": "blocked",
+    "b2": "blocked",
+    "stage_c": "not-executed",
+    "stage_d": "not-executed",
+    "stage_e": "not-executed",
+    "abm": "fail-no-go",
+    "construction": "unauthorized",
+    "canary": "not-authorized",
+    "package": "not-authorized",
+    "release": "unauthorized",
+    "rollout": "unauthorized"
+  },
+  "authority": {
+    "emergency_local_containment": null,
+    "human_test_architect": null,
+    "configuration_manager_concurrence": null,
+    "security_architect_concurrence": null,
+    "release_owner_concurrence": null,
+    "local_test_infrastructure_owner_advisory": null,
+    "dependency_owner_advisory": null
+  },
+  "qualifying_evidence_admitted": false,
+  "signatures": [],
+  "independent_custody": false,
+  "source_scope": {
+    "predecessor_manifest_entries": 142,
+    "successor_additions": 19,
+    "total_entries": 161
+  },
+  "excluded": [
+    {
+      "path": ".aiwg/aiwg.config",
+      "reason": "generated mutable workspace state"
+    },
+    {
+      "path": ".aiwg/sessions.json",
+      "reason": "mutable AIWG session registry"
+    },
+    {
+      "path": ".aiwg/working/**",
+      "reason": "working evidence is not admitted"
+    },
+    {
+      "path": ".aiwg/daemon/**",
+      "reason": "runtime state is mutable"
+    },
+    {
+      "path": ".aiwg/cache/**",
+      "reason": "generated cache state"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-input-manifest.json",
+      "reason": "historical R21 artifact unavailable; receipt retained without continuity or qualification claim"
+    },
+    {
+      "path": ".aiwg/reports/iteration-7-input-manifest-r27.json",
+      "reason": "self-reference excluded"
+    },
+    {
+      "path": ".aiwg/reports/iteration-7-manifest-verification-r27.json",
+      "reason": "post-generation deterministic receipt excluded"
+    },
+    {
+      "path": ".aiwg/reports/iteration-7-adversarial-review-r27-2026-07-30.md",
+      "reason": "post-generation independent review excluded"
+    },
+    {
+      "path": ".aiwg/reports/iteration-7-stage-a-external-decision-request.md",
+      "reason": "post-generation human decision cover excluded"
+    },
+    {
+      "path": ".aiwg/security/iteration-7-emergency-containment-decision-request.md",
+      "reason": "post-generation emergency authority request excluded"
+    },
+    {
+      "path": "node_modules/**",
+      "reason": "ignored disposable dependency installation"
+    },
+    {
+      "path": ".codebase-memory/**",
+      "reason": "generated structural index state"
+    },
+    {
+      "path": "AGENTS.md",
+      "reason": "generated provider workspace artifact"
+    },
+    {
+      "path": "WORKSPACE.md",
+      "reason": "generated provider workspace artifact"
+    },
+    {
+      "path": "models.json",
+      "reason": "generated provider model artifact"
+    },
+    {
+      "path": "src/**",
+      "reason": "product source unchanged and not authorized for iteration-7 modification"
+    },
+    {
+      "path": "test/**",
+      "reason": "product tests unchanged and not authorized for iteration-7 modification"
+    },
+    {
+      "path": "package*.json",
+      "reason": "package surfaces unchanged and not authorized for iteration-7 modification"
+    }
+  ],
+  "entry_count": 161,
+  "entries": [
+    {
+      "path": ".aiwg/architecture/adr/ADR-001-project-identity-and-scope.md",
+      "sha256": "ee2f740a34e5b941c5d1640eb6dc44abb3f6bd6d37f5186a667803e3a32e3d81",
+      "bytes": 2002,
+      "role": "proposed_architecture_decision"
+    },
+    {
+      "path": ".aiwg/architecture/adr/ADR-002-evidence-context-and-promotion.md",
+      "sha256": "3cd05416382eaa7211ac47dbae69bbe6a68ef121e5bedd27d4cb7ce26241aa59",
+      "bytes": 2333,
+      "role": "proposed_architecture_decision"
+    },
+    {
+      "path": ".aiwg/architecture/adr/ADR-003-privacy-provider-and-health.md",
+      "sha256": "c969cea1487f48a7993b1f8459354de15eea0b66ce7f047f8629ae87576e2d07",
+      "bytes": 4074,
+      "role": "proposed_architecture_decision"
+    },
+    {
+      "path": ".aiwg/architecture/adr/ADR-004-codebase-memory-interoperability.md",
+      "sha256": "05e52c723dd7e7d9b5259e8d6028097c01baa4a14e90c22c884388bc0841f2c7",
+      "bytes": 1141,
+      "role": "proposed_architecture_decision"
+    },
+    {
+      "path": ".aiwg/architecture/adr/ADR-005-strict-core-compatibility-transition.md",
+      "sha256": "0bb1b9fdbe7c6fa988f11b1203a90746a4eb6e6cecb085d060979d4ba0234001",
+      "bytes": 3332,
+      "role": "proposed_architecture_decision"
+    },
+    {
+      "path": ".aiwg/architecture/adr/ADR-006-immutable-generations-and-transactional-evidence.md",
+      "sha256": "2b4372de959351c0b3f410e9fd4d17a04fbe3094def4b7f03ab66877fc79cbb6",
+      "bytes": 4283,
+      "role": "proposed_architecture_decision"
+    },
+    {
+      "path": ".aiwg/architecture/adr/ADR-007-local-macos-product-envelope.md",
+      "sha256": "a5272330247178b1dc9079ece73c88473d73cc0300510ccccf287109f773e884",
+      "bytes": 8961,
+      "role": "proposed_architecture_decision"
+    },
+    {
+      "path": ".aiwg/architecture/architecture-decision-preparation-iteration-7.md",
+      "sha256": "bf62386abdb0375cb982a189c2aada170695b539fcb8d3e822a47dc5f6303775",
+      "bytes": 16017,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/architecture-evolution-iteration-4.md",
+      "sha256": "417bd33b8981146c07a0ab1558319da593ed80dd6ca4a5995a56d751bfcdfbc3",
+      "bytes": 52644,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/architecture-evolution-iteration-5.md",
+      "sha256": "008f1e515eed91cc3a20beaadfb76113b2b8029c658acf790bf2e1268c97d617",
+      "bytes": 8439,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/architecture-sketch.md",
+      "sha256": "787b1782c140975c48f5f32d10aac3c99066f64f9d69fc866275eee52c3aa76b",
+      "bytes": 1168,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/behavioral-specifications.md",
+      "sha256": "c4f762316a54c9538caa92f622b42353ef8ab1ce3d8973c0da9394908aa348eb",
+      "bytes": 1585,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/interface-control-matrix.md",
+      "sha256": "a9e918acce99959088f9f98ed955f406ebed03bd9c59e66ca12bd1c774e4157a",
+      "bytes": 26064,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/iteration-4-configuration-evidence-matrix.md",
+      "sha256": "e8a883f6829e44db3846827cf57388cfc6ec78d0c3791a042bbea811b0ecc18f",
+      "bytes": 7166,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/iteration-4-mcda-input-v1.json",
+      "sha256": "d86e0d1c4d76f746811b305b50a2ad0779a16cc15595f8a931730a52b7ee7e95",
+      "bytes": 2319,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/iteration-4-p2-hard-veto-evidence-specifications.json",
+      "sha256": "166a65ceca244c2b9752457c2a92bcdbda4139150757c23ef2337642fc8ed2ea",
+      "bytes": 5567,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/iteration-4-p2-hard-veto-evidence-specifications.md",
+      "sha256": "7fce740baa1e18cd29b7bb8d0d94939964bf2f5721ece3dd463dadcefe3b97ad",
+      "bytes": 4082,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/pseudocode-specifications.md",
+      "sha256": "c0fb38f7b37e5f0359ec5b00a408e4dfde6dc1dddfed7ff4f4789902c8fae4df",
+      "bytes": 1628,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/architecture/software-architecture-doc.md",
+      "sha256": "861940267b26e35e27539a0bbbe1b42ba33a759fcdf3e75aee04fe5147f3637f",
+      "bytes": 17722,
+      "role": "architecture_input"
+    },
+    {
+      "path": ".aiwg/decisions/change-requests/CR-AM-LOCAL-001.md",
+      "sha256": "e31e4c444f31ab97e8ac2407470195955773bc4c69559de2ced40aa695dfe055",
+      "bytes": 6387,
+      "role": "change_control_input"
+    },
+    {
+      "path": ".aiwg/decisions/impact-assessments/IA-AM-LOCAL-001.md",
+      "sha256": "b1a055edf0de64faabd0fc012325fb75a1b152fd8023f5ab682fb549c472b43b",
+      "bytes": 7063,
+      "role": "change_control_input"
+    },
+    {
+      "path": ".aiwg/deployment/local-macos-operations-and-support-candidate.md",
+      "sha256": "6d36b81f88a358bc0c0186c612f829e9221b14355b61ee27d3c57308bca3c429",
+      "bytes": 10641,
+      "role": "operations_input"
+    },
+    {
+      "path": ".aiwg/deployment/upstream-runtime-supervisor-handoff.md",
+      "sha256": "8178ca5b6dab39eca0dbec372430f8a4ae8285841de4fb44a6b2b3bf208f2ff9",
+      "bytes": 9271,
+      "role": "operations_input"
+    },
+    {
+      "path": ".aiwg/planning/development-case-local-macos.md",
+      "sha256": "5c7e975979b2a014cef1bc91627dd4e7f22c97f46772acff51a34c72eed00bb0",
+      "bytes": 11873,
+      "role": "planning_input"
+    },
+    {
+      "path": ".aiwg/planning/development-process-guide.md",
+      "sha256": "739a024732283fc308854bd5dcb01f66901afd00a3a2bcc74ae655b20d816a62",
+      "bytes": 2008,
+      "role": "planning_input"
+    },
+    {
+      "path": ".aiwg/planning/iteration-plan-001.md",
+      "sha256": "860d0ba2397c5431032b21bdc267fdc0bd6a96e9c962e663081571df29c9f281",
+      "bytes": 1456,
+      "role": "planning_input"
+    },
+    {
+      "path": ".aiwg/planning/iteration-plan-002.md",
+      "sha256": "844b799a4d5df95d22b797b1cbc18f296bff87a59f45ca532612f1d46407a830",
+      "bytes": 1712,
+      "role": "planning_input"
+    },
+    {
+      "path": ".aiwg/planning/iteration-plan-004.md",
+      "sha256": "cd0835a88fe907a249e491305932e4590a3431d76b578bcd981f00dc78bf2405",
+      "bytes": 23243,
+      "role": "planning_input"
+    },
+    {
+      "path": ".aiwg/planning/iteration-plan-005.md",
+      "sha256": "bafb41e5b84304c5a5d470c39aac5d98f340ca753339c224b180f5bf79f14dfb",
+      "bytes": 6559,
+      "role": "planning_input"
+    },
+    {
+      "path": ".aiwg/planning/scope-boundaries.md",
+      "sha256": "563a03c2c1d18db69ac18951d576624736c891877fcc09faf3518ee0c46de854",
+      "bytes": 2600,
+      "role": "planning_input"
+    },
+    {
+      "path": ".aiwg/reports/agentmemory-local-runtime-baseline-2026-07-28.md",
+      "sha256": "8ba581751a7b08ef015429ecdb5e23d021e3a161129b8f01018c2c0210c3715d",
+      "bytes": 10654,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/evidence/rollback-preparation/README.md",
+      "sha256": "8c4a9dc52742a67b223cf8b0879177424b18b8710f26e2dc26a78e6afed853ee",
+      "bytes": 2463,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/g-icm-01-interface-inventory.json",
+      "sha256": "6821edf7525d5e8f844e2c68922b882df8e531f550220244e9d45721bfba1f42",
+      "bytes": 285515,
+      "role": "generated_specification_inventory"
+    },
+    {
+      "path": ".aiwg/reports/installed-runtime-provenance-correction-2026-07-27.md",
+      "sha256": "613fff43733a98d0a66e47130f581e437d4f5264833855bc8f4c0a6a5a379f23",
+      "bytes": 6283,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/installed-runtime-provenance-verification-2026-07-27.json",
+      "sha256": "a623876c5b5efbb1c5a8aedeecd8e93727b8916347b736c5fdac64071614759d",
+      "bytes": 3239,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-containment-execution-2026-07-27.md",
+      "sha256": "3d9d98a81218d8a1689cd05a2b0aa0ec7a06085500a8778f3c69e765a524aed6",
+      "bytes": 12732,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-human-decision-packet.md",
+      "sha256": "affcf96717cde4cb63ef764b449b9bd3c066a92e9a46c210e350c79b537b35d9",
+      "bytes": 25718,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-local-macos-elaboration-reconciliation-2026-07-28.md",
+      "sha256": "6fc384a62e40b78a2d6784bb21fe6d58525167bdbbd133dacacce64e9902b1f0",
+      "bytes": 17183,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-local-macos-human-decision-request-2026-07-28.md",
+      "sha256": "969c49a14dfa254d8887df43069343d729e6e5ae157559b7e51e8d67d0b407f8",
+      "bytes": 8937,
+      "role": "human_decision_source"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-local-macos-human-disposition-2026-07-28.json",
+      "sha256": "58ca761f4ebed1842c23372b5b3a7c52a559be4bae6efb7adf10541757d5272b",
+      "bytes": 4687,
+      "role": "human_decision_input"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-local-macos-human-disposition-2026-07-28.md",
+      "sha256": "d4391291fbd04b49721c0ba6e2110192e56724c2dbc20d94c474cdbe2166dcf5",
+      "bytes": 4339,
+      "role": "human_decision_input"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-local-macos-validation-receipt-2026-07-28.md",
+      "sha256": "6d1338474310082d725abe9664faf56f800c187ff6e76c1c971f44ff63d9fffa",
+      "bytes": 4799,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-manifest-verification-r21.json",
+      "sha256": "7f59853ceaf5734cbd64f357fd4e7148af14b57765c3093d2f52f4c85c4401b4",
+      "bytes": 5794,
+      "role": "incomplete_historical_anchor"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-operator-decision-addendum-2026-07-28.json",
+      "sha256": "2446dafddaf83c41d4dc8d63a0ef49de4b3bbf2cb1bdc44de57cbcf5928c25c0",
+      "bytes": 3783,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-operator-decision-addendum-2026-07-28.md",
+      "sha256": "20fe19cc07a4f09f03cce8791b00fdfaa41a2bd2f3c4307490b3b5a5a206e87a",
+      "bytes": 6130,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-rollback-preparation-authorization-candidate-2026-07-28.md",
+      "sha256": "bee3d9979dd883fe174b7cb0d1f411526235246f411f0493b4bb1191fe135e20",
+      "bytes": 2425,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-4-traceability-status-r11-2026-07-27.md",
+      "sha256": "157bf8a37a1291dcd81ed59e31816a2f556c524147d313408de258b69c5743eb",
+      "bytes": 7266,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-adversarial-review-r25-2026-07-29.md",
+      "sha256": "a6ac699e5c073ce8f0a7769071d07bc44b03d1e58a7881b1bab7c1f6b14fbf0b",
+      "bytes": 3749,
+      "role": "recovered_historical_anchor"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-aiwg-diagnostics-disposition-2026-07-29.md",
+      "sha256": "175fde4ffaaa3cc30754f4295c25b48779131c65b1120c7af52c718698e53b5f",
+      "bytes": 2658,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-codebase-memory-coverage-diagnosis-2026-07-29.md",
+      "sha256": "1e4a4df2a463fbe7a9a28dfc9d72972a6a093972ed92fa00a198496643f57e9f",
+      "bytes": 4959,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-dec15-traceability-verification-2026-07-29.md",
+      "sha256": "25e34e6546143336fca79f872bacd7cc2b756a2f8b1a8f6b586b4d176cae1bc5",
+      "bytes": 2938,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-elaboration-closure-packet-2026-07-29.md",
+      "sha256": "9c0dec8b6a72e1baf69342238f4018fb3061a63c076ee2183d51dce167f80fbd",
+      "bytes": 7272,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-evidence-refreeze-r25-2026-07-29.md",
+      "sha256": "a04da36245ede2f544708e4da3d14ca31093cbc83f444c03aa6a96dd5fbf515d",
+      "bytes": 5717,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-input-manifest-r25.json",
+      "sha256": "2c3039c0767866e7e21ba11eded16bc3d88a58bb56068b8e9e80c43dd9c01ac9",
+      "bytes": 11716,
+      "role": "recovered_historical_anchor"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-manifest-verification-r25.json",
+      "sha256": "87969f3657704bb5d6452f4e130c8c0d55b0f012a6465983abeb7651e13819e6",
+      "bytes": 6154,
+      "role": "recovered_historical_anchor"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-traceability-and-requirements-reconciliation-2026-07-29.md",
+      "sha256": "f91485e5ee9e665464a7c150a77690ec1984f2e1edcb0f152784f94b22aaaa0c",
+      "bytes": 5630,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-5-worktree-ownership-and-live-baseline-2026-07-29.md",
+      "sha256": "2e07b9101219bb4e2ada5dddb7bbdd820b2cf7982b4d66b13cdbd0c4b93e8380",
+      "bytes": 10264,
+      "role": "recovered_historical_anchor"
+    },
+    {
+      "path": ".aiwg/reports/iteration-6-adversarial-review-r26-2026-07-30.md",
+      "sha256": "4681a1ede80be25c4451397efa3b4b270935fa1a19f12c97ed7a2f42b6ba8131",
+      "bytes": 3739,
+      "role": "predecessor_anchor"
+    },
+    {
+      "path": ".aiwg/reports/iteration-6-input-manifest-r26.json",
+      "sha256": "7adc635a58faacd1dd04b5712df75bc5aeb0e33df10cc614ad1961126321c5dc",
+      "bytes": 38736,
+      "role": "predecessor_anchor"
+    },
+    {
+      "path": ".aiwg/reports/iteration-6-manifest-verification-r26.json",
+      "sha256": "b4043e4c963bae015f8220d943ce271d9ff9b487dc4bd32efeaeaf4a19e57ad2",
+      "bytes": 7275,
+      "role": "predecessor_anchor"
+    },
+    {
+      "path": ".aiwg/reports/iteration-6-reconstruction-provenance-2026-07-30.md",
+      "sha256": "e8b96c7c18f7c4444ba262b557eefd47cec1cfe2dc843bc7fe35e888f98bc8c6",
+      "bytes": 4519,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-6-runtime-security-refresh-2026-07-30.md",
+      "sha256": "afd6f25b1a875f09640dc1759d12be164ab807723ce4e53fc6fed379208bf412",
+      "bytes": 10171,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-6-stage-a-external-decision-request.md",
+      "sha256": "866c37f28b4e9b4cfdb3c971dd083732a11b2bd7371db2d3c145276295a57161",
+      "bytes": 2411,
+      "role": "predecessor_open_authority_request"
+    },
+    {
+      "path": ".aiwg/reports/iteration-7-dependency-and-inventory-reconciliation-2026-07-30.md",
+      "sha256": "a08eafe4b3d34557ee47d92774d1941f0f4bf6e12366c1f4ba26eb74f0632dd0",
+      "bytes": 7125,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-7-readonly-runtime-refresh-2026-07-30.md",
+      "sha256": "45b8247531ea062131554a21d50f677ae548a00e61d9a8c276013e25a45089fd",
+      "bytes": 4846,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/iteration-7-worktree-ownership-and-classification-2026-07-30.md",
+      "sha256": "6d6e558a78cda8d635f6e986dba35f2777c34df3aac327423b9f9972a728f9c5",
+      "bytes": 4423,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/poc-card-input-completion-2026-07-28.json",
+      "sha256": "3b1ac3d45b3c2b38cfba461239f9c393b2cdb0959da462370a9fe31549f0373f",
+      "bytes": 2650,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/poc-card-input-completion-2026-07-28.md",
+      "sha256": "9cdad33e2db027b7aa8b404f5467ff68017901d00ec1173d89a6ed0f3614cc9d",
+      "bytes": 3713,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/release-candidate-completion-audit-2026-07-27.md",
+      "sha256": "5b82a670c3a57f487dcc1d3c99cac21998efa24e7ed82967ac701ee3ff6c8a22",
+      "bytes": 8149,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/runtime-control-snapshot-2026-07-26.json",
+      "sha256": "f4f6bb3f2210033087734ad1ec23e88fef22025fbf38f0d122064249f19920f2",
+      "bytes": 2924,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/reports/traceability-report.md",
+      "sha256": "4cc2410aee4fd1f4cdea4ddd368c2211aa2c195d758fc5b8ba33a1db0388076a",
+      "bytes": 24971,
+      "role": "supporting_governance_evidence"
+    },
+    {
+      "path": ".aiwg/requirements/contracts/ER-CBM-001-codebase-memory-interoperability.md",
+      "sha256": "59a6b75eea3b371b03811bfcf3a9b6ada77be1d24c9668d9623156103263d5d0",
+      "bytes": 2398,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/iteration-5-open-authority-matrix.md",
+      "sha256": "b83a01a15504b5274205d76b8e58e74a549bbd3eb4e6d9ea38e846e954b72ffd",
+      "bytes": 4783,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/iteration-5-requirements-decision-packet-2026-07-29.md",
+      "sha256": "fa58130fe8958ccd94755b3f918f99acee2b16492e03c51d934e0e92eb201f9e",
+      "bytes": 3988,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/iteration-7-poc-assertion-decomposition.md",
+      "sha256": "14b0bf5e839e88935298de6064d597cd5f762d46bfd3e18ec8d88691e632d8ae",
+      "bytes": 7504,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-001-traceability-worksheet-iteration-5.md",
+      "sha256": "5939442f9004fe769d95b7ec910a5532d11e632dd0421a280cfce57de3092e98",
+      "bytes": 18412,
+      "role": "realization_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-001.md",
+      "sha256": "7c391b438964db0fe7525fb457161b2ed65f78a075815030cb0c7c4c2b6e898c",
+      "bytes": 65358,
+      "role": "realization_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-002-traceability-worksheet-iteration-5.md",
+      "sha256": "afd924aae794b71ef5e7cc35f34e6a86f6466387c13e98a246ba0f8a2db5ead3",
+      "bytes": 24897,
+      "role": "realization_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-002.md",
+      "sha256": "c88ba4b6a178f1a00e528fc20b1717e8fe543b04a299be4e22c652da8adee921",
+      "bytes": 78577,
+      "role": "realization_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-003-traceability-worksheet-iteration-5.md",
+      "sha256": "b6ee9e6f1b7477d1a5e33a4062477ecce0a01196a7008e1ca41e5906cb19c172",
+      "bytes": 19102,
+      "role": "realization_input"
+    },
+    {
+      "path": ".aiwg/requirements/realizations/DES-UCR-003.md",
+      "sha256": "aa1da9980e57016bfea70f474d1aa70c7fedc2346806d86b09c15badb90423f1",
+      "bytes": 62340,
+      "role": "realization_input"
+    },
+    {
+      "path": ".aiwg/requirements/supplemental-specification.md",
+      "sha256": "07cbf781ad337a2288c0d386260e3f55e1e610d4a70b305ae260a59ab10e6885",
+      "bytes": 51795,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/traceability-matrix.md",
+      "sha256": "231c29df634f6391fe9cd13f7c9bf778a53429b8989aee90a1627d5af5dd9847",
+      "bytes": 38490,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/use-case-briefs/UC-001-scoped-recall.md",
+      "sha256": "624265c8f1532f125d8cb4c470800ba8d7aac746d53568f375077a78e0612b36",
+      "bytes": 1158,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/use-case-briefs/UC-002-capture-session-commit.md",
+      "sha256": "ea2ac8238aa52a68c352f7a35c326c2381d7850b9d726fb5634dba5c9599202d",
+      "bytes": 986,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/use-case-briefs/UC-003-context-promotion-provider.md",
+      "sha256": "2354be282e8473f0c46b8b29e80dfabddb89758e56383b1a60cdf8ff72c4786d",
+      "bytes": 1163,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/requirements/vision-document.md",
+      "sha256": "bd413dcb6d98b1f3fb97740fb9c5f26ae5444d3249f3fe92712015cf29818f80",
+      "bytes": 1533,
+      "role": "requirements_input"
+    },
+    {
+      "path": ".aiwg/research/provenance/records/construction-ready-brief.prov.yaml",
+      "sha256": "2aaa4f05eddafb2400a8c74b275490e089f3b4982684ec50e018e0db51566835",
+      "bytes": 3244,
+      "role": "research_input"
+    },
+    {
+      "path": ".aiwg/research/r13-portable-attestation-2026-07-26.md",
+      "sha256": "fc4d9e9426a722422a1540bfa21f4f5bd4e22ce5425f89866254ff1670a1800e",
+      "bytes": 7725,
+      "role": "research_input"
+    },
+    {
+      "path": ".aiwg/risks/iteration-5-bounded-poc-candidates.md",
+      "sha256": "2e5a5850216bbcbbb5a934a11898825e9dcfdd07e1c7ef2c195ef8cd5483fdf4",
+      "bytes": 5840,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/risks/iteration-6-security-risk-reassessment.md",
+      "sha256": "2af3f1132c0be0064703b8632ae6f7c5ef362c93d0ddd6bbc24da42cc72a34ef",
+      "bytes": 3691,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/risks/iteration-7-bounded-poc-portfolio.md",
+      "sha256": "fdbbfa645ab3f8e9207923958aeb97e5168fb40adb8a92eb04e4ebbe2764318d",
+      "bytes": 22886,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/BUILD-POC-GOVERNANCE.md",
+      "sha256": "c45198f2de1d648cfa6ef531f6fc2b980b3a7a8d237e00e92cef4131bd626cae",
+      "bytes": 4349,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-02-local-macos-secret-flow-overlay.md",
+      "sha256": "a9bf0d444d60c5d65644a9a15f70bec3d567cd783e52ba9534fb5545253c1ff9",
+      "bytes": 8064,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-02-secret-flow-v1.md",
+      "sha256": "85714862a7fd8bb6d7a1ec5c545b1637a5abc91c862f1a29427e1617a481e480",
+      "bytes": 11592,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-03-authority-eligibility-v1.md",
+      "sha256": "61f01d6ce331bd6d8714308e09871605bbb6bfceb5e953d475a441be47693aef",
+      "bytes": 12458,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-04-delivery-acknowledgement-v1.md",
+      "sha256": "bd845d17f77e8c45d310a5e8afdaf73ef14bd28c188233e20114dd8aa26f0566",
+      "bytes": 13439,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-06-dirty-to-commit-provenance-v1.md",
+      "sha256": "207b94a29e78376dde4745757a1d62ae56e95fabd2b3a1db9fc1b5973c130edd",
+      "bytes": 12084,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-07-bounded-capture-observability-v1.md",
+      "sha256": "4ee0874001416d643efcda9eb7c312db3f8ba8d5c4eb736d8d65584a44d3bee3",
+      "bytes": 11947,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-09-viewer-health-truthfulness-v1.md",
+      "sha256": "803d07d5ce369a680a05713bca5adb6263ae7fc50b1bee0a860967ae9230db33",
+      "bytes": 11563,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-10-codebase-memory-canonical-alias-v1.md",
+      "sha256": "495a5d6919fee15a21f6c318e5a7808994ffcaa619233a67ba9f216d2bcda582",
+      "bytes": 13197,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-13-portable-evidence-harness-v1.md",
+      "sha256": "e45f62bcd376ebf5d241105b4340909a577ac4b6ca083dee192cd3a5473dd635",
+      "bytes": 6722,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-13-portable-evidence-harness-v2.md",
+      "sha256": "d405e8f775ea6d7d302b9c2350996b921c5d9cd13cd53ab1f0c653d8ee4005bd",
+      "bytes": 7934,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-13-portable-evidence-harness-v3.md",
+      "sha256": "cefb6253eea3bb95628f6f5d7f04b1b7f3081ba2a23f19bcb27ade365a382788",
+      "bytes": 19097,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-14-required-authentication-v1.md",
+      "sha256": "be7b5b7165efa7410dbe6ee9bd39682079cff29556b0a52d8281cc703a4d196a",
+      "bytes": 13511,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-16-atomic-migration-restore-v1.md",
+      "sha256": "3b6f89040b6f4d6ef5d7670eed58310eb7aaa7aeb648046bb2dafad848c230c0",
+      "bytes": 14763,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-17-context-dependency-truthfulness-v1.md",
+      "sha256": "ae7ab744a2328ada0df396f0b7db0df30836f59c8e47814cb242edb837483b6f",
+      "bytes": 12997,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-18-mcp-authority-downgrade-v1.md",
+      "sha256": "623aab3d7e3332260e58c47f27f0a0f68d98fc93bbecc4591a81167eb1f7eda7",
+      "bytes": 6499,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-19-native-memory-cross-project-export-v1.md",
+      "sha256": "d23378eae8649859e2e545ca6a573285513da4fa6cfe73e7532fb0c143e3fc6e",
+      "bytes": 8913,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-20-session-lifecycle-takeover-v1.md",
+      "sha256": "a9edb7ede4645fd2879eb9bb3d0c2864d71dede5301bd58b1136b1de7f1ec054",
+      "bytes": 9091,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-21-capture-dedupe-integrity-v1.md",
+      "sha256": "3a9b26e607f4c890e607f54be38b0680b8f0934aa0c0a8c238bce37b96c682ea",
+      "bytes": 8934,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-22-compaction-generation-integrity-v1.md",
+      "sha256": "8ca1ef13293f2cd775b90ae1ae7dc6125dd87d2e9548078b8a6ac03e5b97a02f",
+      "bytes": 9077,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/R-23-worker-replay-reconciliation-v1.md",
+      "sha256": "e6395f2b891a3cc2b3bec9624a6c6cb51d313e5b83275a592623b6832a670683",
+      "bytes": 9521,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/README.md",
+      "sha256": "b7825f1d1b37da8ade351aeced4e91d6c68570578e33c09dad891a8d07abc67c",
+      "bytes": 6375,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-02-v1.json",
+      "sha256": "bd15a913063d4654a54a59d4499d9e590461911afe77fb5735c0adcbb2431f3c",
+      "bytes": 2216,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-03-v1.json",
+      "sha256": "7c0bfca78d7c57f045e25ef6b7515ac964064ded4da04192ab6d0be4cf30cd04",
+      "bytes": 1691,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-04-v1.json",
+      "sha256": "19e5914709fae3a3cedb35e824cefb684a669604b9275b6be79874d8624ef197",
+      "bytes": 1657,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-06-v1.json",
+      "sha256": "8d51dccdbe52299dbbf347b8872c90530ba1b596b76d5d56270b191e04830ede",
+      "bytes": 1636,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-07-v1.json",
+      "sha256": "e2f27a2102c30a1a90e9733bea7016a33325af29821722d416ec798eb395d368",
+      "bytes": 1695,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-09-v1.json",
+      "sha256": "736c093009d181d6e192dd3226d3deca9d78bb8935ed29802ce23c581d4c32d1",
+      "bytes": 1710,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-10-v1.json",
+      "sha256": "ce0591be69e7833e92debe16c0b567b59fd9dc06f7d52c4e828abd843a921b19",
+      "bytes": 1718,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-13-v3.json",
+      "sha256": "dc9fa1d079364b64b4779354f5ab5f8750d17653aa9a6cd444b94d942c9810fc",
+      "bytes": 1936,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-14-v1.json",
+      "sha256": "d983b1ebd59f2e2e2e3958846e3a2227c64ddede2ae29958b582ffdf2706c920",
+      "bytes": 1809,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-16-v1.json",
+      "sha256": "d27e0d0f5c8addae2130fd72eb03a792132fdd3f9a7528c87be79e75bd44980e",
+      "bytes": 1806,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-17-v1.json",
+      "sha256": "d5b805e8e9e5509f8a72b797f08432af656523259462cdeb788a20571e7076cd",
+      "bytes": 1680,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-18-v1.json",
+      "sha256": "ae536696b1a2c59c553988685b9662f744733eb560722e488ea029e1f6ccbe49",
+      "bytes": 1620,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-19-v1.json",
+      "sha256": "16dabbdf58ecf54b0d45a2b35fc439e12807dab7fdfd25dbbffa92d96e6ac664",
+      "bytes": 1644,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-20-v1.json",
+      "sha256": "d5d9da16b1b22e7489328efc3e3838b79b54ff15c57cde1318800e4940677466",
+      "bytes": 1621,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-21-v1.json",
+      "sha256": "2c05b5ed29d35e79e6eb707488628c07b6853635f497e7576d2d498605a9baf8",
+      "bytes": 1616,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-22-v1.json",
+      "sha256": "3c0e75e11ed0b38ec13133c159cfb58f15395eec6751c8b6f56f79322253e618",
+      "bytes": 1579,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/R-23-v1.json",
+      "sha256": "aa8844249dcd327c8d3a7b1d9e7b8d03766782f473768cde0025cda7db53e1c8",
+      "bytes": 1761,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/c1-direct-cutover-v1.json",
+      "sha256": "8d23702746c51fcc0c60e09d8f346c5397633a33ffe3d6d1cb83dc8eb52e8884",
+      "bytes": 1452,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/c2-compatibility-gateway-v1.json",
+      "sha256": "56982e542d94e883ba4ba5eeedca281874aef77f70209105b5db87f91ac3a610",
+      "bytes": 1896,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/c3-receipt-relay-v1.json",
+      "sha256": "67604148e85df0d05c16ce7e240c3ee499bea8b36568b2fdf3201ec68fda9c0c",
+      "bytes": 1560,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/common-strict-core-v1.json",
+      "sha256": "6de6332a03c6662f4ee36558c5bb96ff488b1e331ca1d1a4ee8f68befdf2971d",
+      "bytes": 8563,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-cards/inputs/p1-input-control-v1.json",
+      "sha256": "c1b4dcd50ea23102a0af7c83818326139924d0ebca44e4d274dc9f4e2a1a888f",
+      "bytes": 3017,
+      "role": "poc_specification_only"
+    },
+    {
+      "path": ".aiwg/risks/poc-plan-2026-07-25.md",
+      "sha256": "e45fe3593a96ca7ae22b4a7e4fac8c9e4d2073346e76f7f0e254f66315f171d4",
+      "bytes": 36470,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/risks/risk-assessment-2026-07-25.md",
+      "sha256": "426d89fe2d96b184efd7bf3b3c602abfb5c10be257ccdc5b43f97bcf3d0f73da",
+      "bytes": 14861,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/risks/risk-escalation-log.md",
+      "sha256": "e7c46860f15b1edf30d2b16e80aa33ce684670c993b0e6098d29062fbbb86d0d",
+      "bytes": 1793,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/risks/risk-list.md",
+      "sha256": "353a134ba7da8fe2a37266069e8c584b2004e4595306fd4c253b6c7dfc223ad4",
+      "bytes": 20734,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/risks/risk-retirement-report.md",
+      "sha256": "9339372b2bf663d5a28564a7e716e40f8c66ecc98c2d01124c8b81b102c5c5cb",
+      "bytes": 9436,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/risks/risk-status-report-2026-07-25.md",
+      "sha256": "6d706436d16aa94b035ef4fea3b4497a26901618c9ba409b7c475432be46e736",
+      "bytes": 4234,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/risks/risk-workshop-2026-07-25.md",
+      "sha256": "201f4df556b73a68b0e0b6a0a89c7ac74671d2353460ea124336a35a6938035f",
+      "bytes": 5803,
+      "role": "risk_input"
+    },
+    {
+      "path": ".aiwg/security/compliance-requirements.md",
+      "sha256": "d2becb2a65ee894f274987f4211f861c40067245c6054d3dcc5bb55c424e83ee",
+      "bytes": 1118,
+      "role": "security_input"
+    },
+    {
+      "path": ".aiwg/security/data-classification.md",
+      "sha256": "738f695ebe569d1206e0b117b23e68b9b9f5757e87a9037798c9abd7372dc073",
+      "bytes": 864,
+      "role": "security_input"
+    },
+    {
+      "path": ".aiwg/security/iteration-6-emergency-containment-decision-request.md",
+      "sha256": "1dc843f0f2505016daf03e9d9d805c14a1e6edd6079acc732fa7799b08cee76e",
+      "bytes": 2553,
+      "role": "predecessor_open_authority_request"
+    },
+    {
+      "path": ".aiwg/security/privacy-impact-assessment.md",
+      "sha256": "cfc587008ddd92246e3f4225a5f4105c5d89c9a6637e4848f00a1fb4da8e3594",
+      "bytes": 1226,
+      "role": "security_input"
+    },
+    {
+      "path": ".aiwg/security/railway-secret-exposure-assessment-2026-07-26.md",
+      "sha256": "1e90130c0ad76fc7bc1ffae5025091c2e6c737337d256baa0b1db92c35ba41dd",
+      "bytes": 9936,
+      "role": "security_input"
+    },
+    {
+      "path": ".aiwg/security/secret-scan-disposition-2026-07-26.json",
+      "sha256": "031530d082e0a4e7c818228673895c3f5fee64e6c76f601a976877f6c6e4838d",
+      "bytes": 4631,
+      "role": "security_input"
+    },
+    {
+      "path": ".aiwg/testing/deterministic-profile-acceptance-candidate.md",
+      "sha256": "9d0205520c598c5d384b78bfb7bff4fd3983494cf82ec8969312916f02f0531f",
+      "bytes": 52298,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/iteration-5-dpa-finding-dispositions.md",
+      "sha256": "aeab5adf67fabfd1ba97d09501face617e554dc1fbbbe996a3bd4e02904c0ae6",
+      "bytes": 3679,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/iteration-5-retrieval-and-load-profile-specification.md",
+      "sha256": "958d22c04e15cfa3ba8941552dd9496657ef060c8a335f6435490d26951b62b7",
+      "bytes": 3471,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/iteration-5-stage-a-input-classification.md",
+      "sha256": "aee62417deb2bca8e6845b573aaa18a00ff86eb742be2257613a20c2ef6f517c",
+      "bytes": 3456,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/local-macos-qualification-profile-candidate.md",
+      "sha256": "aee34c1a42c9130f622d4b6d448fcf685fe22e4796851998424845bd78805a38",
+      "bytes": 9862,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/master-test-plan.md",
+      "sha256": "8cd7f77efa0cbb6a81f92b3ec5fbf4795cce1b26961957e6430099d6ee9aa3a8",
+      "bytes": 29462,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/r13-dependency-engine-report-2026-07-26.md",
+      "sha256": "dd31a892cdfc856ca0a819e24013287fe406d7bd6a41ddbfcd2cdbe446286d8c",
+      "bytes": 2016,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/r13-implementation-conformance-matrix.md",
+      "sha256": "72fcdbdcabbfab3c39475b5660f3aa935f6ab326c5361fc8b4771a6f4d2e1c25",
+      "bytes": 11619,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/r13-profile-source-verification-2026-07-26.md",
+      "sha256": "69515ae1eb401bf930b692dbccedef2ff77b69a3db4bf9ce7df2f74297c12218",
+      "bytes": 2835,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/stage-a-decision-packet-iteration-5.md",
+      "sha256": "710002ff13954329e44b60dff7b9f484ffa561ae1de828e5925d5e92068a84f3",
+      "bytes": 8113,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/stage-a-decision-packet-iteration-6.md",
+      "sha256": "c81e20be1807ed5230e9137dcc4205734cbf0408ab64ccd461743fa805c506ed",
+      "bytes": 8907,
+      "role": "test_specification_input"
+    },
+    {
+      "path": ".aiwg/testing/stage-a-preparation-readiness-iteration-7.md",
+      "sha256": "8567e194b5a50eff9855514acd24993d984aa10b3c83da76159a8532b5606b97",
+      "bytes": 4579,
+      "role": "test_specification_input"
+    }
+  ],
+  "post_generation_receipt": ".aiwg/reports/iteration-7-manifest-verification-r27.json",
+  "post_generation_review": ".aiwg/reports/iteration-7-adversarial-review-r27-2026-07-30.md"
+}

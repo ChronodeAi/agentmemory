@@ -383,7 +383,7 @@ async function handleProxyGeneric(
   handle: ProxyHandle,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   // Forward to the server's full MCP surface so non-Claude clients can
-  // reach all 58 tools (lessons, sentinels, slots, signals, graph, ...)
+  // reach all 59 tools (lessons, sentinels, slots, signals, graph, ...)
   // instead of being capped at the 7 IMPLEMENTED_TOOLS set baked into
   // this shim. The server validates arguments per tool.
   const result = (await handle.call("/agentmemory/mcp/call", {
@@ -430,9 +430,10 @@ export async function handleToolCall(
       return await handleProxy(validated, handle);
     } catch (err) {
       process.stderr.write(
-        `[@agentmemory/mcp] proxy call failed for ${toolName}: ${err instanceof Error ? err.message : String(err)}; invalidating handle and falling back to local KV\n`,
+        `[@agentmemory/mcp] proxy call failed for ${toolName}: ${err instanceof Error ? err.message : String(err)}; invalidating handle and surfacing the server error\n`,
       );
       invalidateHandle();
+      throw err;
     }
   }
   return handleLocal(validated, kvInstance);
@@ -475,9 +476,10 @@ export async function handleToolsList(): Promise<{ tools: unknown[] }> {
       );
     } catch (err) {
       process.stderr.write(
-        `[@agentmemory/mcp] tools/list proxy failed: ${err instanceof Error ? err.message : String(err)}; falling back to local list\n`,
+        `[@agentmemory/mcp] tools/list proxy failed: ${err instanceof Error ? err.message : String(err)}; invalidating handle and surfacing the server error\n`,
       );
       invalidateHandle();
+      throw err;
     }
   }
   const fallback = getAllTools().filter((t) => IMPLEMENTED_TOOLS.has(t.name));

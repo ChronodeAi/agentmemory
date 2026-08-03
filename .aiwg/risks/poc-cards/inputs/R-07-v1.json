@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R07-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-07",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-07-bounded-capture-observability-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-03", "ICM-11", "ICM-14"],
+  "requirements": ["FR-05", "FR-07", "FR-12", "FR-17", "FR-18", "FR-20"],
+  "traceability": ["TR-UCM-003", "TR-UCM-010", "TR-UCM-011", "TR-UCM-014"],
+  "accountable_owner_role": "Performance and Service Owners",
+  "case_families": [
+    {"case_id": "R07-CF-01", "name": "four-agent-nominal-load", "source_paths": ["src/hooks", "src/health/monitor.ts"], "governed_sinks": ["queue-ledger", "health", "metrics"], "expected_outcome": "zero loss and all accepted latency/resource ceilings"},
+    {"case_id": "R07-CF-02", "name": "capacity-and-terminal-outcomes", "source_paths": ["src/hooks/_delivery.ts"], "governed_sinks": ["active", "queued", "rejected", "dropped", "failed", "retried", "dispatched", "delivered"], "expected_outcome": "one durable terminal outcome per accepted event"},
+    {"case_id": "R07-CF-03", "name": "observability-recursion", "source_paths": ["src/telemetry/setup.ts", "src/logger.ts"], "governed_sinks": ["logs", "metrics", "failure-events"], "expected_outcome": "zero recursive amplification under collector failure"}
+  ],
+  "external_or_protected_evidence": ["point-in-time accepted host identity required; no external service required"],
+  "b1_mechanics_required": ["durable outcome ledger", "resource observer", "load and fault harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

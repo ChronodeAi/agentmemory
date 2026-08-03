@@ -1,0 +1,24 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R02-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-02",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-02-secret-flow-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-03", "ICM-09", "ICM-10", "ICM-14", "ICM-18"],
+  "requirements": ["FR-05", "FR-07", "FR-14", "FR-15", "FR-16", "FR-17", "FR-18", "FR-19"],
+  "traceability": ["TR-UCM-003", "TR-UCM-009", "TR-UCM-010", "TR-UCM-013", "TR-UCM-018"],
+  "accountable_owner_role": "Security Architect",
+  "case_families": [
+    {"case_id": "R02-CF-01", "name": "pre-transport-taint-corpus", "source_paths": ["src/hooks/_capture.ts", "src/hooks/post-tool-use.ts", "src/functions/privacy.ts"], "governed_sinks": ["serialized-hook-transport", "retry", "log", "receipt"], "expected_outcome": "zero unexpected raw canary before first governed boundary"},
+    {"case_id": "R02-CF-02", "name": "complete-sink-and-failure-remnant-denominator", "source_paths": ["src/functions/observe.ts", "src/functions/privacy.ts"], "governed_sinks": ["persistence", "index", "provider", "export", "snapshot", "backup", "failure-remnant"], "expected_outcome": "zero unexpected raw canary and one attributable disposition per input"},
+    {"case_id": "R02-CF-03", "name": "connector-backup-custody", "source_paths": ["src/cli/connect/util.ts"], "governed_sinks": ["connector-file", "backup", "rollback"], "expected_outcome": "policy-safe exact rollback with zero secret-bearing backup evidence"},
+    {"case_id": "R02-CF-04", "name": "synthetic-railway-startup", "source_paths": ["deploy/railway/entrypoint.sh", "deploy/railway/README.md"], "governed_sinks": ["synthetic-container-stdout", "synthetic-container-stderr", "synthetic-secret-file"], "expected_outcome": "zero synthetic-secret output and accepted injected/file precedence"}
+  ],
+  "external_or_protected_evidence": ["optional metadata-only Railway owner attestation; no logs, credentials, or secret values"],
+  "b1_mechanics_required": ["recording sinks", "synthetic Railway emulator", "every-boundary fault harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

@@ -1,0 +1,22 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R14-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-14",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-14-required-authentication-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-02", "ICM-09", "ICM-12", "ICM-19"],
+  "requirements": ["FR-03", "FR-15", "FR-16", "FR-19", "FR-20", "FR-21"],
+  "traceability": ["TR-UCM-002", "TR-UCM-009", "TR-UCM-012", "TR-UCM-019"],
+  "accountable_owner_role": "Authentication Service Owner",
+  "case_families": [
+    {"case_id": "R14-CF-01", "name": "complete-protected-interface-denominator", "source_paths": ["src/triggers/api.ts", "src/mcp"], "governed_sinks": ["134-protected-http-routes", "6-mcp-transports", "59-tools", "5-resources", "3-prompts", "7-fallback-tools"], "expected_outcome": "only exact liveness allowlist is unauthenticated"},
+    {"case_id": "R14-CF-02", "name": "claim-and-capability-matrix", "source_paths": ["src/auth.ts", "src/client-auth.ts"], "governed_sinks": ["protected-operation-side-effects"], "expected_outcome": "wrong issuer, audience, subject, project, operation, resource, key, nonce, time, or revocation produces zero mutation"},
+    {"case_id": "R14-CF-03", "name": "secret-source-failure", "source_paths": ["src/config.ts", "src/auth.ts"], "governed_sinks": ["protected-interface-availability"], "expected_outcome": "missing, empty, invalid, or unreadable secret makes protected surfaces unavailable"}
+  ],
+  "external_or_protected_evidence": ["synthetic credentials only; no live credential inspection"],
+  "b1_mechanics_required": ["synthetic externally reachable service", "secret-source and replay fault harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R09-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-09",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-09-viewer-health-truthfulness-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-11", "ICM-12", "ICM-19"],
+  "requirements": ["FR-03", "FR-20", "FR-21"],
+  "traceability": ["TR-UCM-011", "TR-UCM-012", "TR-UCM-016", "TR-UCM-019"],
+  "accountable_owner_role": "UI/API Owner",
+  "case_families": [
+    {"case_id": "R09-CF-01", "name": "http-status-and-body-preservation", "source_paths": ["src/viewer/server.ts", "src/viewer/document.ts"], "governed_sinks": ["viewer-fetch-state", "rendered-health"], "expected_outcome": "valid non-2xx health bodies remain visible and distinct from fetch failure"},
+    {"case_id": "R09-CF-02", "name": "build-and-compatibility-matrix", "source_paths": ["src/viewer", "src/version.ts"], "governed_sinks": ["compatibility-state", "build-identity"], "expected_outcome": "backend/viewer build mismatch never renders compatible"},
+    {"case_id": "R09-CF-03", "name": "scope-slot-worker-snapshot", "source_paths": ["src/functions/slots.ts", "src/health/monitor.ts"], "governed_sinks": ["project-view", "global-view", "slot-state", "snapshot-counters"], "expected_outcome": "scope, denominator, snapshot, and worker state remain attributable"}
+  ],
+  "external_or_protected_evidence": ["installed-runtime observations are regression inputs only, not qualification"],
+  "b1_mechanics_required": ["disposable backend/viewer/browser matrix", "stale-response controls"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}

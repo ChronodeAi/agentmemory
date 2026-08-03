@@ -13,8 +13,8 @@ agentmemory exposes 59 MCP tools. 8 are in the lean core set (`--tools core` or 
 | `memory_checkpoint` |  | `operation`*: string, `name`: string, `checkpointId`: string, `status`: string, `type`: string, `linkedActionIds`: string | Create or resolve an external checkpoint (CI result, approval, deploy status) that gates action progress. |
 | `memory_claude_bridge_sync` |  | `direction`*: string | Sync memory state to/from Claude Code's native MEMORY.md file. |
 | `memory_commit_link` |  | `sha`*: string, `sessionId`: string, `project`*: string | Link a verified Git commit SHA to its canonical project and optional coding session. |
-| `memory_commit_lookup` |  | `sha`*: string | Look up the agent session(s) that produced a specific git commit, given its SHA. Returns the commit metadata and linked sessions. |
-| `memory_commits` |  | `branch`: string, `repo`: string, `limit`: number | List recent commits linked to agent sessions, optionally filtered by branch or repo. |
+| `memory_commit_lookup` |  | `sha`*: string, `project`: string, `scope`: string | Look up the agent session(s) that produced a specific git commit, given its SHA. Returns the commit metadata and linked sessions. |
+| `memory_commits` |  | `project`: string, `scope`: string, `branch`: string, `repo`: string, `limit`: number | List recent commits linked to agent sessions, optionally filtered by branch or repo. |
 | `memory_compress_file` |  | `filePath`*: string, `project`*: string | Compress a markdown file to reduce token usage while preserving headings, URLs, and code blocks. Creates a .original.md backup before writing. |
 | `memory_consolidate` | yes | `project`: string, `scope`: string, `tier`: string | Run the 4-tier memory consolidation pipeline (working -> episodic -> semantic -> procedural). |
 | `memory_context_acknowledge` |  | `project`*: string, `sessionId`*: string, `packetId`*: string, `providerReceipt`*: string | Submit provider delivery evidence for a generated context packet. Sources are suppressed only after a configured trusted verifier accepts the receipt; otherwise this fails closed. |
@@ -27,7 +27,7 @@ agentmemory exposes 59 MCP tools. 8 are in the lean core set (`--tools core` or 
 | `memory_file_history` |  | `files`*: string, `sessionId`: string, `project`: string, `scope`: string | Get past observations about specific files. |
 | `memory_frontier` |  | `project`: string, `scope`: string, `agentId`: string, `limit`: number | Get all unblocked actions ranked by priority and urgency. Returns the frontier of actionable work with no unsatisfied dependencies. |
 | `memory_governance_delete` |  | `memoryIds`*: string, `reason`: string | Delete specific memories with audit trail. |
-| `memory_graph_query` |  | `startNodeId`: string, `nodeType`: string, `maxDepth`: number, `query`: string | Query the knowledge graph for entities and relationships. |
+| `memory_graph_query` |  | `project`: string, `scope`: string, `startNodeId`: string, `nodeType`: string, `maxDepth`: number, `query`: string, `limit`: number, `offset`: number | Query the knowledge graph for entities and relationships. |
 | `memory_heal` |  | `categories`: string, `dryRun`: string | Auto-fix all fixable issues found by diagnostics. Unblocks stuck actions, expires stale leases, cleans up orphaned data. |
 | `memory_insight_list` |  | `project`: string, `minConfidence`: number, `limit`: number | List synthesized insights, higher-order observations derived from patterns across memories, lessons, and crystals. |
 | `memory_lease` |  | `actionId`*: string, `agentId`*: string, `operation`*: string, `result`: string, `ttlMs`: number | Acquire, release, or renew an exclusive lease on an action. Prevents multiple agents from working on the same thing. |

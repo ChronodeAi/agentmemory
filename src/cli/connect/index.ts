@@ -20,6 +20,7 @@ import { adapter as pi } from "./pi.js";
 import { adapter as qwen } from "./qwen.js";
 import { adapter as warp } from "./warp.js";
 import { adapter as zed } from "./zed.js";
+import { ensureLocalAccessConfiguration } from "../local-access.js";
 
 export const ADAPTERS: readonly ConnectAdapter[] = [
   claudeCode,
@@ -111,6 +112,8 @@ export async function runConnect(args: string[]): Promise<void> {
   }
 
   const opts: ConnectOptions = { dryRun, force, withHooks };
+
+  if (!dryRun) ensureLocalAccessConfiguration();
 
   p.intro("agentmemory connect");
 

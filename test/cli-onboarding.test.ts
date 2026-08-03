@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -29,6 +29,20 @@ vi.mock("../src/cli/connect/index.js", () => ({
 
 const ORIGINAL_HOME = process.env["HOME"];
 const ORIGINAL_USERPROFILE = process.env["USERPROFILE"];
+const AUTH_ENV_KEYS = [
+  "AGENTMEMORY_SECRET",
+  "AGENTMEMORY_SECRET_FILE",
+  "AGENTMEMORY_ADMIN_SECRET",
+  "AGENTMEMORY_ADMIN_SECRET_FILE",
+  "AGENTMEMORY_PROJECT_CAPABILITY_SECRET",
+  "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE",
+  "AGENTMEMORY_PROJECT_CAPABILITY_TOKEN",
+  "AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE",
+  "AGENTMEMORY_STRICT_CAPABILITY_MODE",
+] as const;
+const ORIGINAL_AUTH_ENV = new Map(
+  AUTH_ENV_KEYS.map((key) => [key, process.env[key]]),
+);
 const stdinTtyDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
 const stdoutTtyDescriptor = Object.getOwnPropertyDescriptor(process.stdout, "isTTY");
 
@@ -56,6 +70,7 @@ describe("cli onboarding", () => {
     sandboxHome = mkdtempSync(join(tmpdir(), "agentmemory-onboarding-"));
     process.env["HOME"] = sandboxHome;
     process.env["USERPROFILE"] = sandboxHome;
+    for (const key of AUTH_ENV_KEYS) delete process.env[key];
     setTTY(false);
     vi.clearAllMocks();
   });
@@ -66,6 +81,11 @@ describe("cli onboarding", () => {
     else process.env["HOME"] = ORIGINAL_HOME;
     if (ORIGINAL_USERPROFILE === undefined) delete process.env["USERPROFILE"];
     else process.env["USERPROFILE"] = ORIGINAL_USERPROFILE;
+    for (const key of AUTH_ENV_KEYS) {
+      const value = ORIGINAL_AUTH_ENV.get(key);
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
     rmSync(sandboxHome, { recursive: true, force: true });
   });
 
@@ -90,5 +110,20 @@ describe("cli onboarding", () => {
       skipSplash: true,
     });
     expect(typeof preferences.firstRunAt).toBe("string");
+
+    const envPath = join(sandboxHome, ".agentmemory", ".env");
+    const env = readFileSync(envPath, "utf8");
+    expect(env).toContain("AGENTMEMORY_SECRET_FILE=~/.agentmemory/secret");
+    expect(env).toContain(
+      "AGENTMEMORY_ADMIN_SECRET_FILE=~/.agentmemory/admin-secret",
+    );
+    expect(env).toContain(
+      "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE=~/.agentmemory/project-capability-secret",
+    );
+    for (const name of ["secret", "admin-secret", "project-capability-secret"]) {
+      const path = join(sandboxHome, ".agentmemory", name);
+      expect(readFileSync(path, "utf8").trim().length).toBeGreaterThanOrEqual(32);
+      expect(statSync(path).mode & 0o777).toBe(0o600);
+    }
   });
 });

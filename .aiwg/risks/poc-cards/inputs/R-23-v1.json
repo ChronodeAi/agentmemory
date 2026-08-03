@@ -1,0 +1,22 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R23-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-23",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-23-worker-replay-reconciliation-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-11", "ICM-14", "ICM-19"],
+  "requirements": ["FR-12", "FR-17", "FR-18", "FR-20", "FR-21"],
+  "traceability": ["TR-UCM-011", "TR-UCM-014", "TR-UCM-019"],
+  "accountable_owner_role": "Runtime Supervision Owner",
+  "case_families": [
+    {"case_id": "R23-CF-01", "name": "durable-acceptance-and-terminal-state", "source_paths": ["src/hooks/_delivery.ts", "src/hooks/_observe-delivery.ts"], "governed_sinks": ["event-ledger", "queue", "terminal-result"], "expected_outcome": "every accepted event has one durable attributable terminal disposition"},
+    {"case_id": "R23-CF-02", "name": "singleton-worker-fencing", "source_paths": ["src/health/monitor.ts", "src/cli/iii-runtime-config.ts"], "governed_sinks": ["worker-lease", "worker-identity"], "expected_outcome": "dual start or stale worker cannot produce two active owners"},
+    {"case_id": "R23-CF-03", "name": "restart-replay-and-readiness", "source_paths": ["src/functions/replay.ts", "src/health/monitor.ts"], "governed_sinks": ["replay-ledger", "readiness", "reconciliation-receipt"], "expected_outcome": "bounded replay reconciles partial effects and readiness remains unavailable until convergence"}
+  ],
+  "external_or_protected_evidence": ["disposable host and process state only"],
+  "b1_mechanics_required": ["durable intake", "lease/fencing supervisor", "restart/replay and poison-event harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}

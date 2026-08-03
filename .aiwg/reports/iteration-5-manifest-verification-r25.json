@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "status": "passed-local-deterministic",
+  "verified_at_utc": "2026-07-29T16:44:26.126Z",
+  "manifest_revision": 25,
+  "manifest_path": ".aiwg/reports/iteration-5-input-manifest-r25.json",
+  "manifest_sha256": "2c3039c0767866e7e21ba11eded16bc3d88a58bb56068b8e9e80c43dd9c01ac9",
+  "predecessor_manifest_sha256": "6ca664d7a2b3f5b842960470cf7eb71a0cf878824c2908b5dd0e1aa6099f91e5",
+  "superseded_unsigned_candidate": {
+    "manifest_sha256": "7e64b407cb47a336daf1c3b64c2079d0588a5e6d1ecb5d33aa002a63efd03b65",
+    "deterministic_receipt_sha256": "d108aec2b0ea7571076a041bb5b44c2fc0d34817dfe4e6a5de4d3faf71d05a8c",
+    "review_disposition": "RETURN",
+    "reason": "Fresh runtime evidence contradicted the frozen unavailable-runtime baseline.",
+    "authority_effect": "none"
+  },
+  "decision_boundary": "Revision 25 verification is unsigned local advisory evidence only. It is not human acceptance, independent custody, qualifying execution evidence, Stage-A acceptance, risk disposition, ABM passage, Construction authorization, canary admission, deployment, release, or rollout.",
+  "deterministic_checks": {
+    "checks": {
+      "revision": true,
+      "kind": true,
+      "candidate": true,
+      "r24_manifest_hash": true,
+      "r24_receipt_hash": true,
+      "r24_review_hash": true,
+      "r23_predecessor": true,
+      "r24_entry_count": true,
+      "r24_drift_is_declared_refresh": true,
+      "delta_count": true,
+      "delta_unique": true,
+      "delta_paths_safe": true,
+      "delta_missing": true,
+      "delta_regular": true,
+      "delta_hashes": true,
+      "delta_json": true,
+      "no_mutable_entries": true,
+      "protected_product_delta": true,
+      "no_product_test_ci_schema_package_migration_delta": true,
+      "markdown_links": true,
+      "requirement_parents": true,
+      "atomic_children": true,
+      "rtm_exact_children": true,
+      "rtm_memberships": true,
+      "trace_rows": true,
+      "realization_worksheets": true,
+      "risk_portfolio": true,
+      "architecture_state": true,
+      "dpa_rows": true,
+      "authority_questions": true,
+      "stage_boundary": true,
+      "runtime_refresh_admitted": true,
+      "stage_a_successor_binding_template": true,
+      "superseded_candidate_recorded": true,
+      "secret_pattern_scan": true
+    },
+    "failed_checks": [],
+    "r24_entries": 236,
+    "r24_declared_refreshes": 4,
+    "r24_undeclared_drift": 0,
+    "delta_entries": 24,
+    "markdown_links_checked": 12,
+    "requirement_parents": 33,
+    "atomic_children": 130,
+    "rtm_atomic_children": 130,
+    "rtm_memberships": 288,
+    "trace_rows": 19,
+    "normalized_test_rows": 19,
+    "risks": 23,
+    "risk_priorities": {
+      "P0": 0,
+      "P1": 17,
+      "P2": 5,
+      "P3": 1
+    },
+    "open_hard_vetoes": 16,
+    "dpa_rows": 27,
+    "authority_questions": 13,
+    "secret_pattern_matches": {
+      "private_key": 0,
+      "github_token": 0,
+      "aws_access_key": 0,
+      "bearer_value": 0
+    }
+  },
+  "details": {
+    "r24_declared_refreshes": [
+      ".aiwg/reports/iteration-4-human-decision-packet.md",
+      ".aiwg/reports/iteration-4-traceability-status-r11-2026-07-27.md",
+      ".aiwg/requirements/traceability-matrix.md",
+      ".aiwg/risks/poc-plan-2026-07-25.md"
+    ],
+    "r24_drift": [
+      {
+        "path": ".aiwg/requirements/traceability-matrix.md",
+        "issue": "sha256"
+      },
+      {
+        "path": ".aiwg/risks/poc-plan-2026-07-25.md",
+        "issue": "sha256"
+      },
+      {
+        "path": ".aiwg/reports/iteration-4-human-decision-packet.md",
+        "issue": "sha256"
+      },
+      {
+        "path": ".aiwg/reports/iteration-4-traceability-status-r11-2026-07-27.md",
+        "issue": "sha256"
+      }
+    ],
+    "delta_duplicates": [],
+    "invalid_paths": [],
+    "missing_paths": [],
+    "nonregular_paths": [],
+    "symlink_paths": [],
+    "sha256_drift": [],
+    "json_errors": [],
+    "unresolved_markdown_links": [],
+    "protected_product_delta": [],
+    "product_delta": [],
+    "missing_rtm_children": [],
+    "extra_rtm_children": [],
+    "memberships": {
+      "DES-UCR-001": 61,
+      "DES-UCR-002": 121,
+      "DES-UCR-003": 106
+    },
+    "worksheet_results": [
+      {
+        "id": "001",
+        "rows": 23,
+        "denominator": 23,
+        "threshold": 19,
+        "numerator": 0,
+        "numerator_rows": 23
+      },
+      {
+        "id": "002",
+        "rows": 54,
+        "denominator": 54,
+        "threshold": 44,
+        "numerator": 0,
+        "numerator_rows": 54
+      },
+      {
+        "id": "003",
+        "rows": 27,
+        "denominator": 27,
+        "threshold": 22,
+        "numerator": 0,
+        "numerator_rows": 27
+      }
+    ],
+    "priorities": {
+      "P0": 0,
+      "P1": 17,
+      "P2": 5,
+      "P3": 1
+    },
+    "vetoes": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13,
+      14,
+      15,
+      16
+    ],
+    "dpa_ids": [
+      "001",
+      "002",
+      "003",
+      "004",
+      "005",
+      "006",
+      "007",
+      "008",
+      "009",
+      "010",
+      "011",
+      "012",
+      "013",
+      "014",
+      "015",
+      "016",
+      "017",
+      "018",
+      "019",
+      "020",
+      "021",
+      "022",
+      "023",
+      "024",
+      "025",
+      "026",
+      "027"
+    ],
+    "authority_question_ids": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9,
+      10,
+      11,
+      12,
+      13
+    ],
+    "runtime_nonconformance_links": [
+      "R-08",
+      "R-09",
+      "R-14",
+      "R-23",
+      "DPA-025",
+      "DPA-026",
+      "DPA-027"
+    ],
+    "secret_pattern_matches": {
+      "private_key": 0,
+      "github_token": 0,
+      "aws_access_key": 0,
+      "bearer_value": 0
+    }
+  },
+  "independent_advisory_review": "A separate post-generation premium read-only adversarial review is required and remains outside this manifest/receipt pair.",
+  "result": "Revision 25 passed local deterministic checks. Four predecessor refreshes are declared, fresh runtime contradictions are admitted, and every human and lifecycle gate remains separate and open."
+}

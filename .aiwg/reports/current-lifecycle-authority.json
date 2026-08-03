@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "project": "github.com/chronodeai/agentmemory",
+  "current_as_of": "2026-07-31",
+  "authority_binding": ".aiwg/decisions/authority-bindings/AB-STGA-001-r13-local-macos-stage-a.md",
+  "stage_a": {
+    "status": "ACCEPTED",
+    "scope": "R-13 local macOS specification only",
+    "record_id": "3c6204ea3462278e6706afca32af873d7c6d2a5cb9be4b2611b82c76b7b28f58",
+    "disposition_sha256": "f37ef42dcc531f80c1ac0a3bb61acdf3d04c7400d72c6ac7e7ba2a05906b51ff",
+    "verification_sha256": "cb5bfb30db6a85a6424f0d301170660489cd542c06ab17989cc9b08e4b2b3228"
+  },
+  "b1": {
+    "status": "ELIGIBLE_FOR_SEPARATE_DECISION_NOT_EXECUTED",
+    "recommended_successor": "R3_NO_EXTERNAL_PREMIUM_WORKERS_INSIDE_B1"
+  },
+  "b2": "BLOCKED",
+  "stage_c": "NOT_EXECUTED",
+  "stage_d": "NOT_EXECUTED",
+  "stage_e": "NOT_EXECUTED",
+  "risk_state": {
+    "identified": 23,
+    "mitigated": 0,
+    "retired": 0
+  },
+  "dec_15": "NOT_MET_11_OF_49",
+  "abm": "FAIL_NO_GO",
+  "architecture": "NOT_ACCEPTED_BY_THIS_BINDING",
+  "construction": "UNAUTHORIZED",
+  "authority_effect": "Stage A is current and B1 is decision-eligible. No downstream execution or lifecycle status is granted."
+}
+

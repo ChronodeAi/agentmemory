@@ -9,10 +9,37 @@ Remembered content is not proof. Packet generation currently risks being counted
 
 ## Proposed decision
 
-Represent authority, provenance, temporal validity, and independent verification explicitly. Filter context eligibility before relevance and enforce the 2,000-token limit after packing. Mark a source delivered only after provider acknowledgement. Require typed test/runtime/commit/accepted-ADR evidence for promotion and prohibit recalled content from validating itself.
+Represent authority, provenance, temporal validity, independent verification,
+and human acceptance explicitly. Treat identifiers as locators, not evidence.
+Filter `ELIGIBLE`, `INELIGIBLE`, and `INDETERMINATE` context before relevance
+and enforce the 2,000-token limit on the final serialized wire image after
+packing. Use fixed maxima of 300/400/700/400/200 tokens for
+slots-profile/lessons/episodic/file-history/provenance and at most five
+distinct qualified retrieved source records. Unused capacity is not silently
+reassigned.
+
+Distinguish generated, dispatched-unverified, provider-acknowledged,
+suppressed, and consumed states. Local output acceptance is not provider
+acknowledgement. Matching provider-native acknowledgement acceptance and its
+exact source/session suppression projection commit atomically; late,
+duplicate, revoked, replayed, wrong-issuer, wrong-attempt, and sibling receipts
+cannot affect unrelated attempts. Require an immutable evidence-lineage DAG and
+transactional outbox for promotion. Typed test/runtime/commit/accepted-ADR
+evidence is required; recalled content cannot validate itself.
+
+Use complete canonical event identity and a durable idempotency result before
+dedupe success. A prefix hash or process-local cache is an optimization only.
+Publish rolling compaction through one immutable, integrity-bound generation;
+the exact-facts ledger cannot be updated, deleted, or indexed independently of
+the source/target generation.
 
 ## Consequences
 
-Existing packet, injection, promotion, and metric models must migrate. Automatic gate-critical injection remains disabled until adversarial benchmarks and the Memetics canary pass.
+Existing packet, injection, promotion, lineage, and metric models must migrate.
+Provider-native acknowledgement availability differs by host and requires
+explicit compatibility behavior. Automatic gate-critical injection remains
+disabled until adversarial benchmarks and the Memetics canary pass. Dedupe and
+compaction require collision, concurrency, restart, every-boundary fault, and
+tamper-detection evidence.
 
 This ADR is not accepted or baselined.

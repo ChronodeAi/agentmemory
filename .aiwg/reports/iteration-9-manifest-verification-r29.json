@@ -1,0 +1,457 @@
+{
+  "schema_version": 2,
+  "receipt_kind": "corrected-successor-manifest-deterministic-verification",
+  "generated_at_utc": "2026-07-30T16:09:24.741Z",
+  "project": "github.com/chronodeai/agentmemory",
+  "candidate_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "candidate_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+  "manifest_path": ".aiwg/reports/iteration-9-input-manifest-r29.json",
+  "manifest_sha256": "54893895fa4b11918479045e72f0357d33747e9aa38d808f697876a0afdc7829",
+  "manifest_entry_count": 176,
+  "checks_total": 50,
+  "checks_passed": 50,
+  "checks_failed": 0,
+  "result": "PASS",
+  "authority_effect": "Local deterministic documentary verification only. PASS corrects R28 ordering and containment-evidence semantics but does not independently authenticate a human, establish independent custody, prove application-level graceful shutdown or permanent remediation, accept Stage A, authorize dependency repair, B1, B2, PoC execution, runtime restart, risk disposition, architecture, ABM, Construction, canary, package, deployment, release, or rollout.",
+  "checks": [
+    {
+      "name": "schema-and-kind",
+      "passed": true,
+      "detail": "schema=2 revision=29 kind=corrected-verified-predecessor-successor"
+    },
+    {
+      "name": "project-identity",
+      "passed": true,
+      "detail": "github.com/chronodeai/agentmemory"
+    },
+    {
+      "name": "git-head",
+      "passed": true,
+      "detail": "git=0e9af82dcfdf07dd1f521c4621823f31a9b2eaba manifest=0e9af82dcfdf07dd1f521c4621823f31a9b2eaba"
+    },
+    {
+      "name": "git-tree",
+      "passed": true,
+      "detail": "git=8c479b95bb9753911df212089d7faf3d6f35a28d manifest=8c479b95bb9753911df212089d7faf3d6f35a28d"
+    },
+    {
+      "name": "branch",
+      "passed": true,
+      "detail": "git=codex/agentmemory-elab-r29 manifest=codex/agentmemory-elab-r29"
+    },
+    {
+      "name": "origin-binding",
+      "passed": true,
+      "detail": {
+        "origin": "https://github.com/ChronodeAi/agentmemory.git",
+        "origin_configured": true,
+        "upstream_remote_configured": false,
+        "upstream_documentary_url": "https://github.com/rohitg00/agentmemory.git"
+      }
+    },
+    {
+      "name": "r28-predecessor-anchors",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "r28-return-preserved",
+      "passed": true,
+      "detail": {
+        "disposition": "RETURN"
+      }
+    },
+    {
+      "name": "r28-imported-entry-map-continuity",
+      "passed": true,
+      "detail": {
+        "imported": 169,
+        "order_preserved": false,
+        "failures": []
+      }
+    },
+    {
+      "name": "entry-count",
+      "passed": true,
+      "detail": "declared=176 actual=176 expected=176"
+    },
+    {
+      "name": "entry-order-manual-ascii-comparator",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "entry-order-external-c-sort",
+      "passed": true,
+      "detail": "LC_ALL=C sort -c PASS"
+    },
+    {
+      "name": "entry-uniqueness",
+      "passed": true,
+      "detail": "unique=176 total=176"
+    },
+    {
+      "name": "safe-paths",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "all-files-regular-and-present",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "hashes-match",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "sizes-match",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "entry-json-valid",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "no-product-entries",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "successor-additions-exact",
+      "passed": true,
+      "detail": {
+        "declared": 7,
+        "failures": []
+      }
+    },
+    {
+      "name": "local-session-event-provenance-replays",
+      "passed": true,
+      "detail": {
+        "source": "/Users/base/.codex/sessions/2026/07/17/rollout-2026-07-17T16-53-13-019f7211-bfe3-7c21-ad5e-906681b9e332.jsonl",
+        "selected_records": 59,
+        "failures": []
+      }
+    },
+    {
+      "name": "authorization-event-exact",
+      "passed": true,
+      "detail": {
+        "timestamp": "2026-07-30T15:32:21.001Z",
+        "message_id": "msg_019fb3a7-b789-7300-9c5b-e8db4e010341",
+        "text_sha256": "c94882c19b7b6ec70ceaff9d99097898d0ab49e9ad503f331e73e20d2a3217a6"
+      }
+    },
+    {
+      "name": "authorization-precedes-first-mutation",
+      "passed": true,
+      "detail": {
+        "first_mutation_call_id": "call_c6lh5YyBddz9KFNKDhmEMohm",
+        "first_mutation_timestamp": "2026-07-30T15:34:28.350Z",
+        "authorization_preceded_first_mutation": true,
+        "lead_time_milliseconds": 127349
+      }
+    },
+    {
+      "name": "complete-effective-stop-condition-set",
+      "passed": true,
+      "detail": {
+        "event_evidence": [
+          "identity-drift",
+          "automatic-restart",
+          "failed-graceful-exit",
+          "unexpected-listener",
+          "ambiguous-verification"
+        ],
+        "effective_disposition": [
+          "identity-drift",
+          "automatic-restart",
+          "failed-graceful-exit",
+          "unexpected-listener",
+          "ambiguous-verification"
+        ],
+        "manifest": [
+          "identity-drift",
+          "automatic-restart",
+          "failed-graceful-exit",
+          "unexpected-listener",
+          "ambiguous-verification"
+        ]
+      }
+    },
+    {
+      "name": "effective-authority-remains-bounded",
+      "passed": true,
+      "detail": {
+        "authority_expanded": false,
+        "restart_authorized": false
+      }
+    },
+    {
+      "name": "exact-containment-mutation-set",
+      "passed": true,
+      "detail": [
+        "launchctl bootout gui/501/com.agentmemory.server",
+        "kill -TERM 8749",
+        "kill -TERM 7324"
+      ]
+    },
+    {
+      "name": "no-forbidden-containment-command",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "target-listener-denominator-exact",
+      "passed": true,
+      "detail": {
+        "target_processes": [
+          2725,
+          8749,
+          7324
+        ],
+        "discovered_ports": [
+          3111,
+          3112,
+          3113,
+          3114,
+          49134
+        ],
+        "scope": "listeners held by the three exact revalidated target PIDs in the pre-action lsof inventory"
+      }
+    },
+    {
+      "name": "shutdown-claim-narrowed",
+      "passed": true,
+      "detail": {
+        "process_exit_claim": "PID absence after one TERM and a two-second observation; application-level clean shutdown is not proved",
+        "application_level_graceful_shutdown_proved": false
+      }
+    },
+    {
+      "name": "conditional-wording-corrected",
+      "passed": true,
+      "detail": "only iii TERM is conditional"
+    },
+    {
+      "name": "r28-findings-addressed",
+      "passed": true,
+      "detail": "R28-F01..R28-F05 present"
+    },
+    {
+      "name": "package-lock-blocker-preserved",
+      "passed": true,
+      "detail": {
+        "status": "FAIL",
+        "verification": "offline-lock-closure-check",
+        "observed_npm_ci_result": "FAIL-EUSAGE-lockfile-out-of-sync",
+        "package_lock_mismatch_count": 1,
+        "disposition": "open-stage-a-preparation-blocker-product-repair-not-authorized"
+      }
+    },
+    {
+      "name": "stage-a-remains-not-submission-ready",
+      "passed": true,
+      "detail": "not-submission-ready"
+    },
+    {
+      "name": "stage-a-human-authority-remains-open",
+      "passed": true,
+      "detail": {
+        "human_test_architect": null,
+        "configuration_manager_concurrence": null,
+        "security_architect_concurrence": null,
+        "release_owner_concurrence": null,
+        "local_test_infrastructure_owner_advisory": null,
+        "dependency_owner_advisory": null
+      }
+    },
+    {
+      "name": "local-event-evidence-remains-non-independent",
+      "passed": true,
+      "detail": {
+        "independent_authentication": false,
+        "independent_custody": false,
+        "signatures": []
+      }
+    },
+    {
+      "name": "candidate-bound-interface-inventory",
+      "passed": true,
+      "detail": {
+        "path": ".aiwg/reports/g-icm-01-interface-inventory.json",
+        "sha256": "6821edf7525d5e8f844e2c68922b882df8e531f550220244e9d45721bfba1f42",
+        "inventory_input_count": 194,
+        "inventory_input_sha256": "6b3b918167885d87ea23f40c9f66da304a5910aa3801957aca2c8d1910916fb8",
+        "source_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+        "source_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+        "regeneration": "two-runs-byte-identical",
+        "classification": "specification-input-only"
+      }
+    },
+    {
+      "name": "stage-a-profile-binding",
+      "passed": true,
+      "detail": {
+        "id": "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1",
+        "specification_path": ".aiwg/testing/local-macos-qualification-profile-candidate.md",
+        "specification_sha256": "aee34c1a42c9130f622d4b6d448fcf685fe22e4796851998424845bd78805a38",
+        "decision_id": "DEC-12",
+        "decision_source_path": ".aiwg/reports/iteration-4-local-macos-human-disposition-2026-07-28.json",
+        "decision_source_sha256": "58ca761f4ebed1842c23372b5b3a7c52a559be4bae6efb7adf10541757d5272b",
+        "authority_effect": "specification-only-execution-blocked"
+      }
+    },
+    {
+      "name": "r21-incomplete-anchor-fails-closed",
+      "passed": true,
+      "detail": {
+        "manifest_path": ".aiwg/reports/iteration-4-input-manifest.json",
+        "manifest_sha256": "cbdb7cde5f25167a79c13e21e06297750837339465576e72362e40ac1cd5c555",
+        "manifest_available": false,
+        "receipt_path": ".aiwg/reports/iteration-4-manifest-verification-r21.json",
+        "receipt_sha256": "7f59853ceaf5734cbd64f357fd4e7148af14b57765c3093d2f52f4c85c4401b4",
+        "continuity_claimed": false,
+        "qualifying_evidence_admitted": false
+      }
+    },
+    {
+      "name": "codebase-memory-r29-index-recorded",
+      "passed": true,
+      "detail": {
+        "project": "github.com-chronodeai-agentmemory-r29",
+        "mode": "full",
+        "status": "indexed",
+        "nodes": 10377,
+        "edges": 23194,
+        "skipped_files": 0,
+        "parse_partial_files": 3,
+        "deliberately_not_indexed_files": 76,
+        "completeness_claimed": false
+      }
+    },
+    {
+      "name": "single-canonical-poc-join-location",
+      "passed": true,
+      "detail": {
+        "canonical_path": ".aiwg/requirements/traceability-matrix.md"
+      }
+    },
+    {
+      "name": "no-non-governance-worktree-changes",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "all-governance-delta-accounted-for",
+      "passed": true,
+      "detail": {
+        "delta_paths": 160,
+        "unaccounted": []
+      }
+    },
+    {
+      "name": "detached-post-generation-artifacts",
+      "passed": true,
+      "detail": [
+        {
+          "path": ".aiwg/reports/iteration-9-input-manifest-r29.json",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-9-manifest-verification-r29.json",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-9-adversarial-review-r29-2026-07-30.md",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-9-next-authority-decision-request.md",
+          "excluded": true,
+          "manifested": false
+        }
+      ]
+    },
+    {
+      "name": "git-diff-check",
+      "passed": true,
+      "detail": "PASS"
+    },
+    {
+      "name": "new-text-whitespace-check",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "interface-generator-check",
+      "passed": true,
+      "detail": "G-ICM-01 inventory current: 135 REST, 6 MCP transport, 59 tools, 13 hooks, 18 connectors"
+    },
+    {
+      "name": "gitleaks-aiwg-corpus",
+      "passed": true,
+      "detail": "no leaks found"
+    },
+    {
+      "name": "runtime-evidence-nonqualifying",
+      "passed": true,
+      "detail": {
+        "classification": "corrected-targeted-containment-event-evidence-not-qualification-evidence",
+        "qualifying_evidence_admitted": false
+      }
+    },
+    {
+      "name": "all-risks-remain-open",
+      "passed": true,
+      "detail": {
+        "canonical_total": 23,
+        "canonical_statuses": {
+          "IDENTIFIED": 23
+        },
+        "mitigated": 0,
+        "retired": 0,
+        "r14_score_refresh": {
+          "status": "proposed-owner-calibration-pending",
+          "from": {
+            "probability": 4,
+            "impact": 5,
+            "score": 20,
+            "priority": "P1"
+          },
+          "to": {
+            "probability": 5,
+            "impact": 5,
+            "score": 25,
+            "priority": "P0"
+          }
+        }
+      }
+    },
+    {
+      "name": "lifecycle-remains-blocked",
+      "passed": true,
+      "detail": {
+        "stage_a": "not-submission-ready",
+        "b1": "blocked",
+        "b2": "blocked",
+        "stage_c": "not-executed",
+        "stage_d": "not-executed",
+        "stage_e": "not-executed",
+        "abm": "fail-no-go",
+        "construction": "unauthorized",
+        "canary": "not-authorized",
+        "package": "not-authorized",
+        "release": "unauthorized",
+        "rollout": "unauthorized"
+      }
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R10-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-10",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-10-codebase-memory-canonical-alias-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-01", "ICM-15"],
+  "requirements": ["FR-01", "FR-02"],
+  "traceability": ["TR-UCM-002", "TR-UCM-007", "TR-UCM-015"],
+  "accountable_owner_role": "Codebase Memory Maintainer",
+  "case_families": [
+    {"case_id": "R10-CF-01", "name": "twenty-query-equivalence", "source_paths": ["external:codebase-memory-mcp-0.9.1"], "governed_sinks": ["canonical-query-results", "alias-query-results"], "expected_outcome": "five searches, five traces, five snippets, and five decision lookups have identical normalized hashes"},
+    {"case_id": "R10-CF-02", "name": "one-store-one-writer-lease", "source_paths": ["external:codebase-memory-mcp-0.9.1"], "governed_sinks": ["index-store", "writer-lease"], "expected_outcome": "canonical and alias resolve to one physical generation and one writer lease"},
+    {"case_id": "R10-CF-03", "name": "routing-only-rollback", "source_paths": ["external:codebase-memory-mcp-0.9.1"], "governed_sinks": ["sandbox-routing", "copied-index"], "expected_outcome": "rollback restores exact sandbox pre-image and mutates no live index"}
+  ],
+  "external_or_protected_evidence": ["accepted Codebase Memory 0.9.1 source/binary and owner-approved sandbox copies of canonical and duplicate indexes"],
+  "b1_mechanics_required": ["sandbox alias router", "lease observer", "copied-index rollback harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

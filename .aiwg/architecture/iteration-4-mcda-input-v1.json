@@ -1,0 +1,53 @@
+{
+  "schema_version": "agentmemory-architecture-mcda-input-v1",
+  "status": "BLANK_PREPARATION_ONLY_UNSCOREABLE",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "candidate_source": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "configurations": ["C1", "C2", "C3"],
+  "horizons": ["transition", "steady_state"],
+  "criteria": [
+    {"criterion": "security", "weight": 18, "direction": "higher_is_better"},
+    {"criterion": "truthfulness", "weight": 16, "direction": "higher_is_better"},
+    {"criterion": "rollback_recovery", "weight": 14, "direction": "higher_is_better"},
+    {"criterion": "testability", "weight": 12, "direction": "higher_is_better"},
+    {"criterion": "operability", "weight": 11, "direction": "higher_is_better"},
+    {"criterion": "compatibility", "weight": 9, "direction": "higher_is_better"},
+    {"criterion": "maintainability", "weight": 9, "direction": "higher_is_better"},
+    {"criterion": "performance", "weight": 6, "direction": "higher_is_better"},
+    {"criterion": "migration_cost", "weight": 5, "direction": "higher_means_lower_cost"}
+  ],
+  "score_domain": {"minimum": 0, "maximum": 5},
+  "confidence_domain": {
+    "independent_qualified_receipt": 1.0,
+    "repeatable_candidate_evidence": 0.7,
+    "unit_or_design_evidence": 0.4,
+    "unsupported": 0.0
+  },
+  "adjusted_row_formula": "row_weight * (score / 5) * evidence_confidence",
+  "evidence_coverage_formula": "sum(row_weight * evidence_confidence)",
+  "base_weight_total": 100,
+  "minimum_evidence_coverage_for_recommendation": 80,
+  "minimum_lead_for_recommendation": 5,
+  "sensitivity": {
+    "method": "one_criterion_at_a_time",
+    "multipliers": [0.8, 1.2],
+    "renormalization": "multiply_each_scenario_weight_by_100_divided_by_sum_of_scenario_weights",
+    "scenario_count_per_horizon": 18
+  },
+  "hard_veto_gate": {
+    "all_applicable_vetoes_must_be_closed_before_ranking": true,
+    "current_open_vetoes": [
+      "HV-01", "HV-02", "HV-03", "HV-04",
+      "HV-05", "HV-06", "HV-07", "HV-08",
+      "HV-09", "HV-10", "HV-11", "HV-12",
+      "HV-13", "HV-14", "HV-15", "HV-16"
+    ]
+  },
+  "score_rows": [],
+  "base_scores": null,
+  "sensitivity_scores": null,
+  "recommendation": null,
+  "architecture_decision": "NOT_DECIDED",
+  "adr_status_change_authorized": false,
+  "sad_baseline_authorized": false
+}

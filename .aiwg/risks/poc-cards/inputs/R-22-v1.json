@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R22-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-22",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-22-compaction-generation-integrity-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-17"],
+  "requirements": ["FR-05", "FR-08"],
+  "traceability": ["TR-UCM-017"],
+  "accountable_owner_role": "Compaction Integrity Owner",
+  "case_families": [
+    {"case_id": "R22-CF-01", "name": "complete-pre-and-target-generation", "source_paths": ["src/functions/compress.ts", "src/functions/flow-compress.ts"], "governed_sinks": ["ledger", "observations", "history", "indexes", "counts", "active-pointer"], "expected_outcome": "all target bytes and dependency roots validate before atomic activation"},
+    {"case_id": "R22-CF-02", "name": "every-boundary-crash-and-reader", "source_paths": ["src/functions/compress.ts"], "governed_sinks": ["active-generation", "reader-view"], "expected_outcome": "readers observe complete pre-image or complete target only"},
+    {"case_id": "R22-CF-03", "name": "ledger-tamper-integrity", "source_paths": ["src/functions/compress.ts"], "governed_sinks": ["exact-facts-ledger", "generation-root"], "expected_outcome": "mutation, substitution, omission, or replay is detected before use"}
+  ],
+  "external_or_protected_evidence": [],
+  "b1_mechanics_required": ["generation activation", "reader/restart harness", "ledger tamper fixture"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

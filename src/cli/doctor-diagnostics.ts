@@ -27,6 +27,29 @@ export type DiagnosticFixResult = {
   message?: string;
 };
 
+export type PassiveDoctorCheck = {
+  name: string;
+  ok: boolean;
+  hint?: string;
+  optional?: boolean;
+};
+
+export function summarizePassiveChecks(checks: PassiveDoctorCheck[]): {
+  requiredPassed: number;
+  requiredTotal: number;
+  optionalActive: number;
+  optionalTotal: number;
+} {
+  const required = checks.filter((check) => !check.optional);
+  const optional = checks.filter((check) => check.optional);
+  return {
+    requiredPassed: required.filter((check) => check.ok).length,
+    requiredTotal: required.length,
+    optionalActive: optional.filter((check) => check.ok).length,
+    optionalTotal: optional.length,
+  };
+}
+
 export function diagnosticFixConfirmed(
   applied: DiagnosticFixResult,
   rechecked: DiagnosticStatus,
@@ -217,11 +240,21 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
         if (!effects.envFileExists()) {
           return { ok: false, detail: "env file missing (run env-missing fix first)" };
         }
-        const env = effects.readEnvFile();
+        const env = effects.runtimeEnv();
         const real = realProviderKeys(env);
+        const requiresLlm = [
+          "AGENTMEMORY_AUTO_COMPRESS",
+          "CONSOLIDATION_ENABLED",
+          "GRAPH_EXTRACTION_ENABLED",
+        ].some((key) => env[key]?.trim().toLowerCase() === "true");
         return {
-          ok: real.length > 0,
-          detail: real.length > 0 ? `found: ${real.join(", ")}` : "no provider key set",
+          ok: real.length > 0 || !requiresLlm,
+          detail:
+            real.length > 0
+              ? `found: ${real.join(", ")}`
+              : requiresLlm
+                ? "an LLM-backed feature is enabled but no provider key is set"
+                : "zero-LLM mode (optional provider not configured)",
         };
       },
       fix: (ctx) => effects.openEditor(ctx.envPath),
@@ -285,7 +318,7 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
     },
     {
       id: "engine-version-mismatch",
-      message: "iii binary on PATH doesn't match the version agentmemory pins to.",
+      message: "No available iii binary matches the version agentmemory pins to.",
       fixPreview:
         "Re-run the iii installer for the pinned version and restart the engine.",
       moreInfo:
@@ -293,13 +326,30 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
         "use a different worker model. Running a mismatched binary surfaces as EPIPE " +
         "reconnect loops and empty search results.",
       check: async (ctx) => {
-        const bin = effects.findIiiBinary();
-        if (!bin) return { ok: false, detail: "iii not on PATH" };
-        const v = effects.iiiBinaryVersion(bin);
-        if (!v) return { ok: false, detail: "iii on PATH but --version failed" };
+        const candidates = Array.from(
+          new Set(
+            [effects.findIiiBinary(), effects.localBinIiiPath()].filter(
+              (path): path is string => Boolean(path),
+            ),
+          ),
+        );
+        const observed: string[] = [];
+        for (const bin of candidates) {
+          const version = effects.iiiBinaryVersion(bin);
+          if (version === ctx.pinnedVersion) {
+            return {
+              ok: true,
+              detail: `${version} at ${bin}`,
+            };
+          }
+          observed.push(`${version ?? "unreadable"} at ${bin}`);
+        }
         return {
-          ok: v === ctx.pinnedVersion,
-          detail: `${v} (pinned ${ctx.pinnedVersion})`,
+          ok: false,
+          detail:
+            observed.length > 0
+              ? `${observed.join(", ")} (pinned ${ctx.pinnedVersion})`
+              : `no iii binary found (pinned ${ctx.pinnedVersion})`,
         };
       },
       fix: async () => {

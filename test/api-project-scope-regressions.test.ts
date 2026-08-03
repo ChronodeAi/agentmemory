@@ -42,6 +42,10 @@ function adminHeaders(): Record<string, string> {
 function createSurfaces() {
   const functions = new Map<string, Handler>();
   const store = new Map<string, Map<string, unknown>>();
+  const triggered: Array<{
+    function_id: string;
+    payload?: Record<string, unknown>;
+  }> = [];
   const sdk = {
     registerFunction: (
       idOrOptions: string | { id: string },
@@ -53,7 +57,13 @@ function createSurfaces() {
       );
     },
     registerTrigger: () => {},
-    trigger: async () => ({ success: true }),
+    trigger: async (request: {
+      function_id: string;
+      payload?: Record<string, unknown>;
+    }) => {
+      triggered.push(request);
+      return { success: true };
+    },
   };
   const kv = {
     get: async <T>(scope: string, key: string): Promise<T | null> =>
@@ -82,10 +92,63 @@ function createSurfaces() {
     true,
     "agentmemory",
   );
-  return { functions, kv };
+  return { functions, kv, triggered };
 }
 
 describe("REST project scope regressions", () => {
+  it("deletes sessions only from the explicitly authorized project", async () => {
+    const { functions, kv, triggered } = createSurfaces();
+    await kv.set("mem:sessions", "session-a-1", {
+      id: "session-a-1",
+      project: PROJECT_A,
+    });
+    await kv.set("mem:sessions", "session-a-2", {
+      id: "session-a-2",
+      project: PROJECT_A,
+    });
+    await kv.set("mem:sessions", "session-b", {
+      id: "session-b",
+      project: PROJECT_B,
+    });
+
+    const deleted = await functions.get("api::sessions-delete")!({
+      headers: projectHeaders(PROJECT_A),
+      query_params: { project: PROJECT_A },
+    });
+    expect(deleted).toMatchObject({
+      status_code: 200,
+      body: {
+        success: true,
+        project: PROJECT_A,
+        matchedSessions: 2,
+        deletedSessions: 2,
+      },
+    });
+    expect(triggered).toEqual([
+      {
+        function_id: "mem::forget",
+        payload: { sessionId: "session-a-1" },
+      },
+      {
+        function_id: "mem::forget",
+        payload: { sessionId: "session-a-2" },
+      },
+    ]);
+
+    await expect(
+      functions.get("api::sessions-delete")!({
+        headers: projectHeaders(PROJECT_A),
+        query_params: { project: PROJECT_B },
+      }),
+    ).resolves.toMatchObject({ status_code: 401 });
+    await expect(
+      functions.get("api::sessions-delete")!({
+        headers: adminHeaders(),
+        query_params: {},
+      }),
+    ).resolves.toMatchObject({ status_code: 400 });
+  });
+
   it("filters commit listings and linked sessions by the exact project", async () => {
     const { functions, kv } = createSurfaces();
     await kv.set("mem:sessions", "session-a", {

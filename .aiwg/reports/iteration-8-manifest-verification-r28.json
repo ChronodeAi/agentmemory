@@ -1,0 +1,358 @@
+{
+  "schema_version": 2,
+  "receipt_kind": "successor-manifest-deterministic-verification",
+  "generated_at_utc": "2026-07-30T15:52:44.178Z",
+  "project": "github.com/chronodeai/agentmemory",
+  "candidate_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "candidate_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+  "manifest_path": ".aiwg/reports/iteration-8-input-manifest-r28.json",
+  "manifest_sha256": "92186d7a5468db45af792a641b762eab5fa83cfa89feb51f37f06000907193a3",
+  "manifest_entry_count": 169,
+  "checks_total": 41,
+  "checks_passed": 41,
+  "checks_failed": 0,
+  "result": "PASS",
+  "authority_effect": "Local deterministic documentary verification only. PASS admits the bounded containment evidence chain to R28 but does not prove permanent remediation, accept Stage A, authorize dependency repair, B1, B2, PoC execution, runtime restart, risk disposition, architecture, ABM, Construction, canary, package, deployment, release, or rollout.",
+  "checks": [
+    {
+      "name": "schema-and-kind",
+      "passed": true,
+      "detail": "schema=2 revision=28 kind=verified-predecessor-successor"
+    },
+    {
+      "name": "project-identity",
+      "passed": true,
+      "detail": "github.com/chronodeai/agentmemory"
+    },
+    {
+      "name": "git-head",
+      "passed": true,
+      "detail": "git=0e9af82dcfdf07dd1f521c4621823f31a9b2eaba manifest=0e9af82dcfdf07dd1f521c4621823f31a9b2eaba"
+    },
+    {
+      "name": "git-tree",
+      "passed": true,
+      "detail": "git=8c479b95bb9753911df212089d7faf3d6f35a28d manifest=8c479b95bb9753911df212089d7faf3d6f35a28d"
+    },
+    {
+      "name": "branch",
+      "passed": true,
+      "detail": "git=codex/agentmemory-elab-r28 manifest=codex/agentmemory-elab-r28"
+    },
+    {
+      "name": "r27-predecessor-anchors",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "r27-imported-entry-continuity",
+      "passed": true,
+      "detail": {
+        "imported": 161,
+        "failures": []
+      }
+    },
+    {
+      "name": "entry-count",
+      "passed": true,
+      "detail": "declared=169 actual=169 expected=169"
+    },
+    {
+      "name": "entry-order",
+      "passed": true,
+      "detail": "entries sorted by repository-relative path"
+    },
+    {
+      "name": "entry-uniqueness",
+      "passed": true,
+      "detail": "unique=169 total=169"
+    },
+    {
+      "name": "safe-paths",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "all-files-regular-and-present",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "hashes-match",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "sizes-match",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "entry-json-valid",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "no-product-entries",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "successor-additions-exact",
+      "passed": true,
+      "detail": {
+        "declared": 8,
+        "failures": []
+      }
+    },
+    {
+      "name": "containment-chain-hash-bound",
+      "passed": true,
+      "detail": {
+        "operator": "Alexander Roberts",
+        "failures": []
+      }
+    },
+    {
+      "name": "containment-human-authority-exact",
+      "passed": true,
+      "detail": {
+        "disposition": "AUTHORIZE",
+        "operator": "Alexander Roberts",
+        "restart_authorized": false,
+        "force_authorized": false
+      }
+    },
+    {
+      "name": "containment-execution-markers",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "containment-authority-remains-bounded",
+      "passed": true,
+      "detail": {
+        "restart_authorized": false,
+        "permanent_remediation_claimed": false
+      }
+    },
+    {
+      "name": "b-stga-06-only-reconciliation",
+      "passed": true,
+      "detail": "satisfied-at-verification-time"
+    },
+    {
+      "name": "package-lock-blocker-preserved",
+      "passed": true,
+      "detail": {
+        "status": "FAIL",
+        "verification": "offline-lock-closure-check",
+        "observed_npm_ci_result": "FAIL-EUSAGE-lockfile-out-of-sync",
+        "package_lock_mismatch_count": 1,
+        "disposition": "open-stage-a-preparation-blocker-product-repair-not-authorized"
+      }
+    },
+    {
+      "name": "stage-a-remains-not-submission-ready",
+      "passed": true,
+      "detail": "not-submission-ready"
+    },
+    {
+      "name": "stage-a-human-authority-remains-open",
+      "passed": true,
+      "detail": {
+        "human_test_architect": null,
+        "configuration_manager_concurrence": null,
+        "security_architect_concurrence": null,
+        "release_owner_concurrence": null,
+        "local_test_infrastructure_owner_advisory": null,
+        "dependency_owner_advisory": null
+      }
+    },
+    {
+      "name": "emergency-authority-recorded-without-expansion",
+      "passed": true,
+      "detail": {
+        "disposition": "AUTHORIZE",
+        "operator": "Alexander Roberts",
+        "disposition_date": "2026-07-30",
+        "execution_result": "verified-contained",
+        "restart_authorized": false
+      }
+    },
+    {
+      "name": "candidate-bound-interface-inventory",
+      "passed": true,
+      "detail": {
+        "path": ".aiwg/reports/g-icm-01-interface-inventory.json",
+        "sha256": "6821edf7525d5e8f844e2c68922b882df8e531f550220244e9d45721bfba1f42",
+        "inventory_input_count": 194,
+        "inventory_input_sha256": "6b3b918167885d87ea23f40c9f66da304a5910aa3801957aca2c8d1910916fb8",
+        "source_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+        "source_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+        "regeneration": "two-runs-byte-identical",
+        "classification": "specification-input-only"
+      }
+    },
+    {
+      "name": "stage-a-profile-binding",
+      "passed": true,
+      "detail": {
+        "id": "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1",
+        "specification_path": ".aiwg/testing/local-macos-qualification-profile-candidate.md",
+        "specification_sha256": "aee34c1a42c9130f622d4b6d448fcf685fe22e4796851998424845bd78805a38",
+        "decision_id": "DEC-12",
+        "decision_source_path": ".aiwg/reports/iteration-4-local-macos-human-disposition-2026-07-28.json",
+        "decision_source_sha256": "58ca761f4ebed1842c23372b5b3a7c52a559be4bae6efb7adf10541757d5272b",
+        "authority_effect": "specification-only-execution-blocked"
+      }
+    },
+    {
+      "name": "r21-incomplete-anchor-fails-closed",
+      "passed": true,
+      "detail": {
+        "manifest_path": ".aiwg/reports/iteration-4-input-manifest.json",
+        "manifest_sha256": "cbdb7cde5f25167a79c13e21e06297750837339465576e72362e40ac1cd5c555",
+        "manifest_available": false,
+        "receipt_path": ".aiwg/reports/iteration-4-manifest-verification-r21.json",
+        "receipt_sha256": "7f59853ceaf5734cbd64f357fd4e7148af14b57765c3093d2f52f4c85c4401b4",
+        "continuity_claimed": false,
+        "qualifying_evidence_admitted": false
+      }
+    },
+    {
+      "name": "codebase-memory-r28-index-recorded",
+      "passed": true,
+      "detail": {
+        "project": "github.com-chronodeai-agentmemory-r28",
+        "mode": "full",
+        "status": "indexed",
+        "nodes": 10018,
+        "edges": 22941,
+        "skipped_files": 0,
+        "parse_partial_files": 3,
+        "deliberately_not_indexed_files": 76,
+        "completeness_claimed": false
+      }
+    },
+    {
+      "name": "single-canonical-poc-join-location",
+      "passed": true,
+      "detail": {
+        "canonical_path": ".aiwg/requirements/traceability-matrix.md"
+      }
+    },
+    {
+      "name": "no-non-governance-worktree-changes",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "all-governance-delta-accounted-for",
+      "passed": true,
+      "detail": {
+        "delta_paths": 154,
+        "unaccounted": []
+      }
+    },
+    {
+      "name": "detached-post-generation-artifacts",
+      "passed": true,
+      "detail": [
+        {
+          "path": ".aiwg/reports/iteration-8-input-manifest-r28.json",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-8-manifest-verification-r28.json",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-8-adversarial-review-r28-2026-07-30.md",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-8-next-authority-decision-request.md",
+          "excluded": true,
+          "manifested": false
+        }
+      ]
+    },
+    {
+      "name": "git-diff-check",
+      "passed": true,
+      "detail": "PASS"
+    },
+    {
+      "name": "new-text-whitespace-check",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "interface-generator-check",
+      "passed": true,
+      "detail": "G-ICM-01 inventory current: 135 REST, 6 MCP transport, 59 tools, 13 hooks, 18 connectors"
+    },
+    {
+      "name": "gitleaks-aiwg-corpus",
+      "passed": true,
+      "detail": "no leaks found"
+    },
+    {
+      "name": "runtime-evidence-nonqualifying",
+      "passed": true,
+      "detail": {
+        "classification": "containment-execution-only-not-qualification-evidence",
+        "qualifying_evidence_admitted": false
+      }
+    },
+    {
+      "name": "all-risks-remain-open",
+      "passed": true,
+      "detail": {
+        "canonical_total": 23,
+        "canonical_statuses": {
+          "IDENTIFIED": 23
+        },
+        "mitigated": 0,
+        "retired": 0,
+        "r14_score_refresh": {
+          "status": "proposed-owner-calibration-pending",
+          "from": {
+            "probability": 4,
+            "impact": 5,
+            "score": 20,
+            "priority": "P1"
+          },
+          "to": {
+            "probability": 5,
+            "impact": 5,
+            "score": 25,
+            "priority": "P0"
+          }
+        }
+      }
+    },
+    {
+      "name": "lifecycle-remains-blocked",
+      "passed": true,
+      "detail": {
+        "stage_a": "not-submission-ready",
+        "b1": "blocked",
+        "b2": "blocked",
+        "stage_c": "not-executed",
+        "stage_d": "not-executed",
+        "stage_e": "not-executed",
+        "abm": "fail-no-go",
+        "construction": "unauthorized",
+        "canary": "not-authorized",
+        "package": "not-authorized",
+        "release": "unauthorized",
+        "rollout": "unauthorized"
+      }
+    }
+  ]
+}

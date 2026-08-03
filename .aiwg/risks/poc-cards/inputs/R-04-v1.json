@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R04-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-04",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-04-delivery-acknowledgement-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-06"],
+  "requirements": ["FR-11"],
+  "traceability": ["TR-UCM-006"],
+  "accountable_owner_role": "Software and Provider Authorities",
+  "case_families": [
+    {"case_id": "R04-CF-01", "name": "four-state-delivery", "source_paths": ["src/functions/coding-memory.ts", "src/hooks/_delivery.ts"], "governed_sinks": ["attempt-ledger", "suppression-projection"], "expected_outcome": "generated, dispatched-unverified, acknowledged, and suppressed remain distinct"},
+    {"case_id": "R04-CF-02", "name": "receipt-race-and-replay", "source_paths": ["src/hooks/_observe-delivery.ts"], "governed_sinks": ["attempt-ledger", "source-eligibility"], "expected_outcome": "late, duplicate, sibling, revoked, and replayed receipts suppress nothing"},
+    {"case_id": "R04-CF-03", "name": "provider-native-acknowledgement", "source_paths": ["src/providers"], "governed_sinks": ["provider-telemetry", "ack-receipt"], "expected_outcome": "only provider-observed matching acknowledgement commits suppression"}
+  ],
+  "external_or_protected_evidence": ["mandatory Codex, Claude, and MCP-only provider-native acknowledgement with provider-observed telemetry"],
+  "b1_mechanics_required": ["recording provider adapters", "atomicity failpoints", "deterministic receipt-race harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

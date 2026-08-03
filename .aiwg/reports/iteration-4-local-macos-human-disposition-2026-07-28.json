@@ -1,0 +1,156 @@
+{
+  "schema": "aiwg.human-disposition.local-macos.v1",
+  "status": "recorded",
+  "recorded_at": "2026-07-28T14:10:38-05:00",
+  "project": "github.com/chronodeai/agentmemory",
+  "candidate_source": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "aiwg_session": "aiwg-iteration-dual-track-elaboration-iter4-2026-07-28-1910",
+  "source": {
+    "kind": "direct_operator_response_annotation",
+    "annotation": 1,
+    "decision_request": ".aiwg/reports/iteration-4-local-macos-human-decision-request-2026-07-28.md",
+    "decision_request_sha256": "969c49a14dfa254d8887df43069343d729e6e5ae157559b7e51e8d67d0b407f8",
+    "reconciliation_sha256": "6fc384a62e40b78a2d6784bb21fe6d58525167bdbbd133dacacce64e9902b1f0",
+    "validation_receipt_sha256": "6d1338474310082d725abe9664faf56f800c187ff6e76c1c971f44ff63d9fffa"
+  },
+  "decisions": [
+    {
+      "id": "DEC-11",
+      "surface": "local_development_case",
+      "disposition": "accepted",
+      "authority_scope": "development_and_evidence_route_only",
+      "architecture_configuration_selected": false,
+      "implementation_authorized": false
+    },
+    {
+      "id": "DEC-12",
+      "surface": "local_profile",
+      "disposition": "accepted_for_stage_a_specification",
+      "profile": "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1",
+      "file_runs": 5,
+      "files_per_run": 148,
+      "file_execution_denominator": 740,
+      "clean_homes": 3,
+      "journeys_per_home": 14,
+      "lifecycle_journey_denominator": 42,
+      "stage_a_accepted": false,
+      "b1_authorized": false,
+      "b2_admitted": false,
+      "execution_authorized": false
+    },
+    {
+      "id": "DEC-13",
+      "surface": "processing_policy",
+      "disposition": "option_a",
+      "default": "zero-egress",
+      "provider_enabled_requires": "exact_accepted_provider_manifest"
+    },
+    {
+      "id": "DEC-14",
+      "surface": "viewer_static_shell",
+      "disposition": "option_a",
+      "authentication": "bearer",
+      "protected_surfaces": [
+        "static_viewer_shell",
+        "static_viewer_assets",
+        "viewer_data",
+        "api",
+        "mcp"
+      ],
+      "sole_unauthenticated_method": "GET",
+      "sole_unauthenticated_route": "/agentmemory/livez",
+      "bearer_issuance_bootstrap_contract": "unselected",
+      "open_hard_veto": 3
+    },
+    {
+      "id": "DEC-15",
+      "surface": "crd_01_traceability",
+      "disposition": "option_a",
+      "elaboration_bidirectionality": [
+        "canonical_rtm_paths",
+        "independently_verified_graph_links"
+      ],
+      "independent_graph_verification_required": true,
+      "live_source_test_annotations": "construction_only",
+      "links_accepted_by_selection": false
+    },
+    {
+      "id": "DEC-16",
+      "surface": "crd_02_realizations",
+      "disposition": "option_a",
+      "denominator": [
+        "DES-UCR-001",
+        "DES-UCR-002",
+        "DES-UCR-003"
+      ],
+      "tailored_out": [
+        "DES-MIC",
+        "DES-PSC"
+      ],
+      "behavioral_unit_model": "frozen_binary_per_realization",
+      "minimum_each_percent": 80,
+      "independent_reproducibility_required": true,
+      "pooling_across_realizations_allowed": false
+    },
+    {
+      "id": "DEC-17",
+      "surface": "stage_a_authority_matrix",
+      "disposition": "accepted",
+      "accountable_role": "Human Test Architect",
+      "accountable_identity_assigned": false,
+      "required_concurrences": [
+        "Configuration Manager",
+        "Security Architect",
+        "Release Owner"
+      ],
+      "required_concurrences_recorded": false,
+      "advisory": [
+        "Local Test Infrastructure Owner",
+        "Dependency Owner"
+      ],
+      "ci_owner": "deferred-local-target",
+      "role_matrix_accepted_only": true,
+      "stage_a_accepted": false
+    },
+    {
+      "id": "DEC-18",
+      "surface": "crd_05_risk_threshold",
+      "disposition": "confirmed",
+      "denominator": 23,
+      "threshold": 17,
+      "qualifying_dispositions": [
+        "mitigated",
+        "retired"
+      ],
+      "accepted_open_counts": false,
+      "unresolved_mandatory_veto_prevents_pass": true
+    }
+  ],
+  "authority_not_granted": [
+    "requirements_acceptance",
+    "realization_acceptance",
+    "stage_a_acceptance",
+    "b1",
+    "b2",
+    "execution",
+    "implementation",
+    "qualification",
+    "product_code_changes",
+    "test_changes",
+    "ci_changes",
+    "architecture_acceptance",
+    "risk_disposition",
+    "abm_pass",
+    "construction",
+    "migration",
+    "healing",
+    "provider_calls",
+    "runtime_mutation",
+    "service_switch",
+    "memetics_canary",
+    "deployment",
+    "release",
+    "official_upstream_preparation",
+    "railway_operation"
+  ]
+}

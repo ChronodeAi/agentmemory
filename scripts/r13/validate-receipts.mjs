@@ -9,7 +9,7 @@ import {
 import { dirname, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { isAcceptedNode, sha256 } from "./lib.mjs";
+import { isPackageCompatibilityNode, matchesR13LocalProfile, sha256 } from "./lib.mjs";
 
 const defaultRoot = resolve(import.meta.dirname, "../..");
 
@@ -229,7 +229,8 @@ function artifactErrors(receipt, file, requirePass) {
   if (
     requirePass ||
     receipt.result === "pass" ||
-    receipt.result === "provisional-pass"
+    receipt.result === "provisional-pass" ||
+    (receipt.result === "fail" && receipt.process?.stage !== "preflight")
   ) {
     for (const name of requiredArtifacts) {
       if (!(name in receipt.artifact_sha256)) {
@@ -260,9 +261,13 @@ export function qualificationErrors(
   } = {},
 ) {
   const errors = [];
-  const qualifiedNode = isAcceptedNode(receipt.environment.node);
-  if (receipt.environment.qualified_node_profile !== qualifiedNode) {
-    errors.push("qualified_node_profile does not match environment.node");
+  const exactLocalProfile = matchesR13LocalProfile(receipt.environment);
+  if (receipt.environment.exact_local_profile !== exactLocalProfile) {
+    errors.push("exact_local_profile does not match the declared R13 local profile");
+  }
+  const compatibleCiNode = isPackageCompatibilityNode(receipt.environment.node);
+  if (receipt.environment.package_compatibility_ci_node !== compatibleCiNode) {
+    errors.push("package_compatibility_ci_node does not match environment.node");
   }
 
   const tests = observedTests ?? trackedTests(root);
@@ -298,6 +303,34 @@ export function qualificationErrors(
   if (requirePass && receipt.result !== "pass") {
     errors.push("receipt is not a passing qualification receipt");
   }
+  if (["fail", "preflight-fail"].includes(receipt.result) && receipt.failures.length === 0) {
+    errors.push("failed receipt must contain at least one failure");
+  }
+  if (["pass", "provisional-pass", "preflight-pass"].includes(receipt.result) &&
+      receipt.failures.length > 0) {
+    errors.push("successful receipt must not contain failures");
+  }
+  if (receipt.result === "fail" && receipt.process?.stage !== "preflight") {
+    const postPreflightFields = [
+      "argv",
+      "started_at",
+      "ended_at",
+      "duration_ms",
+      "exit_code",
+      "signal",
+      "peak_rss_bytes",
+      "service_pid",
+      "worker_pids",
+      "peak_concurrent_workers",
+      "descendant_churn_count",
+      "iii_sha256",
+      "iii_sha_verified",
+      "cleanup",
+    ];
+    for (const field of postPreflightFields) {
+      if (!(field in receipt.process)) errors.push(`process.${field} is required`);
+    }
+  }
   if (
     receipt.result === "pass" ||
     receipt.result === "provisional-pass"
@@ -313,8 +346,10 @@ export function qualificationErrors(
       "service_pid",
       "worker_pids",
       "peak_concurrent_workers",
+      "descendant_churn_count",
       "iii_sha256",
       "iii_sha_verified",
+      "cleanup",
     ];
     const testFields = [
       "observed_count",
@@ -332,6 +367,9 @@ export function qualificationErrors(
     }
     if (!receipt.environment.mandatory_auth_configured) {
       errors.push("mandatory authentication was not configured");
+    }
+    if (!exactLocalProfile || receipt.environment.exact_local_profile !== true) {
+      errors.push("passing receipt is outside the exact R13 local profile");
     }
     if (
       !receipt.environment
@@ -352,9 +390,9 @@ export function qualificationErrors(
     }
     if (
       receipt.limits.max_workers !== 1 ||
-      receipt.process.peak_concurrent_workers > 1
+      receipt.process.peak_concurrent_workers !== 1
     ) {
-      errors.push("single-worker ceiling exceeded");
+      errors.push("exactly one verified worker was not observed");
     }
     if (receipt.tests.observed_count !== receipt.tests.expected_count) {
       errors.push("observed test count does not match expected count");
@@ -370,9 +408,14 @@ export function qualificationErrors(
     ) {
       errors.push("passing receipt lacks mandatory auth evidence or has failures");
     }
+    const cleanup = receipt.process.cleanup;
+    if (!cleanup?.attempted || !cleanup.service_verified_gone ||
+        !cleanup.test_verified_gone || !cleanup.temp_home_removed ||
+        (cleanup.fallback_stop_required && !cleanup.fallback_stop_succeeded)) {
+      errors.push("passing receipt lacks proven deterministic cleanup");
+    }
 
     const expectedWaivers = [
-      ...(!qualifiedNode ? ["unqualified-node-profile"] : []),
       ...(receipt.source_worktree_dirty ? ["dirty-source"] : []),
       ...(receipt.process.iii_sha_verified !== true
         ? ["unverified-iii-provenance"]
@@ -381,7 +424,7 @@ export function qualificationErrors(
     const actualWaivers = [...(receipt.qualification_waivers ?? [])].sort();
     if (receipt.result === "pass") {
       if (receipt.source_worktree_dirty) errors.push("passing source is dirty");
-      if (!qualifiedNode) errors.push("passing Node profile is unqualified");
+      if (!exactLocalProfile) errors.push("passing local profile is unqualified");
       if (receipt.process.iii_sha_verified !== true) {
         errors.push("iii-engine provenance is unqualified");
       }

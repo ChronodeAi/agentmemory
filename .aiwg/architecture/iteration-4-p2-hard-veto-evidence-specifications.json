@@ -1,0 +1,101 @@
+{
+  "schema_version": "agentmemory-p2-hard-veto-evidence-specifications-v1",
+  "status": "PREPARATION_ONLY_NOT_FROZEN_NOT_AUTHORIZED",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "candidate_source": {
+    "commit_sha": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+    "tree_sha": "8c479b95bb9753911df212089d7faf3d6f35a28d"
+  },
+  "method": "targeted_contract_or_fault_tests_and_independent_review",
+  "build_poc_authorized": false,
+  "execution_authorized": false,
+  "qualification_source": null,
+  "accepted_profiles": null,
+  "human_assignments": null,
+  "receipt_signer": null,
+  "independent_verifier": null,
+  "specifications": [
+    {
+      "specification_id": "P2-R01-EVIDENCE-SPEC-V1",
+      "risk": "R-01",
+      "hard_vetoes": ["HV-01", "HV-11"],
+      "controls": ["ICM-01", "ICM-02", "ICM-12"],
+      "traceability": ["TR-UCM-001", "TR-UCM-002", "TR-UCM-012"],
+      "accountable_owner_role": "Software Architect",
+      "reviewer_roles": ["Security Architect", "Test Architect", "Configuration Manager"],
+      "dependencies": ["G-ICM-01", "qualified R-13 evidence harness"],
+      "case_families": [
+        "owner-declared remote-form equivalence",
+        "host, non-default port, and path-case distinction",
+        "colliding basename isolation",
+        "worktree and no-remote persisted-UUID behavior",
+        "all-interface two-project and explicit-global isolation"
+      ],
+      "acceptance_evidence": "Every frozen fixture resolves to its expected identity class or typed fail-closed denial, with zero out-of-project ID or content across the complete governed interface denominator.",
+      "stop_condition": "Any collision, cross-project result, implicit unscoped read, mutation, or unresolved alias."
+    },
+    {
+      "specification_id": "P2-R05-EVIDENCE-SPEC-V1",
+      "risk": "R-05",
+      "hard_vetoes": ["HV-06", "HV-11"],
+      "controls": ["ICM-05", "ICM-07", "ICM-08"],
+      "traceability": ["TR-UCM-005", "TR-UCM-007", "TR-UCM-008"],
+      "accountable_owner_role": "Software Architect",
+      "reviewer_roles": ["Product Owner", "Test Architect", "Security Architect"],
+      "dependencies": ["R-03", "R-04", "R-06", "R-17", "qualified R-13 evidence harness"],
+      "case_families": [
+        "recalled-only and paraphrase lineage",
+        "direct and transitive evidence cycles",
+        "contradicted, stale, superseded, and deleted sources",
+        "independently sourced corroboration under semantic similarity",
+        "accepted test, runtime, commit, and ADR provenance"
+      ],
+      "acceptance_evidence": "All recall-only and cyclic graphs reject, independently sourced corroboration remains distinct, and one valid acyclic evidence chain produces one traceable candidate without duplicating an ADR.",
+      "stop_condition": "Any self-certifying cycle, unresolved source, regex-only verification, or recalled content reaches promotable state."
+    },
+    {
+      "specification_id": "P2-R08-EVIDENCE-SPEC-V1",
+      "risk": "R-08",
+      "hard_vetoes": ["HV-04", "HV-11", "HV-16"],
+      "controls": ["ICM-11"],
+      "traceability": ["TR-UCM-011"],
+      "accountable_owner_role": "Service Owner",
+      "reviewer_roles": ["Operations Owner", "Test Architect", "Software Architect"],
+      "dependencies": ["G-ICM-01", "R-07 accepted profile", "accepted readiness state machine", "qualified R-13 evidence harness"],
+      "case_families": [
+        "required KV unavailable, timeout, and error",
+        "required worker missing, disconnected, or stale",
+        "sustained memory pressure and anti-flap windows",
+        "startup replay and reconciliation incomplete",
+        "three-complete-success recovery window"
+      ],
+      "acceptance_evidence": "Every required failure becomes non-ready within one 30-second collection, pressure transitions are timestamped, startup stays unavailable through reconciliation, and recovery requires three complete successes.",
+      "stop_condition": "Any healthy or ready result while required authority is unavailable, diagnostics are incomplete, or the recovery window is unmet."
+    },
+    {
+      "specification_id": "P2-R15-EVIDENCE-SPEC-V1",
+      "risk": "R-15",
+      "hard_vetoes": ["HV-02", "HV-11"],
+      "controls": ["ICM-03", "ICM-09", "ICM-10", "ICM-14"],
+      "traceability": ["TR-UCM-003", "TR-UCM-009", "TR-UCM-010", "TR-UCM-014"],
+      "accountable_owner_role": "Privacy Owner",
+      "reviewer_roles": ["Security Architect", "Provider Integration Owner", "Test Architect"],
+      "dependencies": ["G-ICM-01", "complete processor and provider-attempt inventory", "recording sinks", "qualified R-13 evidence harness"],
+      "case_families": [
+        "strict and local zero-egress across every processor",
+        "implicit session with missing project policy",
+        "provider fallback and factory composition",
+        "hook delivery and mesh transport",
+        "DNS, private resolution, policy-unavailable, and undeclared-transport denial"
+      ],
+      "acceptance_evidence": "Strict/local fixtures produce zero raw-content outbound attempts, and every permitted attempt records project, provider, purpose, policy, data class, and provenance without raw content.",
+      "stop_condition": "Any prohibited egress, unrecorded fallback, policy bypass, undeclared processor, or raw content in a receipt."
+    }
+  ],
+  "risk_status_before": "IDENTIFIED",
+  "risk_status_after": "IDENTIFIED",
+  "hard_vetoes_closed": [],
+  "architecture_decision": "NOT_DECIDED",
+  "abm_decision": "NOT_DECIDED",
+  "construction_authorized": false
+}

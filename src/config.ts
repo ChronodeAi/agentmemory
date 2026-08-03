@@ -143,9 +143,13 @@ function detectProvider(env: Record<string, string>): ProviderConfig {
 
   const allowAgentSdk = env["AGENTMEMORY_ALLOW_AGENT_SDK"] === "true";
   if (!allowAgentSdk) {
+    const embeddingProvider = detectEmbeddingProvider(env);
+    const retrievalMode = embeddingProvider
+      ? `BM25 + ${embeddingProvider} semantic embeddings`
+      : "BM25-only retrieval; semantic embeddings are not configured";
     process.stderr.write(
       pc.dim(
-        "[agentmemory] No LLM provider key set — running zero-LLM (BM25 + on-device embeddings). " +
+        `[agentmemory] No LLM provider key set — running zero-LLM (${retrievalMode}). ` +
           "Set ANTHROPIC_API_KEY (or GEMINI/OPENAI/OPENROUTER/MINIMAX) in ~/.agentmemory/.env for LLM compression and summaries. " +
           "Agent-SDK fallback stays off by default to avoid a Stop-hook recursion loop; opt in with AGENTMEMORY_AUTO_COMPRESS=true + AGENTMEMORY_ALLOW_AGENT_SDK=true.\n",
       ),
@@ -208,11 +212,14 @@ function getMergedEnv(
   return { ...fileEnv, ...process.env, ...overrides } as Record<string, string>;
 }
 
-export function getEnvVar(key: string): string | undefined {
-  const env = getMergedEnv();
+export function resolveEnvVar(
+  key: string,
+  env: Record<string, string | undefined>,
+): string | undefined {
   const value = resolveEnvValue(env[key]);
   const secretFileKey = {
     AGENTMEMORY_SECRET: "AGENTMEMORY_SECRET_FILE",
+    AGENTMEMORY_ADMIN_SECRET: "AGENTMEMORY_ADMIN_SECRET_FILE",
     AGENTMEMORY_PROJECT_CAPABILITY_SECRET:
       "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE",
     AGENTMEMORY_CONTEXT_ACK_SECRET: "AGENTMEMORY_CONTEXT_ACK_SECRET_FILE",
@@ -232,6 +239,10 @@ export function getEnvVar(key: string): string | undefined {
     }
   }
   return value;
+}
+
+export function getEnvVar(key: string): string | undefined {
+  return resolveEnvVar(key, getMergedEnv());
 }
 
 export function isDropStaleIndexEnabled(): boolean {

@@ -219,6 +219,9 @@ describe("agentmemory connect — claude-code adapter (mock filesystem)", () => 
     expect(entry.env.AGENTMEMORY_SECRET_FILE).toBe(
       "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
     );
+    expect(entry.env.AGENTMEMORY_ADMIN_SECRET_FILE).toBe(
+      "${AGENTMEMORY_ADMIN_SECRET_FILE:-~/.agentmemory/admin-secret}",
+    );
     expect(entry.env.AGENTMEMORY_TOOLS).toBe("${AGENTMEMORY_TOOLS:-all}");
   });
 
@@ -406,6 +409,8 @@ describe("agentmemory connect — copilot-cli adapter (mock filesystem)", () => 
         AGENTMEMORY_SECRET: "${AGENTMEMORY_SECRET:-}",
         AGENTMEMORY_SECRET_FILE:
           "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
+        AGENTMEMORY_ADMIN_SECRET_FILE:
+          "${AGENTMEMORY_ADMIN_SECRET_FILE:-~/.agentmemory/admin-secret}",
         AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE:
           "${AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE:-~/.agentmemory/project-capability-secret}",
         AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE:
@@ -477,6 +482,9 @@ describe("agentmemory connect — copilot-cli adapter (mock filesystem)", () => 
     expect(entry.env.AGENTMEMORY_SECRET).toBe("${AGENTMEMORY_SECRET:-}");
     expect(entry.env.AGENTMEMORY_SECRET_FILE).toBe(
       "${AGENTMEMORY_SECRET_FILE:-~/.agentmemory/secret}",
+    );
+    expect(entry.env.AGENTMEMORY_ADMIN_SECRET_FILE).toBe(
+      "${AGENTMEMORY_ADMIN_SECRET_FILE:-~/.agentmemory/admin-secret}",
     );
     expect(entry.env.AGENTMEMORY_TOOLS).toBe("${AGENTMEMORY_TOOLS:-all}");
   });

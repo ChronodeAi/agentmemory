@@ -36,7 +36,6 @@
       "items": {
         "type": "string",
         "enum": [
-          "unqualified-node-profile",
           "dirty-source",
           "unverified-iii-provenance"
         ]
@@ -46,25 +45,32 @@
     "environment": {
       "type": "object",
       "required": [
+        "profile_id",
         "platform",
-        "release",
+        "macos_version",
+        "macos_build",
+        "kernel_release",
         "architecture",
         "node",
         "npm",
-        "qualified_node_profile",
+        "exact_local_profile",
+        "package_compatibility_ci_node",
         "mandatory_auth_configured",
         "mandatory_project_capability_auth_configured"
       ],
       "properties": {
-        "platform": {
-          "type": "string",
-          "enum": ["aix", "darwin", "freebsd", "linux", "openbsd", "sunos", "win32"]
+        "profile_id": {
+          "const": "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1"
         },
-        "release": { "type": "string", "minLength": 1 },
+        "platform": { "type": "string", "minLength": 1 },
+        "macos_version": { "type": "string", "minLength": 1 },
+        "macos_build": { "type": "string", "minLength": 1 },
+        "kernel_release": { "type": "string", "minLength": 1 },
         "architecture": { "type": "string", "minLength": 1 },
         "node": { "type": "string", "pattern": "^v\\d+\\.\\d+\\.\\d+" },
         "npm": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+" },
-        "qualified_node_profile": { "type": "boolean" },
+        "exact_local_profile": { "type": "boolean" },
+        "package_compatibility_ci_node": { "type": "boolean" },
         "mandatory_auth_configured": { "type": "boolean" },
         "mandatory_project_capability_auth_configured": {
           "type": "boolean"
@@ -104,7 +110,9 @@
     },
     "process": {
       "type": "object",
+      "required": ["stage"],
       "properties": {
+        "stage": { "type": "string", "minLength": 1 },
         "argv": { "$ref": "#/$defs/stringArray" },
         "started_at": { "type": "string", "format": "date-time" },
         "ended_at": { "type": "string", "format": "date-time" },
@@ -112,15 +120,40 @@
         "exit_code": { "type": ["integer", "null"] },
         "signal": { "type": ["string", "null"] },
         "peak_rss_bytes": { "type": "integer", "minimum": 0 },
-        "service_pid": { "type": "integer", "minimum": 1 },
+        "service_pid": { "type": ["integer", "null"], "minimum": 1 },
         "worker_pids": {
           "type": "array",
           "items": { "type": "string", "pattern": "^\\d+$" },
           "uniqueItems": true
         },
         "peak_concurrent_workers": { "type": "integer", "minimum": 0 },
+        "descendant_churn_count": { "type": "integer", "minimum": 0 },
         "iii_sha256": { "type": ["string", "null"], "pattern": "^[0-9a-f]{64}$" },
-        "iii_sha_verified": { "type": "boolean" }
+        "iii_sha_verified": { "type": "boolean" },
+        "cleanup": {
+          "type": "object",
+          "required": [
+            "attempted",
+            "service_sampled_pids",
+            "test_sampled_pids",
+            "service_verified_gone",
+            "test_verified_gone",
+            "fallback_stop_required",
+            "fallback_stop_succeeded",
+            "temp_home_removed"
+          ],
+          "properties": {
+            "attempted": { "type": "boolean" },
+            "service_sampled_pids": { "$ref": "#/$defs/pidArray" },
+            "test_sampled_pids": { "$ref": "#/$defs/pidArray" },
+            "service_verified_gone": { "type": "boolean" },
+            "test_verified_gone": { "type": "boolean" },
+            "fallback_stop_required": { "type": "boolean" },
+            "fallback_stop_succeeded": { "type": "boolean" },
+            "temp_home_removed": { "type": "boolean" }
+          },
+          "additionalProperties": false
+        }
       },
       "additionalProperties": false
     },
@@ -160,6 +193,11 @@
     "stringArray": {
       "type": "array",
       "items": { "type": "string", "minLength": 1 },
+      "uniqueItems": true
+    },
+    "pidArray": {
+      "type": "array",
+      "items": { "type": "integer", "minimum": 2 },
       "uniqueItems": true
     }
   },

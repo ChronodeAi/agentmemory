@@ -226,7 +226,11 @@ function requestAuthHeaders(
   const project =
     typeof projectValue === "string" ? projectValue.trim() : "";
 
-  if (scope === "global" || parsedUrl.pathname === "/agentmemory/migrate") {
+  if (
+    scope === "global" ||
+    parsedUrl.pathname === "/agentmemory/migrate" ||
+    parsedUrl.pathname === "/agentmemory/mcp/tools"
+  ) {
     const adminSecret = secretFromEnvironmentOrFile(
       "AGENTMEMORY_ADMIN_SECRET",
       "AGENTMEMORY_ADMIN_SECRET_FILE",

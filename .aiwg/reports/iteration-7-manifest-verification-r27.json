@@ -1,0 +1,334 @@
+{
+  "schema_version": 2,
+  "receipt_kind": "successor-manifest-deterministic-verification",
+  "generated_at_utc": "2026-07-30T15:20:18Z",
+  "project": "github.com/chronodeai/agentmemory",
+  "candidate_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "candidate_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+  "manifest_path": ".aiwg/reports/iteration-7-input-manifest-r27.json",
+  "manifest_sha256": "83eb019b3bf3a4013e646852d2a27a5891a7fe498b3d74d1eef30606febf2ac8",
+  "manifest_entry_count": 161,
+  "checks_total": 33,
+  "checks_passed": 33,
+  "checks_failed": 0,
+  "result": "PASS",
+  "authority_effect": "Local deterministic documentary verification only. PASS does not accept Stage A, any requirement, ADR, architecture, risk, ABM, Construction, package, runtime, canary, deployment, release, or rollout and does not authorize containment or PoC execution.",
+  "checks": [
+    {
+      "name": "schema-and-kind",
+      "passed": true,
+      "detail": "schema=2 revision=27 kind=verified-predecessor-successor"
+    },
+    {
+      "name": "project-identity",
+      "passed": true,
+      "detail": "github.com/chronodeai/agentmemory"
+    },
+    {
+      "name": "git-head",
+      "passed": true,
+      "detail": "git=0e9af82dcfdf07dd1f521c4621823f31a9b2eaba manifest=0e9af82dcfdf07dd1f521c4621823f31a9b2eaba"
+    },
+    {
+      "name": "git-tree",
+      "passed": true,
+      "detail": "git=8c479b95bb9753911df212089d7faf3d6f35a28d manifest=8c479b95bb9753911df212089d7faf3d6f35a28d"
+    },
+    {
+      "name": "branch",
+      "passed": true,
+      "detail": "git=codex/agentmemory-elab-r27 manifest=codex/agentmemory-elab-r27"
+    },
+    {
+      "name": "r26-predecessor-anchors",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "entry-count",
+      "passed": true,
+      "detail": "declared=161 actual=161 expected=161"
+    },
+    {
+      "name": "entry-order",
+      "passed": true,
+      "detail": "entries sorted by repository-relative path"
+    },
+    {
+      "name": "entry-uniqueness",
+      "passed": true,
+      "detail": "unique=161 total=161"
+    },
+    {
+      "name": "safe-paths",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "all-files-regular-and-present",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "hashes-match",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "sizes-match",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "entry-json-valid",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "no-product-entries",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "candidate-bound-interface-inventory",
+      "passed": true,
+      "detail": {
+        "artifact_sha256": "6821edf7525d5e8f844e2c68922b882df8e531f550220244e9d45721bfba1f42",
+        "input_count": 194,
+        "input_sha256": "6b3b918167885d87ea23f40c9f66da304a5910aa3801957aca2c8d1910916fb8",
+        "source_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+        "source_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d"
+      }
+    },
+    {
+      "name": "stage-a-profile-binding",
+      "passed": true,
+      "detail": {
+        "selected_profile": "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1",
+        "profile_sha256": "aee34c1a42c9130f622d4b6d448fcf685fe22e4796851998424845bd78805a38",
+        "execution_authorized": false
+      }
+    },
+    {
+      "name": "human-decision-provenance-complete",
+      "passed": true,
+      "detail": {
+        "hashes": {
+          "decisionRequest": "969c49a14dfa254d8887df43069343d729e6e5ae157559b7e51e8d67d0b407f8",
+          "reconciliation": "6fc384a62e40b78a2d6784bb21fe6d58525167bdbbd133dacacce64e9902b1f0",
+          "validationReceipt": "6d1338474310082d725abe9664faf56f800c187ff6e76c1c971f44ff63d9fffa",
+          "markdown": "d4391291fbd04b49721c0ba6e2110192e56724c2dbc20d94c474cdbe2166dcf5",
+          "json": "58ca761f4ebed1842c23372b5b3a7c52a559be4bae6efb7adf10541757d5272b"
+        },
+        "dec12": {
+          "id": "DEC-12",
+          "surface": "local_profile",
+          "disposition": "accepted_for_stage_a_specification",
+          "profile": "R13-LOCAL-MAC26.5.1-25F80-ARM64-N24.16.0-NPM11.13.0-V1",
+          "file_runs": 5,
+          "files_per_run": 148,
+          "file_execution_denominator": 740,
+          "clean_homes": 3,
+          "journeys_per_home": 14,
+          "lifecycle_journey_denominator": 42,
+          "stage_a_accepted": false,
+          "b1_authorized": false,
+          "b2_admitted": false,
+          "execution_authorized": false
+        }
+      }
+    },
+    {
+      "name": "r21-incomplete-anchor-fails-closed",
+      "passed": true,
+      "detail": {
+        "manifest_available": false,
+        "receipt_sha256": "7f59853ceaf5734cbd64f357fd4e7148af14b57765c3093d2f52f4c85c4401b4",
+        "disposition": "historical_receipt_only_predecessor_manifest_unavailable_not_admitted"
+      }
+    },
+    {
+      "name": "package-lock-mismatch-declared",
+      "passed": true,
+      "detail": {
+        "mismatch_count": 1,
+        "names": [
+          "@modelcontextprotocol/sdk"
+        ],
+        "truncated": false
+      }
+    },
+    {
+      "name": "stage-a-remains-not-submission-ready",
+      "passed": true,
+      "detail": {
+        "stage_a": "not-submission-ready",
+        "authority": {
+          "emergency_local_containment": null,
+          "human_test_architect": null,
+          "configuration_manager_concurrence": null,
+          "security_architect_concurrence": null,
+          "release_owner_concurrence": null,
+          "local_test_infrastructure_owner_advisory": null,
+          "dependency_owner_advisory": null
+        }
+      }
+    },
+    {
+      "name": "single-canonical-poc-join-location",
+      "passed": true,
+      "detail": {
+        "canonical_path": ".aiwg/requirements/traceability-matrix.md"
+      }
+    },
+    {
+      "name": "no-non-governance-worktree-changes",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "all-governance-delta-accounted-for",
+      "passed": true,
+      "detail": {
+        "delta_paths": 147,
+        "manifested": 144,
+        "excluded": 3,
+        "unaccounted": []
+      }
+    },
+    {
+      "name": "detached-post-generation-artifacts",
+      "passed": true,
+      "detail": [
+        {
+          "path": ".aiwg/reports/iteration-7-input-manifest-r27.json",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-7-manifest-verification-r27.json",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-7-adversarial-review-r27-2026-07-30.md",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-7-stage-a-external-decision-request.md",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/security/iteration-7-emergency-containment-decision-request.md",
+          "excluded": true,
+          "manifested": false
+        }
+      ]
+    },
+    {
+      "name": "detached-containment-request-bounded",
+      "passed": true,
+      "detail": {
+        "path": ".aiwg/security/iteration-7-emergency-containment-decision-request.md",
+        "sha256": "fe617164c2b9142b61c09a13209c38f457ad5548cf2592b03ea270db450dbf46",
+        "manifested": false,
+        "excluded": true
+      }
+    },
+    {
+      "name": "git-diff-check",
+      "passed": true,
+      "detail": "PASS"
+    },
+    {
+      "name": "interface-generator-check",
+      "passed": true,
+      "detail": "G-ICM generator reports current"
+    },
+    {
+      "name": "gitleaks-aiwg-corpus",
+      "passed": true,
+      "detail": "no leaks found"
+    },
+    {
+      "name": "runtime-evidence-nonqualifying",
+      "passed": true,
+      "detail": {
+        "classification": "specification-input-only-not-qualifying-execution-evidence",
+        "service_reported_status": "healthy",
+        "context_injection": false,
+        "installed_artifact_binding": "unproved",
+        "direct_global_sessions_without_credential": "http-401",
+        "viewer_3113_global_sessions_without_credential": "http-200-policy-nonconformance",
+        "viewer_3114_global_sessions_without_credential": "http-200-policy-nonconformance",
+        "detailed_health_without_credential": "http-200-policy-nonconformance",
+        "worker_viewer_processes": 2,
+        "engine_processes": 1,
+        "managed_worker_launchd_target": "gui/501/com.agentmemory.server",
+        "manual_worker_launchd_target": null,
+        "iii_launchd_target": null,
+        "security_disposition": "p0-emergency-containment-decision-required-unanswered"
+      }
+    },
+    {
+      "name": "all-authority-open",
+      "passed": true,
+      "detail": {
+        "emergency_local_containment": null,
+        "human_test_architect": null,
+        "configuration_manager_concurrence": null,
+        "security_architect_concurrence": null,
+        "release_owner_concurrence": null,
+        "local_test_infrastructure_owner_advisory": null,
+        "dependency_owner_advisory": null
+      }
+    },
+    {
+      "name": "all-risks-open",
+      "passed": true,
+      "detail": {
+        "canonical_total": 23,
+        "canonical_statuses": {
+          "IDENTIFIED": 23
+        },
+        "mitigated": 0,
+        "retired": 0,
+        "r14_score_refresh": {
+          "status": "proposed-owner-calibration-pending",
+          "from": {
+            "probability": 4,
+            "impact": 5,
+            "score": 20,
+            "priority": "P1"
+          },
+          "to": {
+            "probability": 5,
+            "impact": 5,
+            "score": 25,
+            "priority": "P0"
+          }
+        }
+      }
+    },
+    {
+      "name": "lifecycle-remains-blocked",
+      "passed": true,
+      "detail": {
+        "stage_a": "not-submission-ready",
+        "b1": "blocked",
+        "b2": "blocked",
+        "stage_c": "not-executed",
+        "stage_d": "not-executed",
+        "stage_e": "not-executed",
+        "abm": "fail-no-go",
+        "construction": "unauthorized",
+        "canary": "not-authorized",
+        "package": "not-authorized",
+        "release": "unauthorized",
+        "rollout": "unauthorized"
+      }
+    }
+  ]
+}

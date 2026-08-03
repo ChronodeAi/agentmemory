@@ -1,0 +1,75 @@
+{
+  "schema_version": "agentmemory-poc-card-input-completion-v1",
+  "status": "PREPARATION_COMPLETE_EXECUTION_BLOCKED",
+  "date": "2026-07-28",
+  "project_id": "github.com/chronodeai/agentmemory",
+  "candidate_source": {
+    "commit_sha": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+    "tree_sha": "8c479b95bb9753911df212089d7faf3d6f35a28d"
+  },
+  "p1": {
+    "current_cards": 17,
+    "companion_inputs": 17,
+    "unique_input_ids": 17,
+    "actor_slots": 140,
+    "assigned_actor_slots": 0,
+    "b1_authorized": 0,
+    "b2_authorized": 0,
+    "ready_for_bounded_execution": 0,
+    "executed": 0,
+    "risk_status_changes": 0
+  },
+  "p2": {
+    "hard_veto_related_specifications": 4,
+    "specification_ids": [
+      "P2-R01-EVIDENCE-SPEC-V1",
+      "P2-R05-EVIDENCE-SPEC-V1",
+      "P2-R08-EVIDENCE-SPEC-V1",
+      "P2-R15-EVIDENCE-SPEC-V1"
+    ],
+    "build_poc_authorized": 0,
+    "execution_authorized": 0
+  },
+  "g_icm_01": {
+    "artifact_path": ".aiwg/reports/g-icm-01-interface-inventory.json",
+    "artifact_sha256": "ca1831d84bce92f386b8c52ec0f7b1de280123198e9123fffcd5628e6052b5e0",
+    "inventory_input_count": 195,
+    "inventory_input_sha256": "ffd39ae1f46c48ea72274df73fb9125fd3d8bfd6bf30517cea870c86441ff0c3",
+    "functions": 136,
+    "http_routes": 135,
+    "protected_http_routes": 134,
+    "mcp_transports": 6,
+    "mcp_tools": 59,
+    "resources": 5,
+    "prompts": 3,
+    "standalone_fallback_tools": 7,
+    "hooks": 13,
+    "host_hook_events": 44,
+    "viewer_expressions": 26,
+    "provider_adapters": 15,
+    "provider_attempt_sites": 49,
+    "host_connectors": 18
+  },
+  "corrections": [
+    "R-03, R-04, and R-17 now distinguish the current G-ICM artifact digest from its source-input digest.",
+    "R-02 no longer asserts historical Railway deployment or exposure without named account/project evidence.",
+    "R-10 distinguishes documentary ICM-15 and TR-UCM-015 authority from the absent generated executable backlink.",
+    "R-16 no longer reports the corrected command-target mismatch as current.",
+    "R-18 now has normalized source and specification-candidate status metadata.",
+    "HV-02 now includes R-15 because prohibited external processing is its dedicated risk."
+  ],
+  "validation": {
+    "json_parse": "PASS",
+    "markdown_stage_state": "PASS",
+    "stale_g_icm_digest_occurrences": 0,
+    "mcda_weight_total": 100,
+    "open_hard_vetoes": 16,
+    "scored_configurations": 0,
+    "recommended_configuration": null
+  },
+  "successor_manifest_required": true,
+  "architecture_decision": "NOT_DECIDED",
+  "abm_decision": "NOT_DECIDED",
+  "construction_authorized": false,
+  "external_calls_performed": 0
+}

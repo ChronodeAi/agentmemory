@@ -1,0 +1,245 @@
+{
+  "schema_version": 2,
+  "receipt_kind": "standalone-manifest-deterministic-verification",
+  "generated_at_utc": "2026-07-30T13:48:42Z",
+  "project": "github.com/chronodeai/agentmemory",
+  "candidate_commit": "0e9af82dcfdf07dd1f521c4621823f31a9b2eaba",
+  "candidate_tree": "8c479b95bb9753911df212089d7faf3d6f35a28d",
+  "manifest_path": ".aiwg/reports/iteration-6-input-manifest-r26.json",
+  "manifest_sha256": "7adc635a58faacd1dd04b5712df75bc5aeb0e33df10cc614ad1961126321c5dc",
+  "manifest_entry_count": 142,
+  "checks_total": 27,
+  "checks_passed": 27,
+  "checks_failed": 0,
+  "result": "PASS",
+  "authority_effect": "Local deterministic verification only. PASS does not accept Stage A, any requirement, ADR, architecture, risk, ABM, Construction, package, runtime, canary, deployment, release, or rollout.",
+  "checks": [
+    {
+      "name": "json-valid",
+      "passed": true,
+      "detail": "manifest parsed as JSON"
+    },
+    {
+      "name": "schema-and-kind",
+      "passed": true,
+      "detail": "schema=2 revision=26 kind=standalone-successor"
+    },
+    {
+      "name": "project-identity",
+      "passed": true,
+      "detail": "github.com/chronodeai/agentmemory"
+    },
+    {
+      "name": "git-head",
+      "passed": true,
+      "detail": "git=0e9af82dcfdf07dd1f521c4621823f31a9b2eaba manifest=0e9af82dcfdf07dd1f521c4621823f31a9b2eaba"
+    },
+    {
+      "name": "git-tree",
+      "passed": true,
+      "detail": "git=8c479b95bb9753911df212089d7faf3d6f35a28d manifest=8c479b95bb9753911df212089d7faf3d6f35a28d"
+    },
+    {
+      "name": "branch",
+      "passed": true,
+      "detail": "git=codex/agentmemory-elab-r26 manifest=codex/agentmemory-elab-r26"
+    },
+    {
+      "name": "standalone-continuity",
+      "passed": true,
+      "detail": "R24 manifest and receipt absent; R26 explicitly claims no predecessor continuity"
+    },
+    {
+      "name": "entry-count",
+      "passed": true,
+      "detail": "declared=142 actual=142"
+    },
+    {
+      "name": "entry-order",
+      "passed": true,
+      "detail": "entries sorted by repository-relative path"
+    },
+    {
+      "name": "entry-uniqueness",
+      "passed": true,
+      "detail": "unique=142 total=142"
+    },
+    {
+      "name": "safe-paths",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "all-files-present",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "regular-files",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "no-symlinks",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "hashes-match",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "sizes-match",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "entry-json-valid",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "secret-patterns-absent",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "no-product-entries",
+      "passed": true,
+      "detail": []
+    },
+    {
+      "name": "r25-historical-anchors",
+      "passed": true,
+      "detail": [
+        {
+          "path": ".aiwg/reports/iteration-5-input-manifest-r25.json",
+          "expected": "2c3039c0767866e7e21ba11eded16bc3d88a58bb56068b8e9e80c43dd9c01ac9",
+          "actual": "2c3039c0767866e7e21ba11eded16bc3d88a58bb56068b8e9e80c43dd9c01ac9",
+          "passed": true
+        },
+        {
+          "path": ".aiwg/reports/iteration-5-manifest-verification-r25.json",
+          "expected": "87969f3657704bb5d6452f4e130c8c0d55b0f012a6465983abeb7651e13819e6",
+          "actual": "87969f3657704bb5d6452f4e130c8c0d55b0f012a6465983abeb7651e13819e6",
+          "passed": true
+        },
+        {
+          "path": ".aiwg/reports/iteration-5-adversarial-review-r25-2026-07-29.md",
+          "expected": "a6ac699e5c073ce8f0a7769071d07bc44b03d1e58a7881b1bab7c1f6b14fbf0b",
+          "actual": "a6ac699e5c073ce8f0a7769071d07bc44b03d1e58a7881b1bab7c1f6b14fbf0b",
+          "passed": true
+        },
+        {
+          "path": ".aiwg/reports/iteration-5-worktree-ownership-and-live-baseline-2026-07-29.md",
+          "expected": "2e07b9101219bb4e2ada5dddb7bbdd820b2cf7982b4d66b13cdbd0c4b93e8380",
+          "actual": "2e07b9101219bb4e2ada5dddb7bbdd820b2cf7982b4d66b13cdbd0c4b93e8380",
+          "passed": true
+        }
+      ]
+    },
+    {
+      "name": "r25-delta-entries",
+      "passed": true,
+      "detail": {
+        "checked": 24,
+        "failures": []
+      }
+    },
+    {
+      "name": "required-r26-inputs",
+      "passed": true,
+      "detail": [
+        {
+          "path": ".aiwg/reports/iteration-6-reconstruction-provenance-2026-07-30.md",
+          "present": true
+        },
+        {
+          "path": ".aiwg/reports/iteration-6-runtime-security-refresh-2026-07-30.md",
+          "present": true
+        },
+        {
+          "path": ".aiwg/risks/iteration-6-security-risk-reassessment.md",
+          "present": true
+        },
+        {
+          "path": ".aiwg/testing/stage-a-decision-packet-iteration-6.md",
+          "present": true
+        }
+      ]
+    },
+    {
+      "name": "authority-remains-open",
+      "passed": true,
+      "detail": {
+        "human_test_architect": null,
+        "configuration_manager_concurrence": null,
+        "security_architect_concurrence": null,
+        "release_owner_concurrence": null
+      }
+    },
+    {
+      "name": "r14-score-refresh-is-proposed-only",
+      "passed": true,
+      "detail": {
+        "status": "proposed-owner-calibration-pending",
+        "from": {
+          "probability": 4,
+          "impact": 5,
+          "score": 20,
+          "priority": "P1"
+        },
+        "to": {
+          "probability": 5,
+          "impact": 5,
+          "score": 25,
+          "priority": "P0"
+        }
+      }
+    },
+    {
+      "name": "runtime-evidence-nonqualifying",
+      "passed": true,
+      "detail": {
+        "classification": "specification-input-only-not-qualifying-execution-evidence",
+        "service_reported_status": "healthy",
+        "context_injection": false,
+        "installed_artifact_binding": "unproved",
+        "direct_global_sessions_without_credential": "http-401",
+        "viewer_3113_global_sessions_without_credential": "http-200-policy-nonconformance",
+        "viewer_3114_global_sessions_without_credential": "http-200-policy-nonconformance",
+        "detailed_health_without_credential": "http-200-policy-nonconformance",
+        "worker_viewer_processes": 2,
+        "engine_processes": 1,
+        "security_disposition": "p0-candidate-containment-decision-required"
+      }
+    },
+    {
+      "name": "detached-post-generation-artifacts",
+      "passed": true,
+      "detail": [
+        {
+          "path": ".aiwg/reports/iteration-6-adversarial-review-r26-2026-07-30.md",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/reports/iteration-6-stage-a-external-decision-request.md",
+          "excluded": true,
+          "manifested": false
+        },
+        {
+          "path": ".aiwg/security/iteration-6-emergency-containment-decision-request.md",
+          "excluded": true,
+          "manifested": false
+        }
+      ]
+    },
+    {
+      "name": "no-non-governance-worktree-changes",
+      "passed": true,
+      "detail": "none"
+    }
+  ]
+}

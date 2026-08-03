@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "decision": "emergency-local-containment",
+  "project": "github.com/chronodeai/agentmemory",
+  "scope": "local-macos-runtime-containment-only",
+  "disposition": "AUTHORIZE",
+  "operator": "Alexander Roberts",
+  "disposition_date": "2026-07-30",
+  "authority": {
+    "bootout_gui_501_com_agentmemory_server": true,
+    "one_graceful_term_manual_worker_pid_8749": true,
+    "one_conditional_graceful_term_iii_pid_7324": true,
+    "restart_or_bootstrap": false,
+    "kill_agentmemory_stop_or_force": false
+  },
+  "stop_conditions": [
+    "identity-drift",
+    "automatic-restart",
+    "failed-graceful-exit",
+    "ambiguous-verification"
+  ],
+  "rationale": "Contain the verified local viewer authorization bypass and wildcard listener using the exact reversible, fail-closed Iteration 7 sequence.",
+  "decision_request": ".aiwg/security/iteration-7-emergency-containment-decision-request.md",
+  "execution_evidence": ".aiwg/reports/iteration-7-emergency-containment-execution-2026-07-30.md",
+  "execution_result": "verified-contained",
+  "satisfies": [
+    "B-STGA-06-at-verification-time"
+  ],
+  "does_not_authorize": [
+    "restart",
+    "runtime-qualification",
+    "stage-a",
+    "b1",
+    "b2",
+    "poc-execution",
+    "risk-disposition",
+    "adr-or-architecture-acceptance",
+    "abm",
+    "construction",
+    "package-work",
+    "canary",
+    "deployment",
+    "release",
+    "rollout"
+  ]
+}

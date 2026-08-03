@@ -20,9 +20,19 @@ function countRestApiEndpoints(): number {
   return Array.from(src.matchAll(/api_path:\s*["`]/g)).length;
 }
 
+function countMcpResources(): number {
+  const src = readText("src/mcp/server.ts");
+  return new Set(
+    Array.from(src.matchAll(/uri:\s*"(agentmemory:\/\/[^"]+)"/g), (match) =>
+      match[1],
+    ),
+  ).size;
+}
+
 describe("Consistency checks", () => {
   const toolCount = getAllTools().length;
   const restEndpointCount = countRestApiEndpoints();
+  const resourceCount = countMcpResources();
 
   it("version.ts matches package.json", () => {
     const pkg = JSON.parse(readText("package.json"));
@@ -44,7 +54,9 @@ describe("Consistency checks", () => {
     const readme = readText("README.md");
     const toolCountPattern = new RegExp(`${toolCount}\\s+MCP tools`);
     expect(readme).toMatch(toolCountPattern);
-    const toolResourcePattern = new RegExp(`${toolCount}\\s+tools,\\s+6\\s+resources`);
+    const toolResourcePattern = new RegExp(
+      `${toolCount}\\s+tools,\\s+${resourceCount}\\s+resources`,
+    );
     expect(readme).toMatch(toolResourcePattern);
   });
 

@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R18-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-18",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-18-mcp-authority-downgrade-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-09"],
+  "requirements": ["FR-15", "FR-16", "FR-19"],
+  "traceability": ["TR-UCM-009"],
+  "accountable_owner_role": "MCP Compatibility Owner",
+  "case_families": [
+    {"case_id": "R18-CF-01", "name": "seven-fallback-tool-denominator", "source_paths": ["src/mcp/standalone.ts"], "governed_sinks": ["local-read", "local-write", "local-persistence"], "expected_outcome": "protected or required-backend failures execute zero local fallback"},
+    {"case_id": "R18-CF-02", "name": "proxy-error-authority-matrix", "source_paths": ["src/mcp/rest-proxy.ts"], "governed_sinks": ["proxy-response", "local-side-effects"], "expected_outcome": "authentication, authorization, project, and protected-operation errors preserve authority and fail closed"},
+    {"case_id": "R18-CF-03", "name": "explicit-offline-mode", "source_paths": ["src/mcp/standalone.ts"], "governed_sinks": ["offline-advisory-state"], "expected_outcome": "if retained, offline mode is preselected, project-scoped, visibly degraded, advisory-only, and provenance-bound"}
+  ],
+  "external_or_protected_evidence": ["no live MCP server or production store required"],
+  "b1_mechanics_required": ["recording proxy", "recording local state", "no-downgrade fault harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

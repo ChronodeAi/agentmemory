@@ -1,0 +1,23 @@
+{
+  "schema_version": "agentmemory-p1-card-companion-input-v1",
+  "input_id": "R20-INPUT-V1",
+  "status": "PREPARATION_CANDIDATE_NOT_FROZEN",
+  "risk": "R-20",
+  "card_version": 1,
+  "card_path": ".aiwg/risks/poc-cards/R-20-session-lifecycle-takeover-v1.md",
+  "common_control": "p1-input-control-v1.json",
+  "icm_controls": ["ICM-04", "ICM-06"],
+  "requirements": ["FR-06", "FR-11"],
+  "traceability": ["TR-UCM-004"],
+  "accountable_owner_role": "Session Lifecycle Owner",
+  "case_families": [
+    {"case_id": "R20-CF-01", "name": "immutable-binding-authority", "source_paths": ["src/functions/session-lifecycle.ts"], "governed_sinks": ["session-record", "lineage"], "expected_outcome": "project, worktree, cwd, privacy, policy, and parent bindings change only through exact authority"},
+    {"case_id": "R20-CF-02", "name": "spoofed-parent-and-takeover", "source_paths": ["src/functions/session-lifecycle.ts"], "governed_sinks": ["session-record", "parent-child-lineage"], "expected_outcome": "invalid or cross-project parent and unauthorized resume produce typed zero mutation"},
+    {"case_id": "R20-CF-03", "name": "stale-close-versus-resume", "source_paths": ["src/functions/session-lifecycle.ts"], "governed_sinks": ["lifecycle-version", "session-state"], "expected_outcome": "one CAS/version-guarded transition wins and stale closure cannot overwrite resume"}
+  ],
+  "external_or_protected_evidence": ["synthetic identities and namespaces only"],
+  "b1_mechanics_required": ["CAS/transaction adapter", "restart and deterministic race harness"],
+  "b2_admission_required": true,
+  "execution_authorized": false
+}
+

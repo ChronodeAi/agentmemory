@@ -1,9 +1,15 @@
 # Risk Status Report
 
-Status: ABM risk-cycle planning draft complete; evidence prerequisites open
+Status: HISTORICAL ITERATION-1 SNAPSHOT; SUPERSEDED FOR CURRENT COUNTS AND RATIONALES
 Date: 2026-07-25
 Iteration: Elaboration iteration 1
 Baseline: `9b74ab7eb729961a42844accf6575906200e6275`
+
+This report preserves the Iteration-1 snapshot. The current risk authority is
+`.aiwg/risks/risk-list.md`, with current scoring and rationale in
+`.aiwg/risks/risk-assessment-2026-07-25.md`. No count, priority, or present-tense
+source claim below should be treated as current without reconciliation to those
+artifacts.
 
 ## Executive Summary
 
@@ -36,8 +42,11 @@ the prior ABM NO-GO, or authorize Construction or rollout.
 
 ## Top Concerns
 
-1. **R-02 - secret disclosure:** the Railway path prints the generated HMAC
-   secret and directs retrieval from deployment logs.
+1. **R-02 - secret disclosure:** the affected historical Railway first-boot
+   generation path printed the HMAC secret and directed retrieval from
+   deployment logs. Current fork source no longer prints the value, but
+   historical exposure, fallback/backup restoration, documentation, and
+   complete sink containment remain open.
 2. **R-14 - fail-open authentication:** protected REST and MCP checks allow
    requests when no secret is configured.
 3. **R-17 - silent context success:** required context dependencies can fail,

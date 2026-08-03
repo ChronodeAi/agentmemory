@@ -1561,6 +1561,54 @@ export function registerApiTriggers(
     config: { api_path: "/agentmemory/sessions", http_method: "GET" },
   });
 
+  sdk.registerFunction("api::sessions-delete",
+    async (req: ApiRequest): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const project = asNonEmptyString(req.query_params?.["project"]);
+      if (!project) {
+        return {
+          status_code: 400,
+          body: { error: "project query param required" },
+        };
+      }
+
+      const sessions = (await kv.list<Session>(KV.sessions)).filter(
+        (session) => session.project === project,
+      );
+      let deletedSessions = 0;
+      const failedSessionIds: string[] = [];
+      for (const session of sessions) {
+        const result = await sdk.trigger({
+          function_id: "mem::forget",
+          payload: { sessionId: session.id },
+        }) as { success?: boolean };
+        if (result?.success === false) {
+          failedSessionIds.push(session.id);
+        } else {
+          deletedSessions++;
+        }
+      }
+
+      const success = failedSessionIds.length === 0;
+      return {
+        status_code: success ? 200 : 500,
+        body: {
+          success,
+          project,
+          matchedSessions: sessions.length,
+          deletedSessions,
+          ...(failedSessionIds.length > 0 && { failedSessionIds }),
+        },
+      };
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::sessions-delete",
+    config: { api_path: "/agentmemory/sessions", http_method: "DELETE" },
+  });
+
   sdk.registerFunction("api::observations",
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);

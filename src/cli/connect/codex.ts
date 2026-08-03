@@ -28,6 +28,7 @@ args = ["-y", "@agentmemory/mcp"]
 [mcp_servers.agentmemory.env]
 AGENTMEMORY_URL = "http://localhost:3111"
 AGENTMEMORY_SECRET_FILE = "~/.agentmemory/secret"
+AGENTMEMORY_ADMIN_SECRET_FILE = "~/.agentmemory/admin-secret"
 AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE = "~/.agentmemory/project-capability-secret"
 AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE = "agentmemory"
 AGENTMEMORY_STRICT_CAPABILITY_MODE = "true"

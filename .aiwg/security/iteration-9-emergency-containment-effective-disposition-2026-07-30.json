@@ -1,0 +1,98 @@
+{
+  "schema_version": 1,
+  "decision": "emergency-local-containment",
+  "record_kind": "normalized-effective-disposition-no-new-authority",
+  "project": "github.com/chronodeai/agentmemory",
+  "scope": "local-macos-runtime-containment-only",
+  "disposition": "AUTHORIZE",
+  "operator_as_entered": "[Alexander Roberts]",
+  "operator_normalized": "Alexander Roberts",
+  "disposition_date": "2026-07-30",
+  "authorization_event": {
+    "timestamp": "2026-07-30T15:32:21.001Z",
+    "message_id": "msg_019fb3a7-b789-7300-9c5b-e8db4e010341",
+    "exact_text_sha256": "c94882c19b7b6ec70ceaff9d99097898d0ab49e9ad503f331e73e20d2a3217a6"
+  },
+  "first_mutation": {
+    "timestamp": "2026-07-30T15:34:28.350Z",
+    "call_id": "call_c6lh5YyBddz9KFNKDhmEMohm",
+    "authorization_preceded_mutation": true,
+    "lead_time_milliseconds": 127349
+  },
+  "sources": {
+    "decision_request": {
+      "path": ".aiwg/security/iteration-7-emergency-containment-decision-request.md",
+      "sha256": "fe617164c2b9142b61c09a13209c38f457ad5548cf2592b03ea270db450dbf46"
+    },
+    "session_event_excerpt": {
+      "path": ".aiwg/reports/evidence/containment/iteration-7-authority-execution-events-2026-07-30.json",
+      "sha256": "dc22bb0ce5c0fe978aabcf6018a5840ebb00cbf62aba6acead78f67480047e96"
+    },
+    "post_execution_markdown_transcription": {
+      "path": ".aiwg/security/iteration-7-emergency-containment-human-disposition-2026-07-30.md",
+      "sha256": "9238fb789109b7a0eec40870ca46af41147b8b1c31fb25c29b480effdea968ef"
+    },
+    "post_execution_json_transcription": {
+      "path": ".aiwg/security/iteration-7-emergency-containment-human-disposition-2026-07-30.json",
+      "sha256": "c3e7707aa59f9810c16c4dce6b610ff7239b368fe100bb599570c7bbe2f8f2aa"
+    }
+  },
+  "authorized_actions": [
+    "bootout-gui-501-com-agentmemory-server-after-revalidation",
+    "one-term-revalidated-manual-worker-pid-8749",
+    "one-conditional-term-revalidated-iii-pid-7324",
+    "bounded-verification-of-target-identities-and-discovered-listeners"
+  ],
+  "effective_stop_conditions": {
+    "policy": "most-restrictive-union-of-authorized-request-and-exact-response",
+    "conditions": [
+      "identity-drift",
+      "automatic-restart",
+      "failed-graceful-exit",
+      "unexpected-listener",
+      "ambiguous-verification"
+    ],
+    "authority_expanded": false
+  },
+  "denied_actions": [
+    "restart",
+    "bootstrap",
+    "kill",
+    "agentmemory-stop",
+    "force",
+    "plist-change",
+    "configuration-change",
+    "secret-access",
+    "memory-data-change",
+    "package-work",
+    "source-change",
+    "test-change",
+    "provider-change",
+    "install",
+    "upgrade",
+    "deployment",
+    "release",
+    "rollout"
+  ],
+  "independent_human_authentication": false,
+  "independent_custody": false,
+  "application_level_graceful_shutdown_proved": false,
+  "does_not_authorize": [
+    "restart",
+    "permanent-remediation",
+    "runtime-qualification",
+    "stage-a",
+    "b1",
+    "b2",
+    "poc-execution",
+    "risk-disposition",
+    "adr-or-architecture-acceptance",
+    "abm",
+    "construction",
+    "package-work",
+    "canary",
+    "deployment",
+    "release",
+    "rollout"
+  ]
+}

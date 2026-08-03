@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import {
   KV,
@@ -17,6 +18,7 @@ import type {
 } from "../types.js";
 import { logger } from "../logger.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
+import { getEnvVar, resolveEnvVar } from "../config.js";
 
 const ALLOWED_DIRS = [resolve(homedir(), ".agentmemory")];
 
@@ -130,6 +132,83 @@ export interface MigrationCliDependencies {
   fetchImpl?: typeof fetch;
   stdout?: (text: string) => void;
   stderr?: (text: string) => void;
+}
+
+interface ReadonlyMigrationDatabase {
+  prepare(sql: string): { all(): Record<string, unknown>[] };
+  close(): void;
+}
+
+interface MigrationDatabaseLoaders {
+  loadBetterSqlite3?: () => Promise<{ default: unknown }>;
+  loadNodeSqlite?: () => Promise<{ DatabaseSync: unknown }>;
+}
+
+function describeError(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const record = error as Record<string, unknown>;
+    const fields = ["code", "message", "error", "reason"]
+      .map((key) => record[key])
+      .filter((value): value is string => typeof value === "string" && value);
+    if (fields.length > 0) return [...new Set(fields)].join(": ").slice(0, 1000);
+    try {
+      return JSON.stringify(error).slice(0, 1000);
+    } catch {
+      return "Unserializable object error";
+    }
+  }
+  return String(error);
+}
+
+export async function openReadonlyMigrationDatabase(
+  dbPath: string,
+  loaders: MigrationDatabaseLoaders = {},
+): Promise<{
+  database: ReadonlyMigrationDatabase;
+  backend: "better-sqlite3" | "node:sqlite";
+}> {
+  const loadBetterSqlite3 =
+    loaders.loadBetterSqlite3 ??
+    (async () => ({
+      default: createRequire(import.meta.url)("better-sqlite3") as unknown,
+    }));
+  let betterError: unknown;
+  try {
+    const module = await loadBetterSqlite3();
+    const Database = module.default as new (
+      path: string,
+      options: { readonly: boolean },
+    ) => ReadonlyMigrationDatabase;
+    return {
+      database: new Database(dbPath, { readonly: true }),
+      backend: "better-sqlite3",
+    };
+  } catch (error) {
+    betterError = error;
+  }
+
+  const loadNodeSqlite =
+    loaders.loadNodeSqlite ?? (() => import("node:sqlite"));
+  try {
+    const module = await loadNodeSqlite();
+    const DatabaseSync = module.DatabaseSync as new (
+      path: string,
+      options: { readOnly: boolean },
+    ) => ReadonlyMigrationDatabase;
+    return {
+      database: new DatabaseSync(dbPath, { readOnly: true }),
+      backend: "node:sqlite",
+    };
+  } catch (nodeError) {
+    const detail = (error: unknown): string =>
+      error instanceof Error ? error.message : String(error);
+    throw new Error(
+      "No readable SQLite backend is available. " +
+        `better-sqlite3: ${detail(betterError)}; node:sqlite: ${detail(nodeError)}`,
+    );
+  }
 }
 
 interface ProjectScopeDescriptor {
@@ -456,12 +535,14 @@ async function rollbackMigration(
   await kv.set(KV.migrationReports, journal.id, rollingBack);
   let restored = 0;
   const skippedConflicts: string[] = [];
+  let activeTarget: MigrationTarget | undefined;
   try {
     const foundTargetIds = new Set(rollbackTargets.map(({ id }) => id));
     for (const targetId of rollbackTargetIds) {
       if (!foundTargetIds.has(targetId)) skippedConflicts.push(targetId);
     }
     for (const target of rollbackTargets.slice().reverse()) {
+      activeTarget = target;
       const current = await kv.get(target.scope, target.key);
       const currentJson = JSON.stringify(current);
       const targetJson = JSON.stringify(target.value);
@@ -483,7 +564,11 @@ async function rollbackMigration(
         await kv.set(KV.migrationReports, journal.id, rollingBack);
         continue;
       }
-      if (target.beforeExists) {
+      if (
+        target.beforeExists &&
+        target.before !== null &&
+        target.before !== undefined
+      ) {
         await kv.set(target.scope, target.key, target.before);
       } else {
         await kv.delete(target.scope, target.key);
@@ -498,6 +583,7 @@ async function rollbackMigration(
       rollingBack.updatedAt = new Date().toISOString();
       await kv.set(KV.migrationReports, journal.id, rollingBack);
     }
+    activeTarget = undefined;
     if (skippedConflicts.length > 0) {
       throw new Error(
         `Rollback ownership conflict: ${skippedConflicts.join(", ")}`,
@@ -528,7 +614,10 @@ async function rollbackMigration(
       rollback: rolledBack.rollback,
     };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const detail = describeError(error);
+    const message = activeTarget
+      ? `Rollback target ${activeTarget.id} in ${activeTarget.scope} failed: ${detail}`
+      : detail;
     const failed: MigrationJournal = {
       ...rollingBack,
       status: "rollback-incomplete",
@@ -545,10 +634,7 @@ async function rollbackMigration(
     try {
       await kv.set(KV.migrationReports, journal.id, failed);
     } catch (persistenceError) {
-      const persistenceMessage =
-        persistenceError instanceof Error
-          ? persistenceError.message
-          : String(persistenceError);
+      const persistenceMessage = describeError(persistenceError);
       reportedError =
         `${message}; rollback journal persistence failed: ${persistenceMessage}`;
     }
@@ -635,7 +721,7 @@ async function runStagedMigrationLocked(
       const staged: MigrationTarget = {
         ...target,
         before,
-        beforeExists: before !== null,
+        beforeExists: before !== null && before !== undefined,
       };
       await kv.set(stageScope, staged.id, staged);
     }
@@ -821,26 +907,18 @@ export function registerMigrateFunction(sdk: ISdk, kv: StateKV): void {
         };
       }
 
-      let Database: any;
-      try {
-        // @ts-expect-error optional dependency
-        Database = (await import("better-sqlite3")).default;
-      } catch {
-        return {
-          success: false,
-          error:
-            "better-sqlite3 not installed. Run: npm install better-sqlite3",
-        };
-      }
-
       const fs = await import("node:fs");
       if (!fs.existsSync(data.dbPath)) {
         return { success: false, error: `Database not found: ${data.dbPath}` };
       }
 
-      let db: any;
+      let db: ReadonlyMigrationDatabase | undefined;
       try {
-        db = Database(data.dbPath, { readonly: true });
+        const opened = await openReadonlyMigrationDatabase(data.dbPath);
+        db = opened.database;
+        logger.info("Migration SQLite backend ready", {
+          backend: opened.backend,
+        });
         const source = migrationGeneration(data.dbPath);
         const migratedAt = new Date().toISOString();
         const targets: Array<{
@@ -992,13 +1070,14 @@ function safeJsonParse<T>(value: unknown, fallback: T): T {
 }
 
 const MIGRATION_CLI_USAGE = `Usage:
-  node dist/functions/migrate.mjs --db-path <path> [--action resume|rollback]
-  node dist/functions/migrate.mjs --step infer-memory-projects [--dry-run]
-  node dist/functions/migrate.mjs --step normalize-project-scopes [--dry-run] [--project-alias <source=target>]...
+  agentmemory migrate --db-path <path> [--action resume|rollback]
+  agentmemory migrate --step infer-memory-projects [--dry-run]
+  agentmemory migrate --step normalize-project-scopes [--dry-run] [--project-alias <source=target>]...
 
 Environment:
-  AGENTMEMORY_ADMIN_SECRET  Required bearer credential
-  AGENTMEMORY_URL           Loopback server URL (default: http://127.0.0.1:3111)
+  AGENTMEMORY_ADMIN_SECRET       Administrative bearer credential
+  AGENTMEMORY_ADMIN_SECRET_FILE  Preferred file containing that credential
+  AGENTMEMORY_URL                Loopback server URL (default: http://127.0.0.1:3111)
 
 Options:
   --db-path <path>          SQLite database under the server's allowed directory
@@ -1230,14 +1309,19 @@ export async function runMigrationCli(
     return 0;
   }
 
-  const adminSecret = env["AGENTMEMORY_ADMIN_SECRET"]?.trim();
+  const configuredValue = (key: string): string | undefined =>
+    dependencies.env === undefined
+      ? getEnvVar(key)
+      : resolveEnvVar(key, env);
+  const adminSecret = configuredValue("AGENTMEMORY_ADMIN_SECRET");
   if (!adminSecret) {
     writeCliJson(writeStderr, {
       operationSucceeded: false,
       request: parsed.request,
       error: {
         code: "missing-auth",
-        message: "AGENTMEMORY_ADMIN_SECRET is required",
+        message:
+          "AGENTMEMORY_ADMIN_SECRET or AGENTMEMORY_ADMIN_SECRET_FILE is required",
       },
     });
     return 2;
@@ -1246,7 +1330,9 @@ export async function runMigrationCli(
   let endpoint: string;
   try {
     endpoint = resolveMigrationEndpoint(
-      parsed.url ?? env["AGENTMEMORY_URL"] ?? "http://127.0.0.1:3111",
+      parsed.url ??
+        configuredValue("AGENTMEMORY_URL") ??
+        "http://127.0.0.1:3111",
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
