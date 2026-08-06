@@ -148,6 +148,196 @@ describe("coding memory lifecycle functions", () => {
     });
   });
 
+  it("refreshes stale profiles and omits them when unrelated to the task", async () => {
+    await kv.set(KV.profiles, project, {
+      schemaVersion: 1,
+      project,
+      updatedAt: "2026-01-01T00:00:00.000Z",
+      topConcepts: [{ concept: "web scraping", frequency: 99 }],
+      topFiles: [{ file: "/outside/tool.ts", frequency: 99 }],
+      conventions: ["TypeScript project"],
+      commonErrors: [],
+      recentActivity: [],
+      sessionCount: 1,
+      totalObservations: 1,
+    });
+    sdk.override("mem::profile", async () => ({
+      profile: {
+        schemaVersion: 2,
+        project,
+        updatedAt: new Date().toISOString(),
+        topConcepts: [
+          { concept: "market research", frequency: 20 },
+          { concept: "Polygres", frequency: 4 },
+        ],
+        topFiles: [
+          { file: ".aiwg/reports/intake-adversarial-review.md", frequency: 20 },
+          { file: "src/company_brain/retrieval.py", frequency: 3 },
+        ],
+        conventions: [
+          "Frequently uses market research",
+          "Observed Python source activity",
+        ],
+        commonErrors: [],
+        recentActivity: [],
+        sessionCount: 2,
+        totalObservations: 4,
+      },
+      cached: false,
+    }));
+
+    const unrelated = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+      query: "local Qwen embeddings and Gemini consolidation",
+    }) as { context: string; sources: Array<{ source: string; status: string }> };
+
+    expect(unrelated.context).not.toContain("# project profile");
+    expect(unrelated.context).not.toContain("web scraping");
+    expect(unrelated.sources).toContainEqual(
+      expect.objectContaining({ source: "profile", status: "unavailable" }),
+    );
+
+    const related = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+      query: "Polygres retrieval adapter",
+    }) as { context: string };
+
+    expect(related.context).toContain("# project profile");
+    expect(related.context).toContain("Polygres");
+    expect(related.context).not.toContain("market research");
+    expect(related.context).not.toContain("intake-adversarial-review");
+    expect(related.context).not.toContain("TypeScript project");
+  });
+
+  it("deduplicates near-identical episodic rows before applying the top-five limit", async () => {
+    sdk.override("mem::search", async () => ({
+      results: [
+        ...Array.from({ length: 5 }, (_, index) => ({
+          obsId: `canary-${index}`,
+          score: 20 - index,
+          observation: {
+            id: `canary-${index}`,
+            title: "CanaryAudit",
+            narrative:
+              `Provider ${index % 2 === 0 ? "codex" : "claude-code"}. ` +
+              `Verified coding-memory-canary-20260724T024535Z-${index + 1}: ` +
+              "project-scoped local recall, bounded context, and provenance.",
+          },
+        })),
+        {
+          obsId: "polygres-authority",
+          score: 10,
+          observation: {
+            id: "polygres-authority",
+            title: "PostgreSQL authority",
+            narrative: "ADR-011 keeps ordinary PostgreSQL authoritative.",
+          },
+        },
+      ],
+    }));
+
+    const result = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+      query: "Polygres PostgreSQL coding memory canary",
+    }) as { context: string; sourceIds: string[] };
+
+    expect(result.context.match(/CanaryAudit/g)).toHaveLength(1);
+    expect(result.context).toContain("ordinary PostgreSQL authoritative");
+    expect(result.sourceIds.filter((id) => id.startsWith("canary-"))).toHaveLength(1);
+  });
+
+  it("suppresses older episodes for current queries when a verified lesson exists", async () => {
+    const verifiedAt = "2026-08-04T14:15:26.154Z";
+    await kv.set(KV.lessons, "verified-current", {
+      id: "verified-current",
+      project,
+      content:
+        "Current Polygres authority is ordinary PostgreSQL; verify live files.",
+      context: "Current Polygres retrieval authority",
+      confidence: 0.9,
+      reinforcements: 0,
+      source: "manual",
+      sourceIds: [],
+      tags: ["verified", "retrieval"],
+      createdAt: verifiedAt,
+      updatedAt: verifiedAt,
+      decayRate: 0.05,
+    });
+    sdk.override("mem::search", async () => ({
+      results: [
+        {
+          obsId: "stale-polygres",
+          score: 50,
+          observation: {
+            id: "stale-polygres",
+            title: "Old Polygres setup",
+            narrative: "Outdated provider setup posture.",
+            timestamp: "2026-07-15T00:00:00.000Z",
+          },
+        },
+        {
+          obsId: "fresh-polygres",
+          score: 10,
+          observation: {
+            id: "fresh-polygres",
+            title: "Fresh verification",
+            narrative: "Live retrieval tests passed after the lesson.",
+            confidence: 0.9,
+            facts: ["The live retrieval tests passed."],
+            timestamp: "2026-08-04T14:16:00.000Z",
+          },
+        },
+        {
+          obsId: "raw-command-noise",
+          score: 9,
+          observation: {
+            id: "raw-command-noise",
+            title: "Bash",
+            narrative:
+              '{"command":"rg Polygres PostgreSQL .aiwg/working"}',
+            type: "command_run",
+            confidence: 0.3,
+            facts: [],
+            concepts: [],
+            files: [],
+            timestamp: "2026-08-04T14:17:00.000Z",
+          },
+        },
+      ],
+    }));
+
+    const result = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+      query: "current authoritative Polygres PostgreSQL posture",
+    }) as {
+      context: string;
+      sourceIds: string[];
+      eligibility: {
+        excluded: Array<{ candidateId?: string; reason: string }>;
+      };
+    };
+
+    expect(result.context).toContain("ordinary PostgreSQL");
+    expect(result.sourceIds).toContain("verified-current");
+    expect(result.sourceIds).toContain("fresh-polygres");
+    expect(result.sourceIds).not.toContain("stale-polygres");
+    expect(result.sourceIds).not.toContain("raw-command-noise");
+    expect(result.eligibility.excluded).toContainEqual({
+      source: "episodic",
+      candidateId: "stale-polygres",
+      reason: "stale_against_verified_lesson",
+    });
+    expect(result.eligibility.excluded).toContainEqual({
+      source: "episodic",
+      candidateId: "raw-command-noise",
+      reason: "low_signal_after_verified_lesson",
+    });
+  });
+
   it("caps packets at 2,000 tokens and suppresses sources only after acknowledgement", async () => {
     const first = await sdk.trigger("mem::context-packet", {
       project,

@@ -280,7 +280,7 @@ function getRestPort(): number {
 function getBaseUrl(): string {
   const url = process.env["AGENTMEMORY_URL"];
   if (url) return url.replace(/\/+$/, "");
-  return `http://localhost:${getRestPort()}`;
+  return `http://127.0.0.1:${getRestPort()}`;
 }
 
 let discoveredViewerPort: number | null = null;

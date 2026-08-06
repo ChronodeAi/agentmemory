@@ -7,11 +7,12 @@ import { materializeIiiRuntimeConfig } from "../src/cli/iii-runtime-config.js";
 
 const roots: string[] = [];
 
-function fixture(): { root: string; source: string; runtime: string } {
+function fixture(): { root: string; source: string; runtime: string; data: string } {
   const root = mkdtempSync(join(tmpdir(), "agentmemory-iii-config-"));
   roots.push(root);
   const source = join(root, "iii-config.yaml");
   const runtime = join(root, "runtime");
+  const data = join(root, "data");
   writeFileSync(
     source,
     [
@@ -23,17 +24,29 @@ function fixture(): { root: string; source: string; runtime: string } {
       "      cors:",
       "        allowed_origins: [http://localhost:3111]",
       "        allowed_methods: [GET, POST]",
+      "  - name: iii-state",
+      "    config:",
+      "      adapter:",
+      "        name: kv",
+      "        config:",
+      "          store_method: file_based",
+      "          file_path: ./data/state_store.db",
       "  - name: iii-stream",
       "    config:",
       "      port: 3112",
       "      host: 127.0.0.1",
+      "      adapter:",
+      "        name: kv",
+      "        config:",
+      "          store_method: file_based",
+      "          file_path: ./data/stream_store",
       "  - name: custom-worker",
       "    config:",
       "      enabled: true",
       "",
     ].join("\n"),
   );
-  return { root, source, runtime };
+  return { root, source, runtime, data };
 }
 
 afterEach(async () => {
@@ -58,24 +71,42 @@ describe("iii runtime config", () => {
     }
   });
 
-  it("returns the source config for canonical ports", () => {
-    const { source, runtime } = fixture();
-    expect(
-      materializeIiiRuntimeConfig(
-        source,
-        { restPort: 3111, streamPort: 3112, enginePort: 49134 },
-        runtime,
-      ),
-    ).toBe(source);
+  it("materializes canonical ports with absolute managed data paths", () => {
+    const { source, runtime, data } = fixture();
+    const target = materializeIiiRuntimeConfig(
+      source,
+      { restPort: 3111, streamPort: 3112, enginePort: 49134 },
+      runtime,
+      data,
+    );
+    const config = parseYaml(readFileSync(target, "utf8")) as {
+      workers: Array<{
+        name: string;
+        config: {
+          adapter?: { config?: { file_path?: string } };
+        };
+      }>;
+    };
+    const worker = (name: string) =>
+      config.workers.find((candidate) => candidate.name === name);
+
+    expect(target).not.toBe(source);
+    expect(worker("iii-state")?.config.adapter?.config?.file_path).toBe(
+      join(data, "state_store.db"),
+    );
+    expect(worker("iii-stream")?.config.adapter?.config?.file_path).toBe(
+      join(data, "stream_store"),
+    );
   });
 
   it("materializes all alternate instance ports without modifying the source", () => {
-    const { source, runtime } = fixture();
+    const { source, runtime, data } = fixture();
     const original = readFileSync(source, "utf8");
     const target = materializeIiiRuntimeConfig(
       source,
       { restPort: 7311, streamPort: 7312, enginePort: 53334 },
       runtime,
+      data,
     );
     const config = parseYaml(readFileSync(target, "utf8")) as {
       workers: Array<{
@@ -93,6 +124,14 @@ describe("iii runtime config", () => {
     expect(worker("iii-worker-manager")?.config.port).toBe(53334);
     expect(worker("custom-worker")?.config.enabled).toBe(true);
     expect(
+      ((worker("iii-state")?.config.adapter as { config: { file_path: string } })
+        .config.file_path),
+    ).toBe(join(data, "state_store.db"));
+    expect(
+      ((worker("iii-stream")?.config.adapter as { config: { file_path: string } })
+        .config.file_path),
+    ).toBe(join(data, "stream_store"));
+    expect(
       (worker("iii-http")?.config.cors as { allowed_origins: string[] })
         .allowed_origins,
     ).toEqual([
@@ -104,13 +143,14 @@ describe("iii runtime config", () => {
   });
 
   it("fails closed when required port-bearing workers are absent", () => {
-    const { source, runtime } = fixture();
+    const { source, runtime, data } = fixture();
     writeFileSync(source, "workers:\n  - name: custom-worker\n");
     expect(() =>
       materializeIiiRuntimeConfig(
         source,
         { restPort: 7311, streamPort: 7312, enginePort: 53334 },
         runtime,
+        data,
       ),
     ).toThrow('missing required worker "iii-http"');
   });

@@ -1,9 +1,9 @@
 import type { ISdk } from "iii-sdk";
 import { createHash } from "node:crypto";
-import { readFileSync } from "node:fs";
+import { readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
 import { homedir } from "node:os";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   KV,
   fingerprintId,
@@ -101,10 +101,25 @@ export interface StagedMigrationResult {
 
 interface MigrationCliRequest {
   dbPath?: string;
-  step?: "infer-memory-projects" | "normalize-project-scopes";
+  step?:
+    | "infer-memory-projects"
+    | "normalize-project-scopes"
+    | "transition-project-processing-policy";
   dryRun?: boolean;
   projectAliases?: Record<string, string>;
+  project?: string;
+  privacy?: "standard" | "private" | "strict";
+  externalProcessing?: boolean;
+  acknowledgeHistoricalContent?: boolean;
   action?: "resume" | "rollback";
+}
+
+export interface ProjectProcessingPolicyTransitionInput {
+  project: string;
+  privacy: "standard" | "private" | "strict";
+  externalProcessing: boolean;
+  acknowledgeHistoricalContent?: boolean;
+  dryRun?: boolean;
 }
 
 export interface MigrationCliOutput {
@@ -764,6 +779,176 @@ export function runStagedMigration(
   );
 }
 
+export async function transitionProjectProcessingPolicy(
+  kv: StateKV,
+  input: ProjectProcessingPolicyTransitionInput,
+): Promise<Record<string, unknown>> {
+  const project = input.project?.trim();
+  if (!project || project.length > 512) {
+    return {
+      success: false,
+      step: "transition-project-processing-policy",
+      error: "project must be a non-empty canonical ID of at most 512 characters",
+    };
+  }
+  if (!(["standard", "private", "strict"] as const).includes(input.privacy)) {
+    return {
+      success: false,
+      step: "transition-project-processing-policy",
+      error: "privacy must be standard, private, or strict",
+    };
+  }
+  if (typeof input.externalProcessing !== "boolean") {
+    return {
+      success: false,
+      step: "transition-project-processing-policy",
+      error: "externalProcessing must be a boolean",
+    };
+  }
+  if (input.privacy === "strict" && input.externalProcessing) {
+    return {
+      success: false,
+      step: "transition-project-processing-policy",
+      error: "strict privacy cannot enable external processing",
+    };
+  }
+  if (
+    (input.privacy !== "strict" || input.externalProcessing) &&
+    input.acknowledgeHistoricalContent !== true
+  ) {
+    return {
+      success: false,
+      step: "transition-project-processing-policy",
+      error:
+        "acknowledgeHistoricalContent=true is required before making historical session policy less restrictive",
+    };
+  }
+
+  const sessions = (await kv.list<Session>(KV.sessions)).filter(
+    (session) => session.project === project,
+  );
+  if (sessions.length === 0) {
+    return {
+      success: false,
+      step: "transition-project-processing-policy",
+      project,
+      error: "no sessions found for project",
+    };
+  }
+
+  const policyCounts = new Map<string, number>();
+  for (const session of sessions) {
+    const key = `${session.privacy ?? "missing"}:${String(
+      session.externalProcessing ?? "missing",
+    )}`;
+    policyCounts.set(key, (policyCounts.get(key) ?? 0) + 1);
+  }
+  const previousPolicies = [...policyCounts.entries()]
+    .map(([policy, count]) => {
+      const separator = policy.lastIndexOf(":");
+      const external = policy.slice(separator + 1);
+      return {
+        privacy: policy.slice(0, separator),
+        externalProcessing:
+          external === "true"
+            ? true
+            : external === "false"
+              ? false
+              : "missing",
+        count,
+      };
+    })
+    .sort((a, b) =>
+      `${a.privacy}:${a.externalProcessing}`.localeCompare(
+        `${b.privacy}:${b.externalProcessing}`,
+      ),
+    );
+  const changedSessions = sessions.filter(
+    (session) =>
+      session.privacy !== input.privacy ||
+      session.externalProcessing !== input.externalProcessing,
+  );
+  const dryRun = input.dryRun ?? true;
+  const baseResult = {
+    step: "transition-project-processing-policy",
+    project,
+    privacy: input.privacy,
+    externalProcessing: input.externalProcessing,
+    dryRun,
+    matched: sessions.length,
+    changed: changedSessions.length,
+    unchanged: sessions.length - changedSessions.length,
+    previousPolicies,
+  };
+
+  if (dryRun) {
+    return { success: true, status: "dry-run", ...baseResult };
+  }
+  if (changedSessions.length === 0) {
+    return {
+      success: true,
+      status: "complete",
+      generation: null,
+      promoted: 0,
+      ...baseResult,
+    };
+  }
+
+  const descriptorBase = JSON.stringify({
+    schemaVersion: 2,
+    project,
+    privacy: input.privacy,
+    externalProcessing: input.externalProcessing,
+    sessions: changedSessions
+      .map((session) => ({
+        id: session.id,
+        privacy: session.privacy ?? "missing",
+        externalProcessing: session.externalProcessing ?? "missing",
+      }))
+      .sort((a, b) => a.id.localeCompare(b.id)),
+  });
+  let descriptor = descriptorBase;
+  let generation = fingerprintId("policy", descriptor);
+  let generationAvailable = false;
+  for (let cycle = 0; cycle < 1_000; cycle++) {
+    descriptor = cycle === 0 ? descriptorBase : `${descriptorBase}\ncycle:${cycle}`;
+    generation = fingerprintId("policy", descriptor);
+    if (!(await kv.get<MigrationJournal>(KV.migrationReports, generation))) {
+      generationAvailable = true;
+      break;
+    }
+  }
+  if (!generationAvailable) {
+    return {
+      success: false,
+      status: "incomplete",
+      ...baseResult,
+      error: "unable to allocate a unique project policy migration generation",
+    };
+  }
+  const sourceSha256 = createHash("sha256").update(descriptor).digest("hex");
+  const result = await runStagedMigration(kv, {
+    generation,
+    sourceSha256,
+    sourcePath: `project-policy://${encodeURIComponent(project)}`,
+    targets: changedSessions.map((session) => ({
+      scope: KV.sessions,
+      key: session.id,
+      value: {
+        ...session,
+        privacy: input.privacy,
+        externalProcessing: input.externalProcessing,
+      },
+    })),
+    counts: {
+      sessionCount: changedSessions.length,
+      obsCount: 0,
+      summaryCount: 0,
+    },
+  });
+  return { ...result, ...baseResult };
+}
+
 export function registerMigrateFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::migrate",
     async (data: {
@@ -771,6 +956,10 @@ export function registerMigrateFunction(sdk: ISdk, kv: StateKV): void {
       step?: string;
       dryRun?: boolean;
       projectAliases?: Record<string, string>;
+      project?: string;
+      privacy?: "standard" | "private" | "strict";
+      externalProcessing?: boolean;
+      acknowledgeHistoricalContent?: boolean;
       action?: "resume" | "rollback";
     }) => {
       // In-place KV migration steps (no SQLite dependency).
@@ -803,6 +992,15 @@ export function registerMigrateFunction(sdk: ISdk, kv: StateKV): void {
             error: error instanceof Error ? error.message : String(error),
           };
         }
+      }
+      if (data.step === "transition-project-processing-policy") {
+        return transitionProjectProcessingPolicy(kv, {
+          project: data.project ?? "",
+          privacy: data.privacy as "standard" | "private" | "strict",
+          externalProcessing: data.externalProcessing as boolean,
+          acknowledgeHistoricalContent: data.acknowledgeHistoricalContent,
+          dryRun: data.dryRun ?? true,
+        });
       }
 
       if (!data.dbPath) {
@@ -995,9 +1193,12 @@ const MIGRATION_CLI_USAGE = `Usage:
   node dist/functions/migrate.mjs --db-path <path> [--action resume|rollback]
   node dist/functions/migrate.mjs --step infer-memory-projects [--dry-run]
   node dist/functions/migrate.mjs --step normalize-project-scopes [--dry-run] [--project-alias <source=target>]...
+  node dist/functions/migrate.mjs --step transition-project-processing-policy --project <id> --privacy <standard|private|strict> --external-processing <true|false> [--dry-run | --apply] [--acknowledge-historical-content]
 
 Environment:
   AGENTMEMORY_ADMIN_SECRET  Required bearer credential
+  AGENTMEMORY_ADMIN_SECRET_FILE
+                             Secret-file alternative (default: ~/.agentmemory/admin-secret)
   AGENTMEMORY_URL           Loopback server URL (default: http://127.0.0.1:3111)
 
 Options:
@@ -1005,7 +1206,14 @@ Options:
   --step <name>             Run a bounded in-place migration step
   --action <action>         resume or rollback a database migration generation
   --project-alias <a=b>     Project alias (repeatable, at most 200)
+  --project <id>            Canonical project ID for a policy transition
+  --privacy <level>         Target session privacy policy
+  --external-processing <boolean>
+                             Target external-processing consent
+  --acknowledge-historical-content
+                             Explicit consent for a less-restrictive transition
   --dry-run                 Do not persist an in-place migration step
+  --apply                   Persist a project-processing-policy transition
   --timeout-ms <ms>         Request timeout from 1000 to 120000 (default: 30000)
   --url <url>               Override AGENTMEMORY_URL; must be loopback HTTP(S)
   -h, --help                Show this help
@@ -1038,6 +1246,7 @@ function parseMigrationCliArgs(args: string[]): {
   let url: string | undefined;
   let timeoutMs = 30_000;
   let help = false;
+  let dryRunMode: "dry-run" | "apply" | undefined;
   const seen = new Set<string>();
 
   const takeValue = (index: number, option: string): string => {
@@ -1062,7 +1271,24 @@ function parseMigrationCliArgs(args: string[]): {
     }
     if (arg === "--dry-run") {
       takeOnce(arg);
+      if (dryRunMode) {
+        throw new MigrationCliArgumentError(
+          "--dry-run and --apply are mutually exclusive",
+        );
+      }
+      dryRunMode = "dry-run";
       request.dryRun = true;
+      continue;
+    }
+    if (arg === "--apply") {
+      takeOnce(arg);
+      if (dryRunMode) {
+        throw new MigrationCliArgumentError(
+          "--dry-run and --apply are mutually exclusive",
+        );
+      }
+      dryRunMode = "apply";
+      request.dryRun = false;
       continue;
     }
     if (arg === "--db-path") {
@@ -1076,12 +1302,48 @@ function parseMigrationCliArgs(args: string[]): {
       const value = takeValue(index, arg);
       if (
         value !== "infer-memory-projects" &&
-        value !== "normalize-project-scopes"
+        value !== "normalize-project-scopes" &&
+        value !== "transition-project-processing-policy"
       ) {
         throw new MigrationCliArgumentError(`Unsupported migration step: ${value}`);
       }
       request.step = value;
       index++;
+      continue;
+    }
+    if (arg === "--project") {
+      takeOnce(arg);
+      request.project = takeValue(index, arg).trim();
+      index++;
+      continue;
+    }
+    if (arg === "--privacy") {
+      takeOnce(arg);
+      const value = takeValue(index, arg);
+      if (value !== "standard" && value !== "private" && value !== "strict") {
+        throw new MigrationCliArgumentError(
+          "--privacy must be standard, private, or strict",
+        );
+      }
+      request.privacy = value;
+      index++;
+      continue;
+    }
+    if (arg === "--external-processing") {
+      takeOnce(arg);
+      const value = takeValue(index, arg);
+      if (value !== "true" && value !== "false") {
+        throw new MigrationCliArgumentError(
+          "--external-processing must be true or false",
+        );
+      }
+      request.externalProcessing = value === "true";
+      index++;
+      continue;
+    }
+    if (arg === "--acknowledge-historical-content") {
+      takeOnce(arg);
+      request.acknowledgeHistoricalContent = true;
       continue;
     }
     if (arg === "--action") {
@@ -1164,12 +1426,62 @@ function parseMigrationCliArgs(args: string[]): {
   if (request.dryRun && !request.step) {
     throw new MigrationCliArgumentError("--dry-run requires --step");
   }
+  if (dryRunMode === "apply" && request.step !== "transition-project-processing-policy") {
+    throw new MigrationCliArgumentError(
+      "--apply requires --step transition-project-processing-policy",
+    );
+  }
   if (aliasCount > 0 && request.step !== "normalize-project-scopes") {
     throw new MigrationCliArgumentError(
       "--project-alias requires --step normalize-project-scopes",
     );
   }
   if (aliasCount > 0) request.projectAliases = projectAliases;
+  const policyFieldsProvided =
+    request.project !== undefined ||
+    request.privacy !== undefined ||
+    request.externalProcessing !== undefined ||
+    request.acknowledgeHistoricalContent !== undefined;
+  if (
+    policyFieldsProvided &&
+    request.step !== "transition-project-processing-policy"
+  ) {
+    throw new MigrationCliArgumentError(
+      "project policy options require --step transition-project-processing-policy",
+    );
+  }
+  if (request.step === "transition-project-processing-policy") {
+    if (!request.project || request.project.length > 512) {
+      throw new MigrationCliArgumentError(
+        "--project is required and must be at most 512 characters",
+      );
+    }
+    if (!request.privacy) {
+      throw new MigrationCliArgumentError("--privacy is required");
+    }
+    if (request.externalProcessing === undefined) {
+      throw new MigrationCliArgumentError(
+        "--external-processing is required",
+      );
+    }
+    if (
+      request.privacy === "strict" &&
+      request.externalProcessing === true
+    ) {
+      throw new MigrationCliArgumentError(
+        "strict privacy cannot enable external processing",
+      );
+    }
+    if (
+      (request.privacy !== "strict" || request.externalProcessing) &&
+      request.acknowledgeHistoricalContent !== true
+    ) {
+      throw new MigrationCliArgumentError(
+        "--acknowledge-historical-content is required for this transition",
+      );
+    }
+    request.dryRun ??= true;
+  }
   return { help, request, url, timeoutMs };
 }
 
@@ -1230,14 +1542,34 @@ export async function runMigrationCli(
     return 0;
   }
 
-  const adminSecret = env["AGENTMEMORY_ADMIN_SECRET"]?.trim();
+  let adminSecret = env["AGENTMEMORY_ADMIN_SECRET"]?.trim();
+  if (!adminSecret) {
+    const configuredSecretFile =
+      env["AGENTMEMORY_ADMIN_SECRET_FILE"]?.trim();
+    const secretFile =
+      configuredSecretFile ||
+      (dependencies.env === undefined
+        ? resolve(homedir(), ".agentmemory", "admin-secret")
+        : undefined);
+    if (secretFile) {
+      const expandedSecretFile = secretFile.startsWith("~/")
+        ? resolve(homedir(), secretFile.slice(2))
+        : resolve(secretFile);
+      try {
+        adminSecret = readFileSync(expandedSecretFile, "utf8").trim();
+      } catch {
+        adminSecret = undefined;
+      }
+    }
+  }
   if (!adminSecret) {
     writeCliJson(writeStderr, {
       operationSucceeded: false,
       request: parsed.request,
       error: {
         code: "missing-auth",
-        message: "AGENTMEMORY_ADMIN_SECRET is required",
+        message:
+          "AGENTMEMORY_ADMIN_SECRET or a readable AGENTMEMORY_ADMIN_SECRET_FILE is required",
       },
     });
     return 2;
@@ -1326,9 +1658,28 @@ export async function runMigrationCli(
   return operationSucceeded ? 0 : 1;
 }
 
-const isDirectMigrationCli =
-  typeof process.argv[1] === "string" &&
-  import.meta.url === pathToFileURL(resolve(process.argv[1])).href;
+export function isDirectMigrationCliInvocation(
+  moduleUrl: string,
+  argvPath: string | undefined,
+  resolveRealPath: (path: string) => string = (path) => realpathSync(path),
+): boolean {
+  if (!argvPath) return false;
+  const resolvedArgvPath = resolve(argvPath);
+  if (moduleUrl === pathToFileURL(resolvedArgvPath).href) return true;
+  try {
+    return (
+      resolveRealPath(fileURLToPath(moduleUrl)) ===
+      resolveRealPath(resolvedArgvPath)
+    );
+  } catch {
+    return false;
+  }
+}
+
+const isDirectMigrationCli = isDirectMigrationCliInvocation(
+  import.meta.url,
+  process.argv[1],
+);
 
 if (isDirectMigrationCli) {
   process.exitCode = await runMigrationCli(process.argv.slice(2));

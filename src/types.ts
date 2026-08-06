@@ -83,6 +83,7 @@ export interface CompressedObservation {
   imageDescription?: string;
   modality?: "text" | "image" | "mixed";
   agentId?: string;
+  recalledOnly?: boolean;
 }
 
 export type ObservationType =
@@ -252,6 +253,13 @@ export interface HealthSnapshot {
     failedSinceLastCollection?: number;
     rejectedSinceLastCollection?: number;
   };
+  searchIndex?: {
+    status: "initializing" | "rebuilding" | "ready" | "partial" | "failed";
+    keywordEntries: number;
+    vectorEntries: number;
+    startedAt?: string;
+    error?: string;
+  };
   status: "healthy" | "degraded" | "critical";
   alerts: string[];
   notes?: string[];
@@ -329,6 +337,7 @@ export interface TimelineEntry {
 }
 
 export interface ProjectProfile {
+  schemaVersion?: number;
   project: string;
   updatedAt: string;
   topConcepts: Array<{ concept: string; frequency: number }>;
@@ -547,11 +556,14 @@ export interface SemanticMemory {
   project?: string;
   fact: string;
   confidence: number;
+  sourceFingerprint?: string;
   sourceSessionIds: string[];
   sourceMemoryIds: string[];
   accessCount: number;
   lastAccessedAt: string;
   strength: number;
+  supersededBy?: string;
+  supersededAt?: string;
   createdAt: string;
   updatedAt: string;
 }

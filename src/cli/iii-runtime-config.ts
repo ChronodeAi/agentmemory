@@ -5,7 +5,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parse as parseYaml, stringify as stringifyYaml } from "yaml";
 
 interface IiiWorker {
@@ -44,6 +44,16 @@ function setWorkerPort(worker: IiiWorker, port: number): void {
   worker.config = config;
 }
 
+function setWorkerFilePath(worker: IiiWorker, filePath: string): void {
+  const config = asRecord(worker.config);
+  const adapter = asRecord(config.adapter);
+  const adapterConfig = asRecord(adapter.config);
+  adapterConfig.file_path = filePath;
+  adapter.config = adapterConfig;
+  config.adapter = adapter;
+  worker.config = config;
+}
+
 function localOrigins(restPort: number, viewerPort: number): string[] {
   return [
     `http://localhost:${restPort}`,
@@ -57,15 +67,8 @@ export function materializeIiiRuntimeConfig(
   sourcePath: string,
   ports: IiiRuntimePorts,
   runtimeDir = join(homedir(), ".agentmemory", "runtime"),
+  dataDir = join(homedir(), ".agentmemory", "data"),
 ): string {
-  if (
-    ports.restPort === 3111 &&
-    ports.streamPort === 3112 &&
-    ports.enginePort === 49134
-  ) {
-    return sourcePath;
-  }
-
   const parsed = parseYaml(readFileSync(sourcePath, "utf8")) as IiiConfig;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
     throw new Error("iii config must be a YAML object");
@@ -76,9 +79,12 @@ export function materializeIiiRuntimeConfig(
 
   const workers = parsed.workers as IiiWorker[];
   const http = requireWorker(workers, "iii-http");
+  const state = requireWorker(workers, "iii-state");
   const stream = requireWorker(workers, "iii-stream");
   setWorkerPort(http, ports.restPort);
   setWorkerPort(stream, ports.streamPort);
+  setWorkerFilePath(state, resolve(dataDir, "state_store.db"));
+  setWorkerFilePath(stream, resolve(dataDir, "stream_store"));
 
   const httpConfig = asRecord(http.config);
   const cors = asRecord(httpConfig.cors);

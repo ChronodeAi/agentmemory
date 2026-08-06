@@ -11,7 +11,9 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   getUserProjectConfigPath,
   inferProjectId,
+  isProjectPathExcluded,
   normalizeGitRemote,
+  normalizedProjectPath,
   resolveProjectConfig,
 } from "../src/project-config.js";
 
@@ -65,6 +67,19 @@ describe("canonical project configuration", () => {
     );
   });
 
+  it("normalizes project paths and applies recursive exclusion globs", () => {
+    const root = gitProject();
+    const config = resolveProjectConfig(root);
+
+    expect(normalizedProjectPath(join(root, "src", "app.ts"), root)).toBe(
+      "src/app.ts",
+    );
+    expect(
+      isProjectPathExcluded(join(root, ".aiwg", "working", "draft.md"), config),
+    ).toBe(true);
+    expect(isProjectPathExcluded("src/app.ts", config)).toBe(false);
+  });
+
   it("preserves process-environment precedence over the manifest", () => {
     const root = gitProject("git@github.com:ChronodeAi/Memetics.git");
     mkdirSync(join(root, ".agentmemory"));
@@ -88,6 +103,42 @@ describe("canonical project configuration", () => {
     expect(config.capture_profile).toBe("full");
     expect(config.privacy).toBe("strict");
     expect(config.external_processing).toBe(false);
+  });
+
+  it("uses explicit privacy layers before the strict inferred fallback", () => {
+    const root = gitProject("git@github.com:ChronodeAi/Memetics.git");
+    const home = mkdtempSync(join(tmpdir(), "agentmemory-home-"));
+    roots.push(home);
+    process.env["HOME"] = home;
+    const overridePath = getUserProjectConfigPath(root);
+    mkdirSync(dirname(overridePath), { recursive: true });
+    writeFileSync(
+      overridePath,
+      [
+        "schema_version: 1",
+        "project_id: github.com/chronodeai/memetics",
+        "privacy: private",
+        "capture_profile: balanced",
+        "external_processing: true",
+      ].join("\n"),
+    );
+
+    const privateConfig = resolveProjectConfig(root);
+    expect(privateConfig.privacy).toBe("private");
+    expect(privateConfig.external_processing).toBe(true);
+
+    mkdirSync(join(root, ".agentmemory"));
+    writeFileSync(
+      join(root, ".agentmemory", "project.yaml"),
+      [
+        "schema_version: 1",
+        "privacy: strict",
+        "external_processing: false",
+      ].join("\n"),
+    );
+    const strictConfig = resolveProjectConfig(root);
+    expect(strictConfig.privacy).toBe("strict");
+    expect(strictConfig.external_processing).toBe(false);
   });
 
   it("keeps user overrides isolated for repositories with colliding basenames", () => {

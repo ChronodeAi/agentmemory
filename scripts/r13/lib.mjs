@@ -10,7 +10,11 @@ export function isAcceptedNode(version) {
   if (!match) return false;
   const major = Number(match[1]);
   const minor = Number(match[2]);
-  return (major === 20 && minor >= 19) || major === 22;
+  return (
+    (major === 20 && minor >= 19) ||
+    major === 22 ||
+    (major === 24 && minor >= 16)
+  );
 }
 
 export function normalizeTestPath(root, value) {

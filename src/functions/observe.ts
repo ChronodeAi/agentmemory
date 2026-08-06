@@ -13,7 +13,13 @@ import { DedupMap } from "./dedup.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { isAutoCompressEnabled } from "../config.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
-import { getSearchIndex, vectorIndexAddGuarded } from "./search.js";
+import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
+import {
+  getSearchIndex,
+  scheduleIndexSave,
+  vectorIndexAddGuarded,
+  vectorIndexRemove,
+} from "./search.js";
 import { getAgentId } from "../config.js";
 import { logger } from "../logger.js";
 import { saveImageToDisk } from "../utils/image-store.js";
@@ -270,7 +276,9 @@ export function registerObserveFunction(
                 observation.id,
               );
               getSearchIndex().remove(observation.id);
+              vectorIndexRemove(observation.id);
             }
+            scheduleIndexSave();
             existing = existing.filter(
               (observation) =>
                 !oldest.some((archived) => archived.id === observation.id),
@@ -482,25 +490,29 @@ export function registerObserveFunction(
           });
         } else {
           const synthetic = buildSyntheticCompression(raw);
+          synthetic.recalledOnly = isRetrievalGeneratedObservation(synthetic);
           await kv.set(
             KV.observations(payload.sessionId),
             obsId,
             synthetic,
           );
-          getSearchIndex().add(synthetic);
-          await vectorIndexAddGuarded(
-            synthetic.id,
-            synthetic.sessionId,
-            synthetic.title + " " + (synthetic.narrative || ""),
-            { kind: "synthetic", logId: synthetic.id },
-            {
-              externalProcessing:
-                existingSession?.externalProcessing !== false &&
-                existingSession?.privacy !== "strict" &&
-                payload.externalProcessing !== false &&
-                payload.privacy !== "strict",
-            },
-          );
+          if (!synthetic.recalledOnly) {
+            getSearchIndex().add(synthetic);
+            await vectorIndexAddGuarded(
+              synthetic.id,
+              synthetic.sessionId,
+              synthetic.title + " " + (synthetic.narrative || ""),
+              { kind: "synthetic", logId: synthetic.id },
+              {
+                externalProcessing:
+                  existingSession?.externalProcessing !== false &&
+                  existingSession?.privacy !== "strict" &&
+                  payload.externalProcessing !== false &&
+                  payload.privacy !== "strict",
+              },
+            );
+            scheduleIndexSave();
+          }
           await sdk.trigger({
             function_id: "stream::set",
             payload: {

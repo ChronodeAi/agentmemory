@@ -10,10 +10,57 @@ import { recordAccessBatch } from './access-tracker.js'
 import { logger } from "../logger.js";
 import { getAgentId, isAgentScopeIsolated } from "../config.js";
 import { requireProjectReadScope } from "../project-scope.js";
+import { providerProcessingLocation } from "./model-processing.js";
+import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
 
 let index: SearchIndex | null = null
 let vectorIndex: VectorIndex | null = null
 let currentEmbeddingProvider: EmbeddingProvider | null = null
+let rebuildInFlight: Promise<number> | null = null
+let suppressIndexPersistence = false
+
+export interface SearchIndexRuntimeStatus {
+  status: "initializing" | "rebuilding" | "ready" | "partial" | "failed"
+  keywordEntries: number
+  vectorEntries: number
+  startedAt?: string
+  error?: string
+}
+
+let searchIndexRuntimeStatus: SearchIndexRuntimeStatus = {
+  status: "initializing",
+  keywordEntries: 0,
+  vectorEntries: 0,
+}
+
+export function getSearchIndexRuntimeStatus(): SearchIndexRuntimeStatus {
+  if (searchIndexRuntimeStatus.status === "rebuilding") {
+    return {
+      ...searchIndexRuntimeStatus,
+      keywordEntries: getSearchIndex().size,
+      vectorEntries: getVectorIndex()?.size ?? 0,
+    }
+  }
+  return { ...searchIndexRuntimeStatus }
+}
+
+export function markSearchIndexReady(
+  keywordEntries: number,
+  vectorEntries: number,
+  vectorExpected: boolean,
+  aligned = true,
+): void {
+  const status =
+    vectorExpected && (!aligned || vectorEntries !== keywordEntries)
+      ? "partial"
+      : "ready"
+  searchIndexRuntimeStatus = {
+    status,
+    keywordEntries,
+    vectorEntries,
+  }
+  suppressIndexPersistence = status !== "ready"
+}
 
 export function getSearchIndex(): SearchIndex {
   if (!index) index = new SearchIndex()
@@ -26,6 +73,24 @@ export function setVectorIndex(idx: VectorIndex | null): void {
 
 export function getVectorIndex(): VectorIndex | null {
   return vectorIndex
+}
+
+export function getSearchIndexDrift(): {
+  missingVectorIds: string[]
+  orphanVectorIds: string[]
+} {
+  const idx = getSearchIndex()
+  const vi = getVectorIndex()
+  if (!vi) return { missingVectorIds: [], orphanVectorIds: [] }
+
+  const keywordEntries = idx.entriesSnapshot()
+  const keywordIds = new Set(keywordEntries.map((entry) => entry.obsId))
+  return {
+    missingVectorIds: keywordEntries
+      .filter((entry) => !vi.has(entry.obsId))
+      .map((entry) => entry.obsId),
+    orphanVectorIds: vi.ids().filter((obsId) => !keywordIds.has(obsId)),
+  }
 }
 
 export function setEmbeddingProvider(provider: EmbeddingProvider | null): void {
@@ -49,15 +114,25 @@ export function vectorIndexRemove(id: string): void {
 let indexPersistence: {
   scheduleSave: () => void;
   save: () => Promise<void>;
+  cancelScheduledSave?: () => void;
 } | null = null;
+let indexDriftRepair: (() => Promise<void>) | null = null;
 
 export function setIndexPersistence(
-  p: { scheduleSave: () => void; save: () => Promise<void> } | null,
+  p: {
+    scheduleSave: () => void;
+    save: () => Promise<void>;
+    cancelScheduledSave?: () => void;
+  } | null,
+  options: { repairDrift?: () => Promise<void> } = {},
 ): void {
   indexPersistence = p;
+  indexDriftRepair = options.repairDrift ?? null;
+  if (p === null) suppressIndexPersistence = false;
 }
 
 export function scheduleIndexSave(): void {
+  if (!indexSnapshotIsComplete(true)) return;
   indexPersistence?.scheduleSave();
 }
 
@@ -71,7 +146,57 @@ export function scheduleIndexSave(): void {
 // flush as a fatal error on the delete itself (the KV delete already
 // committed before this is invoked).
 export async function flushIndexSave(): Promise<void> {
+  if (!indexSnapshotIsComplete(false)) return;
   await indexPersistence?.save();
+}
+
+function indexSnapshotIsComplete(triggerRepair: boolean): boolean {
+  // A partial rebuild must stay non-persistable, but it still needs to pass
+  // through drift detection so the bounded repair can make it complete.
+  // Failed/in-flight maintenance remains fully suppressed.
+  if (
+    suppressIndexPersistence &&
+    searchIndexRuntimeStatus.status !== "partial"
+  ) {
+    return false
+  }
+  if (currentEmbeddingProvider && vectorIndex) {
+    const drift = getSearchIndexDrift()
+    const driftCount =
+      drift.missingVectorIds.length + drift.orphanVectorIds.length
+    if (driftCount > 0) {
+      markSearchIndexReady(
+        getSearchIndex().size,
+        vectorIndex.size,
+        true,
+        false,
+      )
+      if (
+        triggerRepair &&
+        indexDriftRepair &&
+        driftCount <= incrementalVectorRepairLimit(getSearchIndex().size)
+      ) {
+        void indexDriftRepair().catch((err) => {
+          logger.warn("vector-index repair: automatic repair failed", {
+            error: err instanceof Error ? err.message : String(err),
+          })
+        })
+      }
+      return false
+    }
+    if (
+      searchIndexRuntimeStatus.status !== "ready" ||
+      searchIndexRuntimeStatus.keywordEntries !== getSearchIndex().size ||
+      searchIndexRuntimeStatus.vectorEntries !== vectorIndex.size
+    ) {
+      markSearchIndexReady(
+        getSearchIndex().size,
+        vectorIndex.size,
+        true,
+      )
+    }
+  }
+  return true
 }
 
 // Hard cap on embedding input length. Most providers cap input around
@@ -102,7 +227,10 @@ export async function vectorIndexAddGuarded(
   const vi = vectorIndex
   const ep = currentEmbeddingProvider
   if (!vi || !ep) return false
-  if (options?.externalProcessing === false && ep.name !== "local") {
+  if (
+    options?.externalProcessing === false &&
+    providerProcessingLocation(ep) !== "local"
+  ) {
     return false
   }
   try {
@@ -153,7 +281,9 @@ export async function vectorIndexAddBatchGuarded(
   const ep = currentEmbeddingProvider
   if (!vi || !ep || items.length === 0) return { ok: 0, fail: 0 }
   const eligibleItems = items.filter(
-    (item) => item.externalProcessing !== false || ep.name === "local",
+    (item) =>
+      item.externalProcessing !== false ||
+      providerProcessingLocation(ep) === "local",
   )
   const privacySkipped = items.length - eligibleItems.length
   if (eligibleItems.length === 0) {
@@ -233,7 +363,150 @@ function getRebuildEmbedBatchSize(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_REBUILD_EMBED_BATCH
 }
 
-export async function rebuildIndex(kv: StateKV): Promise<number> {
+export function rebuildIndex(kv: StateKV): Promise<number> {
+  return runIndexMaintenance(async () => {
+    const count = await performRebuildIndex(kv)
+    const drift = getSearchIndexDrift()
+    const driftCount =
+      drift.missingVectorIds.length + drift.orphanVectorIds.length
+    if (
+      driftCount > 0 &&
+      driftCount <= incrementalVectorRepairLimit(getSearchIndex().size)
+    ) {
+      await performVectorIndexRepair(kv)
+    }
+    return count
+  })
+}
+
+export function repairVectorIndexFromKeyword(kv: StateKV): Promise<number> {
+  const repair = runIndexMaintenance(() => performVectorIndexRepair(kv))
+  void repair.then(() => {
+    if (indexSnapshotIsComplete(false)) indexPersistence?.scheduleSave()
+  })
+  return repair
+}
+
+export function incrementalVectorRepairLimit(keywordEntries: number): number {
+  return Math.max(32, Math.ceil(keywordEntries * 0.01))
+}
+
+function runIndexMaintenance(operation: () => Promise<number>): Promise<number> {
+  if (rebuildInFlight) return rebuildInFlight
+  suppressIndexPersistence = true
+  indexPersistence?.cancelScheduledSave?.()
+  searchIndexRuntimeStatus = {
+    status: "rebuilding",
+    keywordEntries: getSearchIndex().size,
+    vectorEntries: getVectorIndex()?.size ?? 0,
+    startedAt: new Date().toISOString(),
+  }
+  const run = (async () => {
+    try {
+      const count = await operation()
+      const drift = getSearchIndexDrift()
+      markSearchIndexReady(
+        getSearchIndex().size,
+        getVectorIndex()?.size ?? 0,
+        currentEmbeddingProvider !== null,
+        drift.missingVectorIds.length === 0 &&
+          drift.orphanVectorIds.length === 0,
+      )
+      return count
+    } catch (err) {
+      searchIndexRuntimeStatus = {
+        status: "failed",
+        keywordEntries: getSearchIndex().size,
+        vectorEntries: getVectorIndex()?.size ?? 0,
+        error: "search_index_rebuild_failed",
+      }
+      throw err
+    } finally {
+      rebuildInFlight = null
+    }
+  })()
+  rebuildInFlight = run
+  return run
+}
+
+async function performVectorIndexRepair(kv: StateKV): Promise<number> {
+  const idx = getSearchIndex()
+  const vi = getVectorIndex()
+  const ep = getEmbeddingProvider()
+  if (!vi || !ep) return 0
+
+  const drift = getSearchIndexDrift()
+  for (const obsId of drift.orphanVectorIds) vi.remove(obsId)
+
+  const entries = new Map(
+    idx.entriesSnapshot().map((entry) => [entry.obsId, entry]),
+  )
+  const sessions = await kv.list<Session>(KV.sessions)
+  const sessionsById = new Map(sessions.map((session) => [session.id, session]))
+  const projectPrivacy = new Map<string, boolean>()
+  for (const session of sessions) {
+    const permitsExternal =
+      session.privacy !== "strict" && session.externalProcessing !== false
+    projectPrivacy.set(
+      session.project,
+      (projectPrivacy.get(session.project) ?? true) && permitsExternal,
+    )
+  }
+
+  const jobs: Parameters<typeof vectorIndexAddBatchGuarded>[0] = []
+  for (const obsId of drift.missingVectorIds) {
+    const entry = entries.get(obsId)
+    if (!entry) continue
+    const observation = await kv
+      .get<CompressedObservation>(KV.observations(entry.sessionId), obsId)
+      .catch(() => null)
+    if (observation && !isRetrievalGeneratedObservation(observation)) {
+      const session = sessionsById.get(entry.sessionId)
+      jobs.push({
+        id: observation.id,
+        sessionId: observation.sessionId,
+        text: observation.title + " " + observation.narrative,
+        context: { kind: "observation", logId: observation.id },
+        externalProcessing: session
+          ? session.privacy !== "strict" &&
+            session.externalProcessing !== false
+          : false,
+      })
+      continue
+    }
+
+    const memory = await kv.get<Memory>(KV.memories, obsId).catch(() => null)
+    if (memory?.isLatest !== false && memory?.title && memory?.content) {
+      jobs.push({
+        id: memory.id,
+        sessionId: memory.sessionIds?.[0] ?? "memory",
+        text: memory.title + " " + memory.content,
+        context: { kind: "memory", logId: memory.id },
+        externalProcessing:
+          memory.project === undefined
+            ? true
+            : (projectPrivacy.get(memory.project) ?? false),
+      })
+      continue
+    }
+
+    // The keyword row points at content that no longer exists. Removing the
+    // stale row restores exact identifier parity without inventing evidence.
+    idx.remove(obsId)
+  }
+
+  const result = await vectorIndexAddBatchGuarded(jobs)
+  if (result.fail > 0) {
+    logger.warn("vector-index repair: some missing vectors remain", {
+      attempted: jobs.length,
+      repaired: result.ok,
+      failed: result.fail,
+    })
+  }
+  return result.ok + drift.orphanVectorIds.length
+}
+
+async function performRebuildIndex(kv: StateKV): Promise<number> {
   const idx = getSearchIndex()
   idx.clear()
 
@@ -339,6 +612,7 @@ export async function rebuildIndex(kv: StateKV): Promise<number> {
   }
   for (const { session, observations } of obsPerSession) {
     for (const obs of observations) {
+      if (isRetrievalGeneratedObservation(obs)) continue
       if (obs.title && obs.narrative) {
         idx.add(obs)
         await enqueue({
@@ -453,7 +727,9 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       // queries return underfilled pages when same-agent matches
       // rank lower than cross-agent ones in the hybrid score.
       const filtering = !!(projectFilter || cwdFilter || filterAgentId)
-      const fetchLimit = filtering ? Math.max(effectiveLimit * 10, 100) : effectiveLimit
+      const fetchLimit = filtering
+        ? Math.max(effectiveLimit * 10, 100)
+        : Math.max(effectiveLimit * 3, 30)
       const results = idx.search(query, fetchLimit)
 
       // Resolve session -> project/cwd once per sessionId we touch.
@@ -479,6 +755,19 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
         return proj
       }
 
+      await Promise.all(
+        [...new Set(results.map((result) => result.sessionId))].map((sessionId) =>
+          loadSession(sessionId),
+        ),
+      )
+      if (projectFilter) {
+        await Promise.all(
+          results
+            .filter((result) => !sessionCache.get(result.sessionId))
+            .map((result) => loadMemoryProject(result.obsId)),
+        )
+      }
+
       // First pass: filter by session (sequential — benefits from session cache).
       // Memory entries with a synthetic sessionId take a secondary KV.memories
       // path so project filtering works correctly for them too.
@@ -488,12 +777,12 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       // rows, and capping early would underfill the result page. Use
       // fetchLimit as the upper bound in that case; the final
       // truncation lives at the end of the second pass.
-      const earlyCap = filterAgentId ? fetchLimit : effectiveLimit
+      const earlyCap = fetchLimit
       const candidates: typeof results = []
       for (const r of results) {
         if (candidates.length >= earlyCap) break
         if (filtering) {
-          const s = await loadSession(r.sessionId)
+          const s = sessionCache.get(r.sessionId) ?? null
           if (s) {
             if (projectFilter && s.project !== projectFilter) continue
             if (cwdFilter && s.cwd !== cwdFilter) continue
@@ -507,7 +796,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
             // Deleted or legacy rows with no verifiable project remain stored
             // but are excluded from implicit project reads.
             if (projectFilter) {
-              const memProject = await loadMemoryProject(r.obsId)
+              const memProject = memoryProjectCache.get(r.obsId) ?? null
               if (memProject !== projectFilter) continue
             }
             // cwd filter does not apply to unbound entries.
@@ -536,6 +825,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       for (let i = 0; i < candidates.length; i++) {
         const obs = obsResults[i]
         if (!obs) continue
+        if (isRetrievalGeneratedObservation(obs)) continue
         // #817: enforce agent-scope after the observation/memory is
         // loaded. The BM25 index doesn't carry agentId so the filter
         // happens post-lookup. Wildcard ("*") and no-isolation paths

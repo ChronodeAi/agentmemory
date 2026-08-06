@@ -1,4 +1,5 @@
 import type { ISdk } from "iii-sdk";
+import { createHash } from "node:crypto";
 import type {
   SemanticMemory,
   ProceduralMemory,
@@ -26,6 +27,148 @@ import {
   recordMatchesProject,
   requireProjectReadScope,
 } from "../project-scope.js";
+
+const SEMANTIC_FACT_STOP_WORDS = new Set([
+  "a",
+  "an",
+  "and",
+  "are",
+  "as",
+  "be",
+  "been",
+  "being",
+  "for",
+  "from",
+  "in",
+  "include",
+  "includes",
+  "including",
+  "involve",
+  "involves",
+  "involving",
+  "is",
+  "it",
+  "its",
+  "of",
+  "on",
+  "project",
+  "provider",
+  "providers",
+  "specifically",
+  "system",
+  "that",
+  "the",
+  "this",
+  "to",
+  "use",
+  "used",
+  "uses",
+  "using",
+  "utilize",
+  "utilized",
+  "utilizes",
+  "with",
+]);
+
+const SEMANTIC_TOKEN_ALIASES: Record<string, string> = {
+  audits: "audit",
+  commands: "command",
+  dimensions: "dimension",
+  embeddings: "embedding",
+  facts: "fact",
+  integrations: "integration",
+  methods: "method",
+  services: "service",
+  tests: "test",
+  vectors: "vector",
+};
+
+function semanticFactTokens(value: string): Set<string> {
+  const raw = value.toLowerCase().match(/[a-z0-9]+(?:[.-][a-z0-9]+)*/g) ?? [];
+  return new Set(
+    raw
+      .map((token) => SEMANTIC_TOKEN_ALIASES[token] ?? token)
+      .filter(
+        (token) =>
+          token.length > 1 && !SEMANTIC_FACT_STOP_WORDS.has(token),
+      ),
+  );
+}
+
+function semanticFactsMatch(a: string, b: string): boolean {
+  if (a.trim().toLowerCase() === b.trim().toLowerCase()) return true;
+  const aTokens = semanticFactTokens(a);
+  const bTokens = semanticFactTokens(b);
+  const smaller = Math.min(aTokens.size, bTokens.size);
+  if (smaller < 2) return false;
+  let shared = 0;
+  for (const token of aTokens) {
+    if (bTokens.has(token)) shared++;
+  }
+  const union = aTokens.size + bTokens.size - shared;
+  return shared / union >= 0.68 || shared / smaller >= 0.8;
+}
+
+function semanticBatchFingerprint(summaries: SessionSummary[]): string {
+  const payload = summaries
+    .map((summary) => ({
+      sessionId: summary.sessionId,
+      createdAt: summary.createdAt,
+      title: summary.title,
+      narrative: summary.narrative,
+      concepts: summary.concepts,
+    }))
+    .sort(
+      (a, b) =>
+        a.sessionId.localeCompare(b.sessionId) ||
+        a.createdAt.localeCompare(b.createdAt),
+    );
+  return createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+}
+
+async function collapseSemanticDuplicates(
+  kv: StateKV,
+  memories: SemanticMemory[],
+): Promise<{ active: SemanticMemory[]; superseded: number }> {
+  const candidates = memories
+    .filter((memory) => !memory.supersededBy)
+    .sort(
+      (a, b) =>
+        b.confidence - a.confidence ||
+        semanticFactTokens(b.fact).size - semanticFactTokens(a.fact).size ||
+        a.createdAt.localeCompare(b.createdAt),
+    );
+  const active: SemanticMemory[] = [];
+  let superseded = 0;
+  for (const memory of candidates) {
+    const canonical = active.find((item) =>
+      semanticFactsMatch(item.fact, memory.fact),
+    );
+    if (!canonical) {
+      active.push(memory);
+      continue;
+    }
+    const now = new Date().toISOString();
+    canonical.confidence = Math.max(canonical.confidence, memory.confidence);
+    canonical.strength = Math.max(canonical.strength, memory.strength);
+    canonical.accessCount += memory.accessCount;
+    canonical.sourceSessionIds = [
+      ...new Set([...canonical.sourceSessionIds, ...memory.sourceSessionIds]),
+    ];
+    canonical.sourceMemoryIds = [
+      ...new Set([...canonical.sourceMemoryIds, ...memory.sourceMemoryIds]),
+    ];
+    canonical.lastAccessedAt = now;
+    canonical.updatedAt = now;
+    memory.supersededBy = canonical.id;
+    memory.supersededAt = now;
+    memory.updatedAt = now;
+    await kv.set(KV.semantic, canonical.id, canonical);
+    await kv.set(KV.semantic, memory.id, memory);
+    superseded++;
+  }
+  return { active, superseded };
+}
 
 function applyDecay(
   items: Array<{
@@ -103,6 +246,11 @@ export function registerConsolidationPipelineFunction(
         ).filter((memory) =>
           recordMatchesProject(memory.project, projectScope),
         );
+        const collapsedSemantic = await collapseSemanticDuplicates(
+          kv,
+          existingSemantic,
+        );
+        const activeSemantic = collapsedSemantic.active;
 
         if (summaries.length >= 5) {
           const recentSummaries = summaries
@@ -112,68 +260,127 @@ export function registerConsolidationPipelineFunction(
                 new Date(a.createdAt).getTime(),
             )
             .slice(0, 20);
-
-          const prompt = buildSemanticMergePrompt(
-            recentSummaries.map((s) => ({
-              title: s.title,
-              narrative: s.narrative,
-              concepts: s.concepts,
-            })),
-          );
-
-          try {
-            const response = await provider.summarize(
-              SEMANTIC_MERGE_SYSTEM,
-              prompt,
+          const sourceFingerprint = semanticBatchFingerprint(recentSummaries);
+          if (
+            activeSemantic.some(
+              (memory) => memory.sourceFingerprint === sourceFingerprint,
+            )
+          ) {
+            results.semantic = {
+              skipped: true,
+              reason: "summary batch already consolidated",
+              newFacts: 0,
+              reinforcedFacts: 0,
+              duplicatesSuperseded: collapsedSemantic.superseded,
+              totalSummaries: summaries.length,
+            };
+          } else {
+            const prompt = buildSemanticMergePrompt(
+              recentSummaries.map((s) => ({
+                title: s.title,
+                narrative: s.narrative,
+                concepts: s.concepts,
+              })),
             );
 
-            const factRegex = /<fact\s+confidence="([^"]+)">([^<]+)<\/fact>/g;
-            let match;
-            let newFacts = 0;
-            const now = new Date().toISOString();
-
-            while ((match = factRegex.exec(response)) !== null) {
-              const parsedConf = parseFloat(match[1]);
-              const confidence = Number.isNaN(parsedConf) ? 0.5 : parsedConf;
-              const fact = match[2].trim();
-
-              const existing = existingSemantic.find(
-                (s) => s.fact.toLowerCase() === fact.toLowerCase(),
+            try {
+              const response = await provider.summarize(
+                SEMANTIC_MERGE_SYSTEM,
+                prompt,
               );
-              if (existing) {
-                existing.accessCount++;
-                existing.lastAccessedAt = now;
-                existing.updatedAt = now;
-                existing.confidence = Math.max(existing.confidence, confidence);
-                await kv.set(KV.semantic, existing.id, existing);
-              } else {
-                const sem: SemanticMemory = {
-                  id: generateId("sem"),
-                  project,
-                  fact,
-                  confidence,
-                  sourceSessionIds: recentSummaries.map((s) => s.sessionId),
-                  sourceMemoryIds: [],
-                  accessCount: 1,
-                  lastAccessedAt: now,
-                  strength: confidence,
-                  createdAt: now,
-                  updatedAt: now,
-                };
-                await kv.set(KV.semantic, sem.id, sem);
-                newFacts++;
+
+              const factRegex = /<fact\s+confidence="([^"]+)">([^<]+)<\/fact>/g;
+              let match;
+              let newFacts = 0;
+              let reinforcedFacts = 0;
+              let lowConfidenceFactsSkipped = 0;
+              const now = new Date().toISOString();
+              const sourceSessionIds = recentSummaries.map(
+                (summary) => summary.sessionId,
+              );
+
+              while ((match = factRegex.exec(response)) !== null) {
+                const parsedConf = parseFloat(match[1]);
+                const confidence = Number.isNaN(parsedConf)
+                  ? 0.5
+                  : Math.min(1, Math.max(0, parsedConf));
+                const fact = match[2].trim();
+                if (!fact) continue;
+                if (confidence < 0.5) {
+                  lowConfidenceFactsSkipped++;
+                  continue;
+                }
+
+                const existing = activeSemantic.find((memory) =>
+                  semanticFactsMatch(memory.fact, fact),
+                );
+                if (existing) {
+                  if (
+                    semanticFactTokens(fact).size >
+                      semanticFactTokens(existing.fact).size &&
+                    confidence >= existing.confidence - 0.1
+                  ) {
+                    existing.fact = fact;
+                  }
+                  existing.accessCount++;
+                  existing.lastAccessedAt = now;
+                  existing.updatedAt = now;
+                  existing.confidence = Math.max(
+                    existing.confidence,
+                    confidence,
+                  );
+                  existing.strength = Math.max(existing.strength, confidence);
+                  existing.sourceFingerprint = sourceFingerprint;
+                  existing.sourceSessionIds = [
+                    ...new Set([
+                      ...existing.sourceSessionIds,
+                      ...sourceSessionIds,
+                    ]),
+                  ];
+                  await kv.set(KV.semantic, existing.id, existing);
+                  reinforcedFacts++;
+                } else {
+                  const sem: SemanticMemory = {
+                    id: generateId("sem"),
+                    project,
+                    fact,
+                    confidence,
+                    sourceFingerprint,
+                    sourceSessionIds,
+                    sourceMemoryIds: [],
+                    accessCount: 1,
+                    lastAccessedAt: now,
+                    strength: confidence,
+                    createdAt: now,
+                    updatedAt: now,
+                  };
+                  await kv.set(KV.semantic, sem.id, sem);
+                  activeSemantic.push(sem);
+                  newFacts++;
+                }
               }
+              results.semantic = {
+                newFacts,
+                reinforcedFacts,
+                lowConfidenceFactsSkipped,
+                duplicatesSuperseded: collapsedSemantic.superseded,
+                totalSummaries: summaries.length,
+                sourceFingerprint,
+              };
+            } catch (err) {
+              const msg = err instanceof Error ? err.message : String(err);
+              logger.error("Semantic consolidation failed", { error: msg });
+              results.semantic = {
+                error: msg,
+                duplicatesSuperseded: collapsedSemantic.superseded,
+              };
             }
-            results.semantic = { newFacts, totalSummaries: summaries.length };
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err);
-            logger.error("Semantic consolidation failed", { error: msg });
-            results.semantic = { error: msg };
           }
         } else {
           results.semantic = {
             skipped: true,
             reason: "fewer than 5 summaries",
+            duplicatesSuperseded: collapsedSemantic.superseded,
           };
         }
       }

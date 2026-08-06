@@ -227,7 +227,6 @@ function resolveProjectConfig(cwd = process.cwd()) {
 		inferred
 	];
 	const privacy = mostRestrictivePrivacy([
-		inferred,
 		repository,
 		user,
 		processLayer

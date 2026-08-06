@@ -84,6 +84,84 @@ describe("evaluateHealth memory severity", () => {
     });
   });
 
+  it.each([
+    ["initializing", "search_index_initializing"],
+    ["rebuilding", "search_index_rebuilding"],
+    ["partial", "search_index_partial"],
+  ] as const)("reports a %s search index as degraded", (status, alert) => {
+    expect(
+      evaluateHealth(
+        snap({
+          searchIndex: {
+            status,
+            keywordEntries: 10,
+            vectorEntries: status === "partial" ? 8 : 10,
+          },
+        }),
+      ),
+    ).toMatchObject({ status: "degraded", alerts: [alert] });
+  });
+
+  it("treats vector work covered by active captures as bounded catch-up", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          captureAdmission: {
+            active: 0,
+            limit: 256,
+            rejected: 0,
+          },
+          searchIndex: {
+            status: "partial",
+            keywordEntries: 10,
+            vectorEntries: 9,
+          },
+        }),
+      ),
+    ).toEqual({
+      status: "healthy",
+      alerts: [],
+      notes: ["search_index_catching_up_1"],
+    });
+  });
+
+  it("degrades when partial drift exceeds active capture work", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          captureAdmission: {
+            active: 1,
+            limit: 256,
+            rejected: 0,
+          },
+          searchIndex: {
+            status: "partial",
+            keywordEntries: 10,
+            vectorEntries: 8,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: "degraded",
+      alerts: ["search_index_partial"],
+    });
+  });
+
+  it("reports a failed search index as critical", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          searchIndex: {
+            status: "failed",
+            keywordEntries: 10,
+            vectorEntries: 3,
+            error: "search_index_rebuild_failed",
+          },
+        }),
+      ),
+    ).toMatchObject({ status: "critical", alerts: ["search_index_failed"] });
+  });
+
   it("stays healthy when heap fills a tiny steady-state process (issue #158)", () => {
     const s = snap({
       memory: {
@@ -99,6 +177,24 @@ describe("evaluateHealth memory severity", () => {
     expect(alerts.find((a) => a.startsWith("memory_warn_"))).toBeUndefined();
     expect(alerts.find((a) => a.startsWith("memory_heap_tight_"))).toBeUndefined();
     expect(notes.find((n) => n.startsWith("memory_heap_tight_"))).toBeDefined();
+  });
+
+  it("does not treat a small adaptive heap plus a native index as heap pressure", () => {
+    const s = snap({
+      memory: {
+        heapUsed: 87 * 1024 * 1024,
+        heapTotal: 90 * 1024 * 1024,
+        rss: 675 * 1024 * 1024,
+        external: 72 * 1024 * 1024,
+        systemTotal: 128 * 1024 * 1024 * 1024,
+      },
+    });
+    const { status, alerts, notes } = evaluateHealth(s);
+    expect(status).toBe("healthy");
+    expect(alerts.some((alert) => alert.startsWith("memory_"))).toBe(false);
+    expect(notes.some((note) => note.startsWith("memory_heap_tight_"))).toBe(
+      true,
+    );
   });
 
   it("goes critical when heap ratio is high AND RSS is above the floor", () => {
@@ -149,15 +245,21 @@ describe("evaluateHealth memory severity", () => {
   it("respects caller-supplied memoryRssFloorBytes", () => {
     const s = snap({
       memory: {
-        heapUsed: 98,
-        heapTotal: 100,
+        heapUsed: 98 * 1024 * 1024,
+        heapTotal: 100 * 1024 * 1024,
         rss: 50 * 1024 * 1024,
         external: 0,
       },
     });
-    const loose = evaluateHealth(s, { memoryRssFloorBytes: 10 * 1024 * 1024 });
+    const loose = evaluateHealth(s, {
+      memoryHeapFloorBytes: 10 * 1024 * 1024,
+      memoryRssFloorBytes: 10 * 1024 * 1024,
+    });
     expect(loose.status).toBe("critical");
-    const strict = evaluateHealth(s, { memoryRssFloorBytes: 1024 * 1024 * 1024 });
+    const strict = evaluateHealth(s, {
+      memoryHeapFloorBytes: 10 * 1024 * 1024,
+      memoryRssFloorBytes: 1024 * 1024 * 1024,
+    });
     expect(strict.status).toBe("healthy");
   });
 
@@ -221,6 +323,33 @@ describe("evaluateHealth memory severity", () => {
 });
 
 describe("health dependency probing", () => {
+  it("includes the live search-index state in collected health", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    sdk.registerFunction("engine::workers::list", async () => ({
+      workers: [{ id: "worker-1", name: "worker", status: "running" }],
+    }));
+    const monitor = registerHealthMonitor(sdk as never, kv as never, {
+      getSearchIndexStatus: () => ({
+        status: "rebuilding",
+        keywordEntries: 12,
+        vectorEntries: 8,
+      }),
+    });
+    try {
+      const snapshot = await monitor.collectNow();
+      expect(snapshot.searchIndex).toEqual({
+        status: "rebuilding",
+        keywordEntries: 12,
+        vectorEntries: 8,
+      });
+      expect(snapshot.status).toBe("degraded");
+      expect(snapshot.alerts).toContain("search_index_rebuilding");
+    } finally {
+      monitor.stop();
+    }
+  });
+
   it.each([
     [{ workers: [] }, "workers_missing"],
     [{ workers: "not-an-array" }, "worker_probe_invalid"],

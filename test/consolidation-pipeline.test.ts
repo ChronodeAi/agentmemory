@@ -170,6 +170,102 @@ describe("Consolidation Pipeline", () => {
     expect(stored.length).toBe(1);
     expect(stored[0].fact).toBe("TypeScript is the primary language");
     expect(stored[0].confidence).toBe(0.9);
+    expect(stored[0].sourceFingerprint).toMatch(/^[a-f0-9]{64}$/);
+  });
+
+  it("reinforces paraphrased facts and skips an unchanged summary batch", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts>
+          <fact confidence="0.9">OMLX is the local embedding provider with Qwen3 vectors at 2560 dimensions</fact>
+          <fact confidence="0.8">The project uses OMLX for local embeddings</fact>
+        </facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    const first = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+      project: "test-project",
+    })) as { results: { semantic: Record<string, unknown> } };
+    const second = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+      project: "test-project",
+    })) as { results: { semantic: Record<string, unknown> } };
+
+    expect(first.results.semantic).toMatchObject({
+      newFacts: 1,
+      reinforcedFacts: 1,
+      duplicatesSuperseded: 0,
+    });
+    expect(second.results.semantic).toMatchObject({
+      skipped: true,
+      reason: "summary batch already consolidated",
+      newFacts: 0,
+    });
+    expect(provider.summarize).toHaveBeenCalledTimes(1);
+
+    const stored = await kv.list<SemanticMemory>("mem:semantic");
+    expect(stored).toHaveLength(1);
+    expect(stored[0].accessCount).toBe(2);
+  });
+
+  it("marks existing paraphrase duplicates as superseded without deleting them", async () => {
+    const provider = {
+      name: "test",
+      compress: vi.fn(),
+      summarize: vi.fn().mockResolvedValue(
+        `<facts><fact confidence="0.8">OpenRouter provides Gemini generation</fact></facts>`,
+      ),
+    };
+    registerConsolidationPipelineFunction(sdk as never, kv as never, provider as never);
+
+    for (let i = 0; i < 6; i++) {
+      await kv.set("mem:summaries", `ses_${i}`, makeSummary(i));
+    }
+
+    const base: Omit<SemanticMemory, "id" | "fact"> = {
+      project: "test-project",
+      confidence: 0.9,
+      sourceSessionIds: ["ses_1"],
+      sourceMemoryIds: [],
+      accessCount: 1,
+      lastAccessedAt: "2026-08-04T00:00:00.000Z",
+      createdAt: "2026-08-04T00:00:00.000Z",
+      updatedAt: "2026-08-04T00:00:00.000Z",
+      strength: 0.9,
+    };
+    await kv.set("mem:semantic", "sem_short", {
+      ...base,
+      id: "sem_short",
+      fact: "OMLX is the local embedding provider",
+    });
+    await kv.set("mem:semantic", "sem_rich", {
+      ...base,
+      id: "sem_rich",
+      fact: "OMLX provides local Qwen3 embeddings with 2560 dimensions",
+    });
+
+    const result = (await sdk.trigger("mem::consolidate-pipeline", {
+      tier: "semantic",
+      project: "test-project",
+    })) as { results: { semantic: Record<string, unknown> } };
+
+    expect(result.results.semantic).toMatchObject({
+      duplicatesSuperseded: 1,
+      newFacts: 1,
+    });
+
+    const stored = await kv.list<SemanticMemory>("mem:semantic");
+    expect(stored).toHaveLength(3);
+    expect(stored.find((memory) => memory.id === "sem_short")?.supersededBy).toBe("sem_rich");
+    expect(stored.filter((memory) => memory.supersededBy)).toHaveLength(1);
   });
 
   it("with enough patterns, creates procedural memories from provider response", async () => {

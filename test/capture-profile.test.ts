@@ -287,6 +287,34 @@ describe("balanced coding capture", () => {
     ).toBeNull();
   });
 
+  it("drops mixed-path events when any referenced file is excluded", () => {
+    expect(
+      captureToolEvent(
+        "file_read",
+        { file_paths: ["src/app.ts", ".env"] },
+        "combined output",
+        config,
+      ),
+    ).toBeNull();
+  });
+
+  it("drops command events that reference excluded AIWG working files", () => {
+    expect(
+      captureToolEvent(
+        "Bash",
+        {
+          command:
+            "jq . .aiwg/working/construction/private-control.json",
+        },
+        "sensitive working evidence",
+        {
+          ...config,
+          exclude_globs: [...config.exclude_globs, "**/.aiwg/working/**"],
+        },
+      ),
+    ).toBeNull();
+  });
+
   it("redacts representative credentials before storage or providers", () => {
     const secret = "sk-proj-ABCDEFGHIJKLMNOPQRSTUVWXYZ123456";
     const cleaned = stripPrivateData(`token=${secret} Bearer ${secret}`);

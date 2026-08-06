@@ -7,6 +7,7 @@ interface ThresholdConfig {
   cpuCriticalPercent: number;
   memoryWarnPercent: number;
   memoryCriticalPercent: number;
+  memoryHeapFloorBytes: number;
   memoryRssFloorBytes: number;
   memoryRssWarnSystemPercent: number;
   memoryRssCriticalSystemPercent: number;
@@ -21,6 +22,7 @@ const DEFAULTS: ThresholdConfig = {
   cpuCriticalPercent: 90,
   memoryWarnPercent: 80,
   memoryCriticalPercent: 95,
+  memoryHeapFloorBytes: 512 * 1024 * 1024,
   memoryRssFloorBytes: 512 * 1024 * 1024,
   memoryRssWarnSystemPercent: 25,
   memoryRssCriticalSystemPercent: 50,
@@ -59,6 +61,30 @@ export function evaluateHealth(
   if (snapshot.slotBackend?.status !== "ok") {
     alerts.push("slot_backend_unavailable");
     critical = true;
+  }
+  if (snapshot.searchIndex?.status === "failed") {
+    alerts.push("search_index_failed");
+    critical = true;
+  } else if (snapshot.searchIndex?.status === "partial") {
+    const pendingVectors =
+      snapshot.searchIndex.keywordEntries - snapshot.searchIndex.vectorEntries;
+    const activeCaptures = snapshot.captureAdmission?.active ?? 0;
+    const boundedCatchup = Math.max(activeCaptures, 1);
+    if (
+      pendingVectors > 0 &&
+      pendingVectors <= boundedCatchup
+    ) {
+      notes.push(`search_index_catching_up_${pendingVectors}`);
+    } else {
+      alerts.push("search_index_partial");
+      degraded = true;
+    }
+  } else if (snapshot.searchIndex?.status === "rebuilding") {
+    alerts.push("search_index_rebuilding");
+    degraded = true;
+  } else if (snapshot.searchIndex?.status === "initializing") {
+    alerts.push("search_index_initializing");
+    degraded = true;
   }
   if (
     snapshot.expiresAt &&
@@ -106,12 +132,14 @@ export function evaluateHealth(
   const systemTotal = snapshot.memory.systemTotal ?? 0;
   const rssSystemPercent =
     systemTotal > 0 ? (rss / systemTotal) * 100 : 0;
+  const heapAboveFloor = snapshot.memory.heapUsed >= cfg.memoryHeapFloorBytes;
   const rssAboveFloor = rss >= cfg.memoryRssFloorBytes;
+  const actionableHeapPressure = heapAboveFloor && rssAboveFloor;
   const memMb = Math.round(rss / (1024 * 1024));
-  if (memPercent > cfg.memoryCriticalPercent && rssAboveFloor) {
+  if (memPercent > cfg.memoryCriticalPercent && actionableHeapPressure) {
     alerts.push(`memory_critical_${Math.round(memPercent)}%_rss${memMb}mb`);
     critical = true;
-  } else if (memPercent > cfg.memoryWarnPercent && rssAboveFloor) {
+  } else if (memPercent > cfg.memoryWarnPercent && actionableHeapPressure) {
     alerts.push(`memory_warn_${Math.round(memPercent)}%_rss${memMb}mb`);
     degraded = true;
   } else if (memPercent > cfg.memoryWarnPercent) {

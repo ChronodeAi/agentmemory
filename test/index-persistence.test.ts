@@ -15,6 +15,11 @@ type TestIndexShardManifest = {
   generation?: string;
   shards: Array<{ scope: string; key: string; chars: number }>;
   chars: number;
+  previous?: {
+    generation?: string;
+    shards: Array<{ scope: string; key: string; chars: number }>;
+    chars: number;
+  };
 };
 
 function mockKV() {
@@ -142,12 +147,14 @@ describe("IndexPersistence", () => {
     await kv.set(BM25_SCOPE, BM25_LEGACY_KEY, bm25.serialize());
     await kv.set(BM25_SCOPE, VECTOR_LEGACY_KEY, vector.serialize());
 
-    const loaded = await new IndexPersistence(
+    const loader = new IndexPersistence(
       kv as never,
       new SearchIndex(),
       null,
-    ).load();
+    );
+    const loaded = await loader.load();
 
+    expect(loader.needsRepair()).toBe(false);
     expect(loaded.bm25).not.toBeNull();
     expect(loaded.bm25!.search("legacy").length).toBe(1);
     expect(loaded.vector).not.toBeNull();
@@ -219,12 +226,14 @@ describe("IndexPersistence", () => {
       ],
     });
 
-    const loaded = await new IndexPersistence(
+    const loader = new IndexPersistence(
       kv as never,
       new SearchIndex(),
       null,
-    ).load();
+    );
+    const loaded = await loader.load();
 
+    expect(loader.needsRepair()).toBe(false);
     expect(loaded.bm25).not.toBeNull();
     expect(loaded.bm25!.search("deterministic").length).toBe(1);
   });
@@ -239,6 +248,56 @@ describe("IndexPersistence", () => {
     const loaded = await persistence.load();
     expect(loaded.vector).not.toBeNull();
     expect(loaded.vector!.size).toBe(1);
+  });
+
+  it("snapshots BM25 and vectors before asynchronous persistence yields", async () => {
+    const bm25 = makeBm25("obs_initial", "initial snapshot");
+    const vector = makeVector("obs_initial");
+    let releaseFirstShard!: () => void;
+    let signalFirstShard!: () => void;
+    const firstShardStarted = new Promise<void>((resolve) => {
+      signalFirstShard = resolve;
+    });
+    const firstShardBlocked = new Promise<void>((resolve) => {
+      releaseFirstShard = resolve;
+    });
+    let blocked = false;
+    const guardedKv = {
+      ...kv,
+      set: vi.fn(async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (!blocked && scope.includes(":bm25:gen_atomic:")) {
+          blocked = true;
+          signalFirstShard();
+          await firstShardBlocked;
+        }
+        return kv.set(scope, key, data);
+      }),
+    };
+    const persistence = new IndexPersistence(
+      guardedKv as never,
+      bm25,
+      vector,
+      { createGeneration: () => "gen_atomic" },
+    );
+
+    const save = persistence.save();
+    await firstShardStarted;
+    bm25.add(makeObs({ id: "obs_late", title: "late snapshot" }));
+    vector.add("obs_late", "ses_1", new Float32Array([0.4, 0.5, 0.6]));
+    releaseFirstShard();
+    await save;
+
+    const loaded = await new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+    ).load();
+    expect(loaded.bm25!.size).toBe(1);
+    expect(loaded.bm25!.search("late")).toHaveLength(0);
+    expect(loaded.vector!.size).toBe(1);
+    expect(
+      loaded.vector!.search(new Float32Array([0.4, 0.5, 0.6]))[0]?.obsId,
+    ).not.toBe("obs_late");
   });
 
   it("saves vector index shards outside the BM25 scope", async () => {
@@ -492,6 +551,94 @@ describe("IndexPersistence", () => {
     expect(loaded.bm25!.search("bravo").length).toBe(1);
   });
 
+  it("falls back to the retained previous generation when a current shard is missing", async () => {
+    const previous = makeBm25("obs_old", "alpha previous snapshot");
+    await new IndexPersistence(kv as never, previous, null, {
+      shardChars: 80,
+      createGeneration: () => "gen_old",
+    }).save();
+    const previousManifest = await getBm25Manifest(kv);
+
+    const next = makeBm25("obs_new", "bravo new snapshot");
+    await new IndexPersistence(kv as never, next, null, {
+      shardChars: 80,
+      createGeneration: () => "gen_new",
+    }).save();
+    const currentManifest = await getBm25Manifest(kv);
+    expect(currentManifest.previous?.generation).toBe("gen_old");
+    await expect(
+      kv.get(
+        previousManifest.shards[0].scope,
+        previousManifest.shards[0].key,
+      ),
+    ).resolves.toEqual(expect.any(String));
+
+    await kv.delete(
+      currentManifest.shards[0].scope,
+      currentManifest.shards[0].key,
+    );
+    const loader = new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+    );
+    const loaded = await loader.load();
+
+    expect(loader.needsRepair()).toBe(true);
+    expect(loaded.bm25).not.toBeNull();
+    expect(loaded.bm25!.search("alpha").length).toBe(1);
+    expect(loaded.bm25!.search("bravo").length).toBe(0);
+  });
+
+  it("retains the valid fallback while repairing a corrupt current generation", async () => {
+    const previous = makeBm25("obs_old", "alpha previous snapshot");
+    await new IndexPersistence(kv as never, previous, null, {
+      shardChars: 80,
+      createGeneration: () => "gen_old",
+    }).save();
+
+    const next = makeBm25("obs_new", "bravo corrupt snapshot");
+    await new IndexPersistence(kv as never, next, null, {
+      shardChars: 80,
+      createGeneration: () => "gen_corrupt",
+    }).save();
+    const corruptManifest = await getBm25Manifest(kv);
+    await kv.delete(
+      corruptManifest.shards[0].scope,
+      corruptManifest.shards[0].key,
+    );
+
+    const repairedIndex = new SearchIndex();
+    const persistence = new IndexPersistence(
+      kv as never,
+      repairedIndex,
+      null,
+      {
+        shardChars: 80,
+        createGeneration: () => "gen_repaired",
+      },
+    );
+    const recovered = await persistence.load();
+    repairedIndex.restoreFrom(recovered.bm25!);
+    repairedIndex.add(makeObs({ id: "obs_after", title: "charlie repair" }));
+    await persistence.save();
+
+    const repairedManifest = await getBm25Manifest(kv);
+    expect(repairedManifest.generation).toBe("gen_repaired");
+    expect(repairedManifest.previous?.generation).toBe("gen_old");
+    await kv.delete(
+      repairedManifest.shards[0].scope,
+      repairedManifest.shards[0].key,
+    );
+    const reloaded = await new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+    ).load();
+    expect(reloaded.bm25!.search("alpha")).toHaveLength(1);
+    expect(reloaded.bm25!.search("bravo")).toHaveLength(0);
+  });
+
   it("deletes a shard that committed before set rejected", async () => {
     const previous = makeBm25("obs_old", "alpha previous snapshot");
     await new IndexPersistence(kv as never, previous, null, {
@@ -685,6 +832,58 @@ describe("IndexPersistence", () => {
     expect(saved).not.toBeNull();
   });
 
+  it("serializes overlapping saves and publishes the latest complete snapshot", async () => {
+    const bm25 = makeBm25("obs_initial", "initial snapshot");
+    let releaseFirstShard!: () => void;
+    let signalFirstShard!: () => void;
+    const firstShardStarted = new Promise<void>((resolve) => {
+      signalFirstShard = resolve;
+    });
+    const firstShardBlocked = new Promise<void>((resolve) => {
+      releaseFirstShard = resolve;
+    });
+    let generationCount = 0;
+    let blocked = false;
+    const guardedKv = {
+      ...kv,
+      set: vi.fn(async <T>(scope: string, key: string, data: T): Promise<T> => {
+        if (!blocked && scope.includes(":gen_1:")) {
+          blocked = true;
+          signalFirstShard();
+          await firstShardBlocked;
+        }
+        return kv.set(scope, key, data);
+      }),
+    };
+    const persistence = new IndexPersistence(
+      guardedKv as never,
+      bm25,
+      null,
+      {
+        shardChars: 80,
+        createGeneration: () => `gen_${++generationCount}`,
+      },
+    );
+
+    const firstSave = persistence.save();
+    await firstShardStarted;
+    bm25.add(makeObs({ id: "obs_late", title: "late snapshot" }));
+    const secondSave = persistence.save();
+    await Promise.resolve();
+    expect(generationCount).toBe(1);
+    releaseFirstShard();
+    await Promise.all([firstSave, secondSave]);
+
+    expect(generationCount).toBe(2);
+    const loaded = await new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+    ).load();
+    expect(loaded.bm25!.size).toBe(2);
+    expect(loaded.bm25!.search("late")).toHaveLength(1);
+  });
+
   it("stop clears the pending timer", async () => {
     const bm25 = new SearchIndex();
     bm25.add(makeObs({ id: "obs_1", title: "auth handler" }));
@@ -692,6 +891,7 @@ describe("IndexPersistence", () => {
 
     persistence.scheduleSave();
     persistence.stop();
+    persistence.scheduleSave();
 
     vi.advanceTimersByTime(10000);
     const saved = await kv.get<string>(BM25_SCOPE, BM25_MANIFEST_KEY);

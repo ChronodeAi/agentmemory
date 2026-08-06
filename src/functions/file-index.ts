@@ -96,15 +96,18 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
         .slice(0, 15);
 
       const obsCache = new Map<string, CompressedObservation[]>();
-      for (const session of otherSessions) {
-        try {
-          obsCache.set(
-            session.id,
-            await kv.list<CompressedObservation>(KV.observations(session.id)),
-          );
-        } catch (error) {
-          return failedFileOutcome(error);
-        }
+      let observationLists: CompressedObservation[][];
+      try {
+        observationLists = await Promise.all(
+          otherSessions.map((session) =>
+            kv.list<CompressedObservation>(KV.observations(session.id)),
+          ),
+        );
+      } catch (error) {
+        return failedFileOutcome(error);
+      }
+      for (let index = 0; index < otherSessions.length; index++) {
+        obsCache.set(otherSessions[index].id, observationLists[index]);
       }
 
       for (const file of files) {

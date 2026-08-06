@@ -226,8 +226,10 @@ export function registerReflectFunctions(
           kv.list<Insight>(KV.insights).catch(() => []),
         ]);
 
-      const semanticMemories = allSemanticMemories.filter((memory) =>
-        recordMatchesProject(memory.project, projectScope),
+      const semanticMemories = allSemanticMemories.filter(
+        (memory) =>
+          !memory.supersededBy &&
+          recordMatchesProject(memory.project, projectScope),
       );
       const activeLessons = lessons.filter(
         (lesson) =>

@@ -6,7 +6,7 @@ import {
   realpathSync,
 } from "node:fs";
 import { homedir } from "node:os";
-import { basename, isAbsolute, join, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseDotenv } from "dotenv";
 import { parse as parseYaml } from "yaml";
 
@@ -59,6 +59,43 @@ export const DEFAULT_EXCLUDE_GLOBS = [
   "**/.agents/**",
   "**/.aiwg/working/**",
 ] as const;
+
+function globToRegExp(glob: string): RegExp {
+  let pattern = "";
+  for (let i = 0; i < glob.length; i++) {
+    const char = glob[i];
+    const next = glob[i + 1];
+    if (char === "*" && next === "*") {
+      if (glob[i + 2] === "/") {
+        pattern += "(?:.*/)?";
+        i += 2;
+      } else {
+        pattern += ".*";
+        i++;
+      }
+    } else if (char === "*") {
+      pattern += "[^/]*";
+    } else if (char === "?") {
+      pattern += "[^/]";
+    } else {
+      pattern += char.replace(/[\\^$+?.()|[\]{}]/g, "\\$&");
+    }
+  }
+  return new RegExp(`^${pattern}$`, "i");
+}
+
+export function normalizedProjectPath(path: string, root: string): string {
+  const absolute = isAbsolute(path) ? path : resolve(root, path);
+  return relative(root, absolute).replace(/\\/g, "/").replace(/^\.\//, "");
+}
+
+export function isProjectPathExcluded(
+  path: string,
+  config: Pick<AgentmemoryProjectConfig, "root" | "exclude_globs">,
+): boolean {
+  const normalized = normalizedProjectPath(path, config.root);
+  return config.exclude_globs.some((glob) => globToRegExp(glob).test(normalized));
+}
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
@@ -319,7 +356,6 @@ export function resolveProjectConfig(cwd = process.cwd()): AgentmemoryProjectCon
   const processLayer = envLayer(env);
   const highToLow = [processLayer, user, repository, inferred];
   const privacy = mostRestrictivePrivacy([
-    inferred,
     repository,
     user,
     processLayer,

@@ -206,6 +206,39 @@ describe("viewer session rendering", () => {
     expect(prompt.innerHTML).not.toContain("/data/.hmac");
   });
 
+  it("renders a structured critical health snapshot returned with HTTP 503", async () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    sandbox.fetch = async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        status: "critical",
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+        health: { status: "critical", connectionState: "connected" },
+      }),
+    });
+
+    const result = await sandbox.apiGet("health");
+    expect(result.status).toBe("critical");
+
+    sandbox.state.dashboard = {
+      loaded: true,
+      health: result,
+      sessions: [],
+      memories: [],
+      graphStats: null,
+      recentAudit: [],
+      lessons: [],
+      crystals: [],
+    };
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("critical");
+    expect(getElement("view-dashboard").innerHTML).not.toContain("unknown");
+  });
+
   it("does not throw when dashboard sessions are missing ids", () => {
     const { sandbox, getElement } = loadViewerSandbox();
     sandbox.state.dashboard = {

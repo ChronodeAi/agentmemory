@@ -1266,6 +1266,16 @@
         var res = await fetch(url, fetchOpts);
         if (!res.ok) {
           if (res.status === 401) showViewerAuthPrompt();
+          // Health uses 503 to report a valid, structured critical snapshot.
+          // Preserve that body so the dashboard renders "critical" instead of
+          // treating an unhealthy service as an unknown network failure.
+          if (path === 'health' && res.status === 503) {
+            var criticalHealth = await res.json();
+            if (criticalHealth && typeof criticalHealth === 'object') {
+              hideViewerAuthPrompt();
+              return criticalHealth;
+            }
+          }
           console.warn('[viewer] API ' + (fetchOpts.method || 'GET') + ' ' + path + ' returned ' + res.status);
           return null;
         }

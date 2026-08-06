@@ -168,6 +168,40 @@ describe("context delivery acknowledgement surfaces", () => {
     ).resolves.toMatchObject({ status_code: 400 });
 
     trigger.mockResolvedValueOnce({
+      success: true,
+      status: "dry-run",
+      matched: 3,
+      changed: 2,
+    });
+    await expect(
+      migrate({
+        headers: { authorization: "Bearer admin-secret" },
+        body: {
+          step: "transition-project-processing-policy",
+          project: "github.com/chronodeai/memetics",
+          privacy: "private",
+          externalProcessing: true,
+          acknowledgeHistoricalContent: true,
+          dryRun: true,
+        },
+      }),
+    ).resolves.toMatchObject({
+      status_code: 200,
+      body: { operationSucceeded: true, status: "dry-run" },
+    });
+    expect(trigger).toHaveBeenLastCalledWith({
+      function_id: "mem::migrate",
+      payload: {
+        step: "transition-project-processing-policy",
+        project: "github.com/chronodeai/memetics",
+        privacy: "private",
+        externalProcessing: true,
+        acknowledgeHistoricalContent: true,
+        dryRun: true,
+      },
+    });
+
+    trigger.mockResolvedValueOnce({
       success: false,
       status: "rolled-back",
       rollback: { success: true },

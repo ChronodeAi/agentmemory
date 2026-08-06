@@ -17,11 +17,15 @@ const VECTOR_SHARD_SCOPE_PREFIX = `${KV.bm25Index}:vectors:`;
 const INDEX_SHARD_KEY = "data";
 const DEFAULT_INDEX_SHARD_CHARS = 2_000_000;
 
-type IndexShardManifest = {
-  v: 1;
+type IndexShardGeneration = {
   generation?: string;
   shards: Array<{ scope: string; key: string; chars: number }>;
   chars: number;
+};
+
+type IndexShardManifest = IndexShardGeneration & {
+  v: 1;
+  previous?: IndexShardGeneration;
 };
 
 type IndexPersistenceOptions = {
@@ -68,6 +72,12 @@ function isValidShardDescriptor(
 export class IndexPersistence {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastFailureLogAt = 0;
+  private saveQueue: Promise<void> = Promise.resolve();
+  private stopped = false;
+  private retainedGenerationOverrides = new Map<
+    string,
+    IndexShardGeneration
+  >();
 
   constructor(
     private kv: StateKV,
@@ -77,6 +87,7 @@ export class IndexPersistence {
   ) {}
 
   scheduleSave(): void {
+    if (this.stopped) return;
     if (this.timer) clearTimeout(this.timer);
     // setTimeout discards the returned promise, so any rejection inside
     // save() would surface as unhandledRejection and crash the process
@@ -87,15 +98,31 @@ export class IndexPersistence {
     }, DEBOUNCE_MS);
   }
 
+  cancelScheduledSave(): void {
+    if (!this.timer) return;
+    clearTimeout(this.timer);
+    this.timer = null;
+  }
+
   async save(): Promise<void> {
     if (this.timer) {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    const queued = this.saveQueue.then(() => this.persistSnapshot());
+    this.saveQueue = queued;
+    await queued;
+  }
+
+  private async persistSnapshot(): Promise<void> {
     try {
-      await this.saveBm25Index(this.bm25.serialize());
-      if (this.vector) {
-        await this.saveVectorIndex(this.vector.serialize());
+      // Capture both synchronous snapshots before the first write yields.
+      // Otherwise live hook writes can appear only in the later vector snapshot.
+      const bm25Snapshot = this.bm25.serialize();
+      const vectorSnapshot = this.vector?.serialize();
+      await this.saveBm25Index(bm25Snapshot);
+      if (vectorSnapshot !== undefined) {
+        await this.saveVectorIndex(vectorSnapshot);
       }
     } catch (err) {
       this.logFailure(err);
@@ -123,10 +150,12 @@ export class IndexPersistence {
   }
 
   stop(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+    this.stopped = true;
+    this.cancelScheduledSave();
+  }
+
+  needsRepair(): boolean {
+    return this.retainedGenerationOverrides.size > 0;
   }
 
   private logFailure(err: unknown): void {
@@ -215,11 +244,15 @@ export class IndexPersistence {
       throw failedWrite.reason;
     }
 
+    const previousGeneration =
+      this.retainedGenerationOverrides.get(manifestKey) ??
+      this.asGeneration(previous);
     const nextManifest: IndexShardManifest = {
       v: 1,
       generation,
       shards,
       chars: serialized.length,
+      ...(previousGeneration ? { previous: previousGeneration } : {}),
     };
     try {
       await this.kv.set<IndexShardManifest>(
@@ -255,15 +288,12 @@ export class IndexPersistence {
     }
 
     await this.deleteKey(KV.bm25Index, legacyKey, "legacy_cleanup");
-    if (previous?.v === 1 && Array.isArray(previous.shards)) {
-      const currentShardIds = new Set(
-        shards.map((shard) => `${shard.scope}\0${shard.key}`),
-      );
-      for (const shard of previous.shards) {
-        if (currentShardIds.has(`${shard.scope}\0${shard.key}`)) continue;
-        await this.deleteShards([shard], "previous_generation_cleanup");
-      }
-    }
+    await this.deleteSupersededGenerations(
+      previous,
+      previousGeneration,
+      shards,
+    );
+    this.retainedGenerationOverrides.delete(manifestKey);
   }
 
   private async auditIndexPersistence(
@@ -308,6 +338,32 @@ export class IndexPersistence {
   ): Promise<void> {
     for (const shard of shards) {
       await this.deleteKey(shard.scope, shard.key, reason);
+    }
+  }
+
+  private async deleteSupersededGenerations(
+    previousManifest: IndexShardManifest | null,
+    retained: IndexShardGeneration | null,
+    currentShards: IndexShardGeneration["shards"],
+  ): Promise<void> {
+    const retainedShardIds = new Set(
+      [...currentShards, ...(retained?.shards ?? [])].map(
+        (shard) => `${shard.scope}\0${shard.key}`,
+      ),
+    );
+    const candidates = [
+      this.asGeneration(previousManifest),
+      this.asGeneration(previousManifest?.previous),
+    ];
+    const seen = new Set<string>();
+    for (const generation of candidates) {
+      if (!generation) continue;
+      for (const shard of generation.shards) {
+        const id = `${shard.scope}\0${shard.key}`;
+        if (retainedShardIds.has(id) || seen.has(id)) continue;
+        seen.add(id);
+        await this.deleteShards([shard], "previous_generation_cleanup");
+      }
     }
   }
 
@@ -368,7 +424,28 @@ export class IndexPersistence {
       manifest.value != null &&
       typeof manifest.value === "object"
     ) {
-      return this.loadManifestData(manifest.value, label);
+      const current = await this.loadManifestData(manifest.value, label);
+      if (current !== null) {
+        this.retainedGenerationOverrides.delete(manifestKey);
+        return current;
+      }
+      if (this.asGeneration(manifest.value.previous)) {
+        const fallback = await this.loadGenerationData(
+          manifest.value.previous!,
+          `${label} previous`,
+        );
+        if (fallback !== null) {
+          this.retainedGenerationOverrides.set(
+            manifestKey,
+            this.asGeneration(manifest.value.previous)!,
+          );
+          logger.warn(`index persistence: ${label} using previous generation`, {
+            generation: manifest.value.previous?.generation,
+          });
+          return fallback;
+        }
+      }
+      return null;
     }
 
     const legacy = await this.readIndexValue<string>(
@@ -404,22 +481,41 @@ export class IndexPersistence {
     manifest: IndexShardManifest,
     label: string,
   ): Promise<string | null> {
-    if (
-      manifest.v !== 1 ||
-      !Array.isArray(manifest.shards) ||
-      manifest.shards.length === 0 ||
-      !Number.isInteger(manifest.chars) ||
-      manifest.chars < 0
-    ) {
+    const generation = this.asGeneration(manifest);
+    if (manifest.v !== 1 || !generation) {
       logger.warn(`index persistence: ${label} shard manifest invalid`);
       return null;
     }
-    for (const shard of manifest.shards) {
-      if (!isValidShardDescriptor(shard)) {
-        logger.warn(`index persistence: ${label} shard manifest invalid`);
-        return null;
-      }
+    return this.loadGenerationData(generation, label);
+  }
+
+  private asGeneration(value: unknown): IndexShardGeneration | null {
+    if (!value || typeof value !== "object") return null;
+    const generation = value as Partial<IndexShardGeneration>;
+    if (
+      !Array.isArray(generation.shards) ||
+      generation.shards.length === 0 ||
+      !Number.isInteger(generation.chars) ||
+      (generation.chars ?? -1) < 0 ||
+      (generation.generation !== undefined &&
+        typeof generation.generation !== "string") ||
+      !generation.shards.every(isValidShardDescriptor)
+    ) {
+      return null;
     }
+    return {
+      ...(generation.generation
+        ? { generation: generation.generation }
+        : {}),
+      shards: generation.shards.map((shard) => ({ ...shard })),
+      chars: generation.chars!,
+    };
+  }
+
+  private async loadGenerationData(
+    manifest: IndexShardGeneration,
+    label: string,
+  ): Promise<string | null> {
     const loadedShards = await Promise.all(
       manifest.shards.map(async (shard) => ({
         shard,

@@ -1849,6 +1849,10 @@ export function registerApiTriggers(
         step?: string;
         dryRun?: boolean;
         projectAliases?: Record<string, string>;
+        project?: string;
+        privacy?: "standard" | "private" | "strict";
+        externalProcessing?: boolean;
+        acknowledgeHistoricalContent?: boolean;
         action?: "resume" | "rollback";
       }>,
     ): Promise<Response> => {
@@ -1890,6 +1894,15 @@ export function registerApiTriggers(
           ...(req.body.dryRun !== undefined && { dryRun: req.body.dryRun }),
           ...(req.body.projectAliases !== undefined && {
             projectAliases: req.body.projectAliases,
+          }),
+          ...(req.body.project !== undefined && { project: req.body.project }),
+          ...(req.body.privacy !== undefined && { privacy: req.body.privacy }),
+          ...(req.body.externalProcessing !== undefined && {
+            externalProcessing: req.body.externalProcessing,
+          }),
+          ...(req.body.acknowledgeHistoricalContent !== undefined && {
+            acknowledgeHistoricalContent:
+              req.body.acknowledgeHistoricalContent,
           }),
           ...(req.body.action !== undefined && { action: req.body.action }),
         },

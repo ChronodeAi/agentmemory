@@ -190,6 +190,7 @@ export function registerRetentionFunctions(
       }
 
       for (const sem of semanticMems) {
+        if (sem.supersededBy) continue;
         const log = logsById.get(sem.id) ?? emptyAccessLog(sem.id);
 
         // Pre-0.8.3 fallback: use sem.lastAccessedAt only when mem:access is empty.

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -61,6 +61,14 @@ describe("observe implicit session create (#638)", () => {
     vi.resetModules();
   });
 
+  afterEach(async () => {
+    const { setIndexPersistence, setVectorIndex } = await import(
+      "../src/functions/search.js"
+    );
+    setIndexPersistence(null);
+    setVectorIndex(null);
+  });
+
   it("creates the session on first observe when project+cwd present and session record missing", async () => {
     const { registerObserveFunction } = await import("../src/functions/observe.js");
     const sdk = mockSdk();
@@ -106,6 +114,120 @@ describe("observe implicit session create (#638)", () => {
     const sessionScope = kv.store.get("mem:sessions");
     // Either no scope at all, or no entry for this session
     expect(sessionScope?.get("ses_no_project")).toBeUndefined();
+  });
+
+  it("schedules persistence after indexing a synthetic observation", async () => {
+    const { registerObserveFunction } = await import("../src/functions/observe.js");
+    const { setIndexPersistence } = await import("../src/functions/search.js");
+    const scheduleSave = vi.fn();
+    setIndexPersistence({ scheduleSave, save: vi.fn(async () => undefined) });
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    await sdk.trigger("mem::observe", {
+      sessionId: "ses_persist",
+      project: "/home/user/myrepo",
+      cwd: "/home/user/myrepo",
+      hookType: "prompt_submit",
+      timestamp: new Date().toISOString(),
+      data: { prompt: "persist this indexed observation" },
+    });
+
+    expect(scheduleSave).toHaveBeenCalledTimes(1);
+  });
+
+  it("stores retrieval metadata without indexing it as new evidence", async () => {
+    const { registerObserveFunction } = await import("../src/functions/observe.js");
+    const { getSearchIndex, setIndexPersistence } = await import(
+      "../src/functions/search.js"
+    );
+    const scheduleSave = vi.fn();
+    setIndexPersistence({ scheduleSave, save: vi.fn(async () => undefined) });
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    const result = (await sdk.trigger("mem::observe", {
+      sessionId: "ses_retrieval_metadata",
+      project: "/home/user/myrepo",
+      cwd: "/home/user/myrepo",
+      hookType: "post_tool_use",
+      timestamp: new Date().toISOString(),
+      data: {
+        tool_name: "mcp__agentmemory__memory_context_packet",
+        tool_output: { context: "previously recalled content" },
+      },
+    })) as { observationId: string };
+
+    const stored = kv.store
+      .get("mem:obs:ses_retrieval_metadata")
+      ?.get(result.observationId) as { recalledOnly?: boolean };
+    expect(stored.recalledOnly).toBe(true);
+    expect(getSearchIndex().size).toBe(0);
+    expect(scheduleSave).not.toHaveBeenCalled();
+  });
+
+  it("removes compacted observations from both keyword and vector indexes", async () => {
+    const { registerObserveFunction } = await import("../src/functions/observe.js");
+    const {
+      getSearchIndex,
+      setIndexPersistence,
+      setVectorIndex,
+    } = await import("../src/functions/search.js");
+    const { VectorIndex } = await import("../src/state/vector-index.js");
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const vector = new VectorIndex();
+    const scheduleSave = vi.fn();
+    setVectorIndex(vector);
+    setIndexPersistence({ scheduleSave, save: vi.fn(async () => undefined) });
+    sdk.fns.set("mem::summarize", async () => ({ success: true }));
+
+    await kv.set("mem:sessions", "ses_compact", {
+      id: "ses_compact",
+      project: "/home/user/myrepo",
+      cwd: "/home/user/myrepo",
+      startedAt: "2026-01-01T00:00:00.000Z",
+      status: "active",
+      observationCount: 99,
+    });
+    for (let i = 0; i < 99; i += 1) {
+      const observation = {
+        id: `obs_old_${i}`,
+        sessionId: "ses_compact",
+        timestamp: new Date(Date.UTC(2026, 0, 1, 0, 0, i)).toISOString(),
+        type: "conversation",
+        title: `old observation ${i}`,
+        facts: [],
+        narrative: `old narrative ${i}`,
+        concepts: [],
+        files: [],
+        importance: 1,
+      };
+      await kv.set("mem:obs:ses_compact", observation.id, observation);
+      getSearchIndex().add(observation as never);
+      vector.add(
+        observation.id,
+        observation.sessionId,
+        new Float32Array([i + 1, 1]),
+      );
+    }
+    registerObserveFunction(sdk as never, kv as never, undefined, 100);
+
+    const result = (await sdk.trigger("mem::observe", {
+      sessionId: "ses_compact",
+      project: "/home/user/myrepo",
+      cwd: "/home/user/myrepo",
+      hookType: "prompt_submit",
+      timestamp: new Date().toISOString(),
+      data: { prompt: "trigger bounded rolling compaction" },
+    })) as { observationId?: string };
+
+    expect(result.observationId).toBeTruthy();
+    expect(vector.size).toBe(79);
+    expect(getSearchIndex().size).toBe(80);
+    expect(scheduleSave).toHaveBeenCalledTimes(2);
   });
 
   it("rejects an observation that does not match an existing session scope", async () => {

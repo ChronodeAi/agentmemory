@@ -35,9 +35,17 @@ import {
   registerSearchFunction,
   rebuildIndex,
   getSearchIndex,
+  getSearchIndexDrift,
+  getSearchIndexRuntimeStatus,
+  flushIndexSave,
+  incrementalVectorRepairLimit,
+  markSearchIndexReady,
+  repairVectorIndexFromKeyword,
+  scheduleIndexSave,
   setVectorIndex,
   setEmbeddingProvider,
   setIndexPersistence,
+  vectorIndexAddGuarded,
 } from "./functions/search.js";
 import { registerContextFunction } from "./functions/context.js";
 import { registerSummarizeFunction } from "./functions/summarize.js";
@@ -412,14 +420,21 @@ async function main() {
     DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
   );
 
-  const healthMonitor = registerHealthMonitor(sdk, kv);
+  const healthMonitor = registerHealthMonitor(sdk, kv, {
+    getSearchIndexStatus: getSearchIndexRuntimeStatus,
+  });
 
   const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
   // Wire the persistence hook so delete paths can flush BM25/vector
   // index mutations to disk. Without this, an in-memory remove can be
   // lost across a hard process exit and the persisted snapshot
   // restores the deleted entry at next boot.
-  setIndexPersistence(indexPersistence);
+  setIndexPersistence(indexPersistence, {
+    repairDrift: async () => {
+      await repairVectorIndexFromKeyword(kv);
+      void healthMonitor.collectNow().catch(() => undefined);
+    },
+  });
 
   const loaded = await indexPersistence.load().catch((err) => {
     console.warn(`[agentmemory] Failed to load persisted index:`, err);
@@ -485,28 +500,57 @@ async function main() {
     }
   }
 
-  const needsRebuild = bm25Index.size === 0;
+  const vectorExpected = embeddingProvider !== null && vectorIndex !== null;
+  const initialDrift = vectorExpected
+    ? getSearchIndexDrift()
+    : { missingVectorIds: [], orphanVectorIds: [] };
+  const driftCount =
+    initialDrift.missingVectorIds.length +
+    initialDrift.orphanVectorIds.length;
+  const incrementalRepairLimit = incrementalVectorRepairLimit(bm25Index.size);
+  const needsRebuild =
+    bm25Index.size === 0 ||
+    (vectorExpected && driftCount > incrementalRepairLimit);
 
   if (needsRebuild) {
-    // Fire-and-forget. rebuildIndex iterates every observation across
-    // every session and AWAITS an embedding-provider call per record.
-    // On a large corpus + rate-limited embedding endpoint that can
-    // take HOURS; awaiting it here blocks every subsequent boot step
-    // (including startViewerServer below, leaving the viewer port
-    // unbound for the duration). The index lazily fills in over time
-    // and search degrades gracefully — partial coverage > no viewer
-    // for hours. Errors still surface via the inner .catch.
+    // Fire-and-forget. Large corpora can still take minutes to embed even
+    // with batching; keep the REST/viewer surfaces available and expose the
+    // rebuild as degraded health until the complete index is published.
     void rebuildIndex(kv)
       .then((indexCount) => {
         if (indexCount > 0) {
           bootLog(`Search index rebuilt: ${indexCount} entries`);
-          indexPersistence.scheduleSave();
+          scheduleIndexSave();
         }
+        void healthMonitor.collectNow().catch(() => undefined);
       })
       .catch((err) => {
         console.warn(`[agentmemory] Failed to rebuild search index:`, err);
+        void healthMonitor.collectNow().catch(() => undefined);
       });
   } else {
+    if (vectorExpected && driftCount > 0) {
+      const repaired = await repairVectorIndexFromKeyword(kv);
+      bootLog(
+        `Repaired ${repaired} persisted vector index entr${
+          repaired === 1 ? "y" : "ies"
+        }`,
+      );
+    }
+    const repairedDrift = vectorExpected
+      ? getSearchIndexDrift()
+      : { missingVectorIds: [], orphanVectorIds: [] };
+    markSearchIndexReady(
+      bm25Index.size,
+      vectorIndex?.size ?? 0,
+      embeddingProvider !== null,
+      repairedDrift.missingVectorIds.length === 0 &&
+        repairedDrift.orphanVectorIds.length === 0,
+    );
+    if (indexPersistence.needsRepair()) {
+      bootLog("Recovered a persisted index from its retained generation");
+      scheduleIndexSave();
+    }
     // Backfill memories into BM25 for users upgrading from <0.9.5: prior
     // versions of mem::remember never indexed memories, so the persisted
     // BM25 covers observations only and `memory_smart_search` returns
@@ -533,13 +577,20 @@ async function main() {
           files: memory.files,
           importance: memory.strength,
         });
+        await vectorIndexAddGuarded(
+          memory.id,
+          memory.sessionIds?.[0] ?? "memory",
+          memory.title + " " + memory.content,
+          { kind: "memory", logId: memory.id },
+          { externalProcessing: false },
+        );
         backfilled++;
       }
       if (backfilled > 0) {
         bootLog(
           `Backfilled ${backfilled} memories into BM25 (legacy index gap)`,
         );
-        indexPersistence.scheduleSave();
+        scheduleIndexSave();
       }
     } catch (err) {
       console.warn(
@@ -547,6 +598,17 @@ async function main() {
         err,
       );
     }
+    const finalDrift = vectorExpected
+      ? getSearchIndexDrift()
+      : { missingVectorIds: [], orphanVectorIds: [] };
+    markSearchIndexReady(
+      bm25Index.size,
+      vectorIndex?.size ?? 0,
+      embeddingProvider !== null,
+      finalDrift.missingVectorIds.length === 0 &&
+        finalDrift.orphanVectorIds.length === 0,
+    );
+    void healthMonitor.collectNow().catch(() => undefined);
   }
 
   // Ready / Endpoints lines are emitted via `bootLog` so they're
@@ -642,7 +704,7 @@ async function main() {
     const hardExit = setTimeout(() => {
       clearWorkerPidfile();
       process.exit(0);
-    }, 4500);
+    }, 20_000);
     hardExit.unref();
     try {
       healthMonitor.stop();
@@ -653,10 +715,10 @@ async function main() {
         new Promise<void>((resolve) => setTimeout(resolve, 750)),
       ]);
       await Promise.race([
-        indexPersistence.save().catch((err) => {
+        flushIndexSave().catch((err) => {
           console.warn(`[agentmemory] Failed to save index on shutdown:`, err);
         }),
-        new Promise<void>((resolve) => setTimeout(resolve, 2000)),
+        new Promise<void>((resolve) => setTimeout(resolve, 15_000)),
       ]);
       await Promise.race([
         sdk.shutdown(),

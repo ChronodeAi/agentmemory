@@ -102,7 +102,9 @@ test("accepts only the declared Node profiles", () => {
   assert.equal(isAcceptedNode("v20.19.0"), true);
   assert.equal(isAcceptedNode("v20.18.9"), false);
   assert.equal(isAcceptedNode("v22.12.0"), true);
-  assert.equal(isAcceptedNode("v24.0.0"), false);
+  assert.equal(isAcceptedNode("v24.15.9"), false);
+  assert.equal(isAcceptedNode("v24.16.0"), true);
+  assert.equal(isAcceptedNode("v26.0.0"), false);
 });
 
 test("normalizes absolute Vitest paths to repository paths", () => {

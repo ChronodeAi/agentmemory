@@ -1,5 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
+import { pathToFileURL } from "node:url";
 
 const mocked = vi.hoisted(() => ({
   stateJson: "",
@@ -41,6 +43,7 @@ vi.mock("node:fs", () => ({
   existsSync: vi.fn().mockReturnValue(true),
   mkdirSync: vi.fn(),
   readFileSync: vi.fn(),
+  realpathSync: vi.fn((path: string) => path),
   writeFileSync: vi.fn((path: string, content: string) => {
     mocked.writes.push({ path, content });
     if (path.endsWith("state.json")) mocked.stateJson = content;
@@ -53,8 +56,10 @@ import {
 } from "../src/functions/snapshot.js";
 import { logger } from "../src/logger.js";
 import {
+  isDirectMigrationCliInvocation,
   runMigrationCli,
   runStagedMigration,
+  transitionProjectProcessingPolicy,
 } from "../src/functions/migrate.js";
 import type { Memory, Session } from "../src/types.js";
 
@@ -922,6 +927,175 @@ describe("staged migration", () => {
   });
 });
 
+describe("project processing policy transition", () => {
+  it("requires explicit consent and keeps dry-runs non-mutating", async () => {
+    const kv = mockKV();
+    const strictSession: Session = {
+      id: "strict-session",
+      project: "github.com/example/project",
+      cwd: "/tmp/project",
+      startedAt: "2026-08-04T00:00:00.000Z",
+      status: "completed",
+      observationCount: 1,
+      privacy: "strict",
+      externalProcessing: false,
+    };
+    await kv.set("mem:sessions", strictSession.id, strictSession);
+
+    await expect(
+      transitionProjectProcessingPolicy(kv as never, {
+        project: strictSession.project,
+        privacy: "private",
+        externalProcessing: true,
+      }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: expect.stringContaining("acknowledgeHistoricalContent=true"),
+    });
+
+    await expect(
+      transitionProjectProcessingPolicy(kv as never, {
+        project: strictSession.project,
+        privacy: "private",
+        externalProcessing: true,
+        acknowledgeHistoricalContent: true,
+      }),
+    ).resolves.toMatchObject({
+      success: true,
+      status: "dry-run",
+      dryRun: true,
+      matched: 1,
+      changed: 1,
+    });
+    expect(
+      await kv.get<Session>("mem:sessions", strictSession.id),
+    ).toMatchObject({ privacy: "strict", externalProcessing: false });
+  });
+
+  it("journals only changed sessions and leaves other projects untouched", async () => {
+    const kv = mockKV();
+    const project = "github.com/example/project";
+    const sessions: Session[] = [
+      {
+        id: "strict-session",
+        project,
+        cwd: "/tmp/project",
+        startedAt: "2026-08-04T00:00:00.000Z",
+        status: "completed",
+        observationCount: 1,
+        privacy: "strict",
+        externalProcessing: false,
+      },
+      {
+        id: "missing-policy-session",
+        project,
+        cwd: "/tmp/project",
+        startedAt: "2026-08-04T00:01:00.000Z",
+        status: "completed",
+        observationCount: 1,
+      },
+      {
+        id: "already-private-session",
+        project,
+        cwd: "/tmp/project",
+        startedAt: "2026-08-04T00:02:00.000Z",
+        status: "completed",
+        observationCount: 1,
+        privacy: "private",
+        externalProcessing: true,
+      },
+      {
+        id: "other-project-session",
+        project: "github.com/example/other",
+        cwd: "/tmp/other",
+        startedAt: "2026-08-04T00:03:00.000Z",
+        status: "completed",
+        observationCount: 1,
+        privacy: "strict",
+        externalProcessing: false,
+      },
+    ];
+    for (const session of sessions) {
+      await kv.set("mem:sessions", session.id, session);
+    }
+
+    const result = await transitionProjectProcessingPolicy(kv as never, {
+      project,
+      privacy: "private",
+      externalProcessing: true,
+      acknowledgeHistoricalContent: true,
+      dryRun: false,
+    });
+
+    expect(result).toMatchObject({
+      success: true,
+      status: "complete",
+      dryRun: false,
+      matched: 3,
+      changed: 2,
+      unchanged: 1,
+      sessionCount: 2,
+      promoted: 2,
+    });
+    for (const id of ["strict-session", "missing-policy-session"]) {
+      expect(await kv.get<Session>("mem:sessions", id)).toMatchObject({
+        privacy: "private",
+        externalProcessing: true,
+      });
+    }
+    expect(
+      await kv.get<Session>("mem:sessions", "other-project-session"),
+    ).toMatchObject({ privacy: "strict", externalProcessing: false });
+    expect(await kv.list("mem:migration:reports")).toHaveLength(1);
+  });
+
+  it("allocates a fresh generation when the same transition recurs", async () => {
+    const kv = mockKV();
+    const project = "github.com/example/project";
+    const session: Session = {
+      id: "recurrent-session",
+      project,
+      cwd: "/tmp/project",
+      startedAt: "2026-08-04T00:00:00.000Z",
+      status: "completed",
+      observationCount: 1,
+      privacy: "strict",
+      externalProcessing: false,
+    };
+    await kv.set("mem:sessions", session.id, session);
+
+    const first = await transitionProjectProcessingPolicy(kv as never, {
+      project,
+      privacy: "private",
+      externalProcessing: true,
+      acknowledgeHistoricalContent: true,
+      dryRun: false,
+    });
+    expect(first).toMatchObject({ success: true, status: "complete" });
+
+    await kv.set("mem:sessions", session.id, {
+      ...session,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    const second = await transitionProjectProcessingPolicy(kv as never, {
+      project,
+      privacy: "private",
+      externalProcessing: true,
+      acknowledgeHistoricalContent: true,
+      dryRun: false,
+    });
+
+    expect(second).toMatchObject({ success: true, status: "complete" });
+    expect(second.generation).not.toBe(first.generation);
+    expect(await kv.get<Session>("mem:sessions", session.id)).toMatchObject({
+      privacy: "private",
+      externalProcessing: true,
+    });
+    expect(await kv.list("mem:migration:reports")).toHaveLength(2);
+  });
+});
+
 describe("migration CLI", () => {
   function captureCliOutput() {
     let stdout = "";
@@ -939,6 +1113,24 @@ describe("migration CLI", () => {
       stderr: () => stderr,
     };
   }
+
+  it("recognizes direct execution through a symlinked install path", () => {
+    const releasePath =
+      "/opt/agentmemory/releases/fork-v25/dist/functions/migrate.mjs";
+    const currentPath =
+      "/opt/agentmemory/current/dist/functions/migrate.mjs";
+    const resolveRealPath = vi.fn((path: string) =>
+      path === currentPath ? releasePath : path,
+    );
+
+    expect(
+      isDirectMigrationCliInvocation(
+        pathToFileURL(releasePath).href,
+        currentPath,
+        resolveRealPath,
+      ),
+    ).toBe(true);
+  });
 
   it("prints help without contacting the server", async () => {
     const output = captureCliOutput();
@@ -976,6 +1168,39 @@ describe("migration CLI", () => {
       error: { code: "missing-auth" },
     });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it("loads admin authentication from a secret file", async () => {
+    const output = captureCliOutput();
+    const secretFile = "/tmp/agentmemory-migrate-auth/admin-secret";
+    vi.mocked(readFileSync).mockReturnValueOnce("file-admin-secret\n");
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify({ success: true, status: "complete" }), {
+        status: 200,
+      }),
+    );
+
+    const exitCode = await runMigrationCli(
+      ["--db-path", "/tmp/source.db", "--action", "resume"],
+      {
+        ...output.dependencies,
+        fetchImpl,
+        env: { AGENTMEMORY_ADMIN_SECRET_FILE: secretFile },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    expect(readFileSync).toHaveBeenCalledWith(secretFile, "utf8");
+    expect(fetchImpl).toHaveBeenCalledWith(
+      "http://127.0.0.1:3111/agentmemory/migrate",
+      expect.objectContaining({
+        headers: {
+          authorization: "Bearer file-admin-secret",
+          "content-type": "application/json",
+        },
+      }),
+    );
+    expect(output.stderr()).toBe("");
   });
 
   it("forwards bounded resume arguments and confirms promotion success", async () => {
@@ -1021,6 +1246,52 @@ describe("migration CLI", () => {
     expect(JSON.parse(output.stdout())).toMatchObject({
       operationSucceeded: true,
       result: { success: true, status: "complete" },
+    });
+    expect(output.stderr()).toBe("");
+  });
+
+  it("forwards an explicitly acknowledged project policy transition", async () => {
+    const output = captureCliOutput();
+    const fetchImpl = vi.fn().mockResolvedValue(
+      new Response(
+        JSON.stringify({ success: true, status: "complete", promoted: 9 }),
+        { status: 200 },
+      ),
+    );
+
+    const exitCode = await runMigrationCli(
+      [
+        "--step",
+        "transition-project-processing-policy",
+        "--project",
+        "github.com/chronodeai/memetics",
+        "--privacy",
+        "private",
+        "--external-processing",
+        "true",
+        "--acknowledge-historical-content",
+        "--apply",
+      ],
+      {
+        ...output.dependencies,
+        fetchImpl,
+        env: { AGENTMEMORY_ADMIN_SECRET: "admin-secret" },
+      },
+    );
+
+    expect(exitCode).toBe(0);
+    const request = fetchImpl.mock.calls[0][1] as RequestInit;
+    expect(JSON.parse(String(request.body))).toEqual({
+      step: "transition-project-processing-policy",
+      project: "github.com/chronodeai/memetics",
+      privacy: "private",
+      externalProcessing: true,
+      acknowledgeHistoricalContent: true,
+      dryRun: false,
+    });
+    expect(JSON.parse(output.stdout())).toMatchObject({
+      operationSucceeded: true,
+      result: { status: "complete", promoted: 9 },
     });
     expect(output.stderr()).toBe("");
   });

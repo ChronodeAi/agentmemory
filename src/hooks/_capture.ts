@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import { execFileSync } from "node:child_process";
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import type {
   AgentmemoryProjectConfig,
   CaptureProfile,
+} from "../project-config.js";
+import {
+  isProjectPathExcluded,
+  normalizedProjectPath,
 } from "../project-config.js";
 
 const METADATA_ONLY_TOOLS =
@@ -71,33 +75,27 @@ function collectPaths(value: unknown, depth = 0): string[] {
   return result;
 }
 
-function globToRegExp(glob: string): RegExp {
-  let pattern = "";
-  for (let i = 0; i < glob.length; i++) {
-    const char = glob[i];
-    const next = glob[i + 1];
-    if (char === "*" && next === "*") {
-      if (glob[i + 2] === "/") {
-        pattern += "(?:.*/)?";
-        i += 2;
-      } else {
-        pattern += ".*";
-        i++;
-      }
-    } else if (char === "*") {
-      pattern += "[^/]*";
-    } else if (char === "?") {
-      pattern += "[^/]";
-    } else {
-      pattern += char.replace(/[\\^$+?.()|[\]{}]/g, "\\$&");
-    }
+function collectPotentialPathReferences(value: unknown, depth = 0): string[] {
+  if (depth > 4 || value === null || value === undefined) return [];
+  if (Array.isArray(value)) {
+    return value.flatMap((item) => collectPotentialPathReferences(item, depth + 1));
   }
-  return new RegExp(`^${pattern}$`, "i");
-}
-
-function normalizedProjectPath(path: string, root: string): string {
-  const absolute = path.startsWith("/") ? path : resolve(root, path);
-  return relative(root, absolute).replace(/\\/g, "/").replace(/^\.\//, "");
+  if (typeof value === "string") {
+    return value
+      .split(/[\s"'`=()[\]{}:,;|<>]+/)
+      .map((token) => token.trim())
+      .filter(
+        (token) =>
+          token.length > 0 &&
+          (token.includes("/") ||
+            token.startsWith(".env") ||
+            /secret|credential/i.test(token)),
+      );
+  }
+  if (typeof value !== "object") return [];
+  return Object.values(value as Record<string, unknown>).flatMap((item) =>
+    collectPotentialPathReferences(item, depth + 1),
+  );
 }
 
 function git(cwd: string, args: string[]): string | null {
@@ -205,7 +203,7 @@ function captureWorktreeProvenance(
       !path ||
       path === ".." ||
       path.startsWith("../") ||
-      isExcludedPath(candidate.path, config)
+      isProjectPathExcluded(candidate.path, config)
     ) {
       continue;
     }
@@ -263,14 +261,6 @@ export function parseCommitTransitions(status: string): CommitTransition[] {
   return transitions;
 }
 
-function isExcludedPath(
-  path: string,
-  config: AgentmemoryProjectConfig,
-): boolean {
-  const normalized = normalizedProjectPath(path, config.root);
-  return config.exclude_globs.some((glob) => globToRegExp(glob).test(normalized));
-}
-
 function metadataInput(input: unknown): Record<string, unknown> {
   const raw =
     input && typeof input === "object" && !Array.isArray(input)
@@ -317,8 +307,11 @@ export function captureToolEvent(
   failed = false,
 ): CapturedToolEvent | null {
   const name = typeof toolName === "string" ? toolName : "unknown";
-  const paths = collectPaths(toolInput);
-  if (paths.length > 0 && paths.every((path) => isExcludedPath(path, config))) {
+  const paths = [
+    ...collectPaths(toolInput),
+    ...collectPotentialPathReferences(toolInput),
+  ];
+  if (paths.some((path) => isProjectPathExcluded(path, config))) {
     return null;
   }
 

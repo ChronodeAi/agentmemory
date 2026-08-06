@@ -13,6 +13,10 @@ const HEALTH_TTL_MS = HEALTH_INTERVAL_MS * 3;
 const PROBE_TIMEOUT_MS = 5_000;
 let latestInMemoryHealth: HealthSnapshot | null = null;
 
+interface HealthMonitorOptions {
+  getSearchIndexStatus?: () => NonNullable<HealthSnapshot["searchIndex"]>;
+}
+
 function criticalCollectionSnapshot(error: string): HealthSnapshot {
   const now = Date.now();
   const mem = process.memoryUsage();
@@ -43,6 +47,7 @@ function criticalCollectionSnapshot(error: string): HealthSnapshot {
 export function registerHealthMonitor(
   sdk: ISdk,
   kv: StateKV,
+  options: HealthMonitorOptions = {},
 ): { stop: () => void; collectNow: () => Promise<HealthSnapshot> } {
   let connectionState = "connected";
   let prevCpuUsage = process.cpuUsage();
@@ -173,6 +178,9 @@ export function registerHealthMonitor(
         failedSinceLastCollection,
         rejectedSinceLastCollection,
       },
+      ...(options.getSearchIndexStatus
+        ? { searchIndex: options.getSearchIndexStatus() }
+        : {}),
       status: "healthy",
       alerts: [],
     };

@@ -44,6 +44,8 @@ export type ContextEligibilityReason =
   | "contradicted"
   | "unaccepted_gate_authority"
   | "recalled_only"
+  | "stale_against_verified_lesson"
+  | "low_signal_after_verified_lesson"
   | "provenance_missing";
 
 export interface ContextEligibilityExclusion {
@@ -160,6 +162,152 @@ interface SourceRead<T> {
 
 const PACKET_TTL_MS = 5 * 60 * 1000;
 const CONTEXT_DELIVERY_RECEIPT_VERSION = "amack1";
+const PROFILE_QUERY_STOP_WORDS = new Set([
+  "and",
+  "for",
+  "from",
+  "into",
+  "local",
+  "project",
+  "runtime",
+  "the",
+  "this",
+  "with",
+]);
+
+function profileForQuery(
+  profile: ProjectProfile,
+  query: string,
+): ProjectProfile | null {
+  const terms = (query.toLowerCase().match(/[a-z0-9][a-z0-9._-]*/g) ?? [])
+    .filter((term) => term.length >= 3 && !PROFILE_QUERY_STOP_WORDS.has(term));
+  if (terms.length === 0) return profile;
+  const matches = (value: string) => {
+    const normalized = value.toLowerCase();
+    return terms.some((term) => normalized.includes(term));
+  };
+  const topConcepts = profile.topConcepts.filter((item) => matches(item.concept));
+  const topFiles = profile.topFiles.filter((item) => matches(item.file));
+  const conventions = profile.conventions.filter(matches);
+  if (
+    topConcepts.length === 0 &&
+    topFiles.length === 0 &&
+    conventions.length === 0
+  ) {
+    return null;
+  }
+  return { ...profile, topConcepts, topFiles, conventions };
+}
+
+const EPISODIC_DEDUP_STOP_WORDS = new Set([
+  "and",
+  "for",
+  "from",
+  "into",
+  "local",
+  "the",
+  "this",
+  "with",
+]);
+const CURRENTNESS_QUERY_PATTERN =
+  /\b(?:authoritative|current|latest|live|now|today)\b/i;
+
+function contextTerms(value: string): Set<string> {
+  return new Set(
+    (value.toLowerCase().match(/[a-z0-9][a-z0-9._-]*/g) ?? []).filter(
+      (term) =>
+        term.length >= 3 && !EPISODIC_DEDUP_STOP_WORDS.has(term),
+    ),
+  );
+}
+
+function lessonQueryScore(lesson: Lesson, queryTerms: Set<string>): number {
+  if (queryTerms.size === 0) return 0;
+  const tags = Array.isArray(lesson.tags) ? lesson.tags : [];
+  const lessonTerms = contextTerms(
+    `${lesson.content} ${lesson.context ?? ""} ${tags.join(" ")}`,
+  );
+  let shared = 0;
+  for (const term of queryTerms) {
+    if (lessonTerms.has(term)) shared += 1;
+  }
+  return shared / queryTerms.size;
+}
+
+function observationTimestamp(row: Record<string, unknown>): number | null {
+  const observation =
+    row.observation && typeof row.observation === "object"
+      ? (row.observation as Record<string, unknown>)
+      : row;
+  const timestamp = String(observation.timestamp ?? row.timestamp ?? "");
+  const parsed = new Date(timestamp).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function hasStructuredEpisodicEvidence(
+  row: Record<string, unknown>,
+): boolean {
+  const observation =
+    row.observation && typeof row.observation === "object"
+      ? (row.observation as Record<string, unknown>)
+      : row;
+  const confidence = observation.confidence;
+  if (typeof confidence !== "number" || confidence >= 0.5) return true;
+  for (const key of ["facts", "concepts", "files"] as const) {
+    if (Array.isArray(observation[key]) && observation[key].length > 0) {
+      return true;
+    }
+  }
+  return /(?:error|failure|commit|decision|migration|task_completed)/i.test(
+    String(observation.type ?? ""),
+  );
+}
+
+function episodicTokenSet(row: Record<string, unknown>): Set<string> {
+  const observation =
+    row.observation && typeof row.observation === "object"
+      ? (row.observation as Record<string, unknown>)
+      : row;
+  const text = `${String(observation.title ?? "")} ${String(
+    observation.narrative ?? "",
+  )}`.toLowerCase();
+  const tokens = text.match(/[a-z0-9][a-z0-9._-]*/g) ?? [];
+  return new Set(
+    tokens
+      .map((token) => token.replace(/[-_]?\d{6,}[a-z0-9-]*/g, ""))
+      .filter(
+        (token) =>
+          token.length >= 3 && !EPISODIC_DEDUP_STOP_WORDS.has(token),
+      ),
+  );
+}
+
+function episodicSimilarity(a: Set<string>, b: Set<string>): number {
+  if (a.size < 6 || b.size < 6) return 0;
+  let shared = 0;
+  for (const token of a) {
+    if (b.has(token)) shared += 1;
+  }
+  return shared / (a.size + b.size - shared);
+}
+
+function deduplicateEpisodicRows(
+  rows: Array<Record<string, unknown>>,
+): Array<Record<string, unknown>> {
+  const selected: Array<{ row: Record<string, unknown>; tokens: Set<string> }> = [];
+  for (const row of rows) {
+    const tokens = episodicTokenSet(row);
+    if (
+      selected.some(
+        (candidate) => episodicSimilarity(tokens, candidate.tokens) >= 0.8,
+      )
+    ) {
+      continue;
+    }
+    selected.push({ row, tokens });
+  }
+  return selected.map((item) => item.row);
+}
 
 export class DeliveryLedgerError extends Error {
   readonly code = "delivery_ledger_unavailable";
@@ -563,6 +711,9 @@ export function registerCodingMemoryFunctions(
         typeof data.query === "string" && data.query.trim()
           ? data.query.trim()
           : files.join(" ") || project;
+      const hasExplicitProfileQuery =
+        (typeof data.query === "string" && Boolean(data.query.trim())) ||
+        files.length > 0;
       const contextClass: ContextClass =
         data.context_class === "gate-critical" ? "gate-critical" : "advisory";
       const eligibilityExclusions: ContextEligibilityExclusion[] = [];
@@ -592,7 +743,16 @@ export function registerCodingMemoryFunctions(
             "profile",
             sourceRequired("profile", contextClass),
             null as ProjectProfile | null,
-            () => kv.get<ProjectProfile>(KV.profiles, project),
+            async () => {
+              const result = await sdk.trigger({
+                function_id: "mem::profile",
+                payload: { project },
+              });
+              if (!result || typeof result !== "object" || !("profile" in result)) {
+                throw new Error("project profile returned an invalid response");
+              }
+              return (result as { profile: ProjectProfile | null }).profile;
+            },
             (value) => (value ? 1 : 0),
           ),
           readSource(
@@ -615,8 +775,7 @@ export function registerCodingMemoryFunctions(
                   query,
                   project,
                   limit: 20,
-                  format: "narrative",
-                  token_budget: budgets.episodic,
+                  format: "full",
                 },
               });
               if (
@@ -700,7 +859,12 @@ export function registerCodingMemoryFunctions(
         eligibilityExclusions,
         eligibilityNow,
       );
-      const profileCandidates = profileRead.value ? [profileRead.value] : [];
+      const queryProfile = profileRead.value
+        ? hasExplicitProfileQuery
+          ? profileForQuery(profileRead.value, query)
+          : profileRead.value
+        : null;
+      const profileCandidates = queryProfile ? [queryProfile] : [];
       const eligibleProfiles = selectEligible(
         "profile",
         profileCandidates,
@@ -711,7 +875,7 @@ export function registerCodingMemoryFunctions(
         eligibilityNow,
       );
       const profile = eligibleProfiles[0] ?? null;
-      const projectLessons = selectEligible(
+      const eligibleLessons = selectEligible(
         "lessons",
         lessonsRead.value,
         contextClass,
@@ -719,10 +883,42 @@ export function registerCodingMemoryFunctions(
         (lesson) => lesson.id,
         eligibilityExclusions,
         eligibilityNow,
-      )
-        .sort((a, b) => b.confidence - a.confidence)
-        .slice(0, 10);
-      const searchRows = selectEligible(
+      );
+      const queryTermSet = contextTerms(query);
+      const scoredLessons = eligibleLessons.map((lesson) => ({
+        lesson,
+        score: hasExplicitProfileQuery
+          ? lessonQueryScore(lesson, queryTermSet)
+          : 0,
+      }));
+      const hasRelevantLesson = scoredLessons.some((item) => item.score > 0);
+      const projectLessons = scoredLessons
+        .filter(
+          (item) =>
+            !hasExplicitProfileQuery || !hasRelevantLesson || item.score > 0,
+        )
+        .sort(
+          (a, b) =>
+            b.score - a.score ||
+            b.lesson.confidence - a.lesson.confidence,
+        )
+        .slice(0, 5)
+        .map((item) => item.lesson);
+      const verifiedLessonCutoff = CURRENTNESS_QUERY_PATTERN.test(query)
+        ? projectLessons.reduce<number | null>((latest, lesson) => {
+            if (
+              lesson.confidence < 0.8 ||
+              !Array.isArray(lesson.tags) ||
+              !lesson.tags.some((tag) => tag.toLowerCase() === "verified")
+            ) {
+              return latest;
+            }
+            const createdAt = new Date(lesson.createdAt).getTime();
+            if (!Number.isFinite(createdAt)) return latest;
+            return latest === null ? createdAt : Math.max(latest, createdAt);
+          }, null)
+        : null;
+      const eligibleSearchRows = selectEligible(
         "episodic",
         episodicRead.value.results,
         contextClass,
@@ -744,13 +940,43 @@ export function registerCodingMemoryFunctions(
               : undefined,
         eligibilityExclusions,
         eligibilityNow,
-      )
+      );
+      const rankedSearchRows = eligibleSearchRows
+        .filter((row) => {
+          if (verifiedLessonCutoff === null) return true;
+          const timestamp = observationTimestamp(row);
+          const observation =
+            row.observation && typeof row.observation === "object"
+              ? (row.observation as Record<string, unknown>)
+              : row;
+          const candidateId =
+            typeof row.obsId === "string"
+              ? row.obsId
+              : typeof observation.id === "string"
+                ? observation.id
+                : undefined;
+          if (timestamp !== null && timestamp >= verifiedLessonCutoff) {
+            if (hasStructuredEpisodicEvidence(row)) return true;
+            eligibilityExclusions.push({
+              source: "episodic",
+              ...(candidateId ? { candidateId } : {}),
+              reason: "low_signal_after_verified_lesson",
+            });
+            return false;
+          }
+          eligibilityExclusions.push({
+            source: "episodic",
+            ...(candidateId ? { candidateId } : {}),
+            reason: "stale_against_verified_lesson",
+          });
+          return false;
+        })
         .sort(
           (a, b) =>
             (typeof b.score === "number" ? b.score : 0) -
             (typeof a.score === "number" ? a.score : 0),
-        )
-        .slice(0, 5);
+        );
+      const searchRows = deduplicateEpisodicRows(rankedSearchRows).slice(0, 5);
       const fileResult = fileRead.value;
       const eligibleFileSourceIds = selectEligible(
         "file_history",
@@ -843,19 +1069,28 @@ export function registerCodingMemoryFunctions(
         const pinned = renderPinnedContext(eligibleSlots);
         if (pinned && freshSlotSources.length > 0) identityParts.push(pinned);
         if (profile && profileSource && profileIsFresh) {
-          identityParts.push(
-            [
-              "# project profile",
+          const profileLines = ["# project profile"];
+          if (profile.topConcepts.length > 0) {
+            profileLines.push(
               `Concepts: ${profile.topConcepts
                 .slice(0, 8)
                 .map((item) => item.concept)
                 .join(", ")}`,
+            );
+          }
+          if (profile.topFiles.length > 0) {
+            profileLines.push(
               `Files: ${profile.topFiles
                 .slice(0, 5)
                 .map((item) => item.file)
                 .join(", ")}`,
-              `Conventions: ${profile.conventions.join("; ")}`,
-            ].join("\n"),
+            );
+          }
+          if (profile.conventions.length > 0) {
+            profileLines.push(`Conventions: ${profile.conventions.join("; ")}`);
+          }
+          identityParts.push(
+            profileLines.join("\n"),
           );
           selectedSourceIds.push(profileSource);
         }
