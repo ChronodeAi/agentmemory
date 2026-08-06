@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { registerHealthMonitor } from "../src/health/monitor.js";
 import {
   evaluateHealth,
+  healthStatusAllowsDoctor,
   healthStatusExitCode,
 } from "../src/health/thresholds.js";
 import type { HealthSnapshot } from "../src/types.js";
@@ -40,6 +41,24 @@ describe("evaluateHealth memory severity", () => {
     expect(healthStatusExitCode("critical")).toBe(1);
     expect(healthStatusExitCode("unknown")).toBe(1);
     expect(healthStatusExitCode(undefined)).toBe(1);
+  });
+
+  it("keeps transient performance warnings advisory in doctor only", () => {
+    expect(healthStatusAllowsDoctor("healthy", [])).toBe(true);
+    expect(healthStatusAllowsDoctor("degraded", ["cpu_warn_83%"]))
+      .toBe(true);
+    expect(
+      healthStatusAllowsDoctor("degraded", [
+        "event_loop_lag_warn_272ms",
+        "recovery_window",
+      ]),
+    ).toBe(true);
+    expect(
+      healthStatusAllowsDoctor("degraded", ["search_index_partial"]),
+    ).toBe(false);
+    expect(healthStatusAllowsDoctor("critical", ["cpu_warn_83%"]))
+      .toBe(false);
+    expect(healthStatusAllowsDoctor("unknown", [])).toBe(false);
   });
 
   it("fails health when KV or worker probing is unavailable", () => {

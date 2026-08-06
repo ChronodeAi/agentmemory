@@ -65,7 +65,10 @@ import { knownAgents } from "./cli/connect/index.js";
 import { materializeIiiRuntimeConfig } from "./cli/iii-runtime-config.js";
 import { getEnvVar } from "./config.js";
 import { resolveProjectConfig } from "./project-config.js";
-import { healthStatusExitCode } from "./health/thresholds.js";
+import {
+  healthStatusAllowsDoctor,
+  healthStatusExitCode,
+} from "./health/thresholds.js";
 import {
   clientAuthorizationHeaders,
   resolveClientRequestScope,
@@ -1797,6 +1800,7 @@ async function passiveServerChecks(): Promise<DoctorCheck[]> {
   const base = getBaseUrl();
   const project = resolveProjectConfig(process.cwd()).project_id;
   const checks: DoctorCheck[] = [];
+  const timeoutMs = 10_000;
 
   const serverUp = await isEngineRunning();
   checks.push({
@@ -1809,12 +1813,12 @@ async function passiveServerChecks(): Promise<DoctorCheck[]> {
   if (!serverUp) return checks;
 
   const [health, flags, graph] = await Promise.all([
-    apiFetch<any>(base, "health", 3000),
-    apiFetch<any>(base, "config/flags", 3000),
+    apiFetch<any>(base, "health", timeoutMs),
+    apiFetch<any>(base, "config/flags", timeoutMs),
     apiFetch<any>(
       base,
       `graph/stats?project=${encodeURIComponent(project)}`,
-      3000,
+      timeoutMs,
     ),
   ]);
 
@@ -1824,15 +1828,26 @@ async function passiveServerChecks(): Promise<DoctorCheck[]> {
     graph?.totalNodes ?? graph?.nodes ?? graph?.nodeCount ?? 0,
   );
   const graphHas = graphNodeCount > 0;
+  const healthAlerts = Array.isArray(health?.health?.alerts)
+    ? health.health.alerts.filter((alert: unknown): alert is string =>
+        typeof alert === "string",
+      )
+    : [];
+  const doctorHealthOk = healthStatusAllowsDoctor(
+    health?.status,
+    healthAlerts,
+  );
 
   checks.push(
     {
       name: "Health status",
-      ok: health?.status === "healthy",
+      ok: doctorHealthOk,
       hint:
         health?.status === "healthy"
           ? undefined
-          : `Status: ${health?.status || "unknown"}`,
+          : `Status: ${health?.status || "unknown"}${
+              healthAlerts.length > 0 ? ` (${healthAlerts.join(", ")})` : ""
+            }`,
     },
     {
       name: "LLM provider",

@@ -34,6 +34,26 @@ export function healthStatusExitCode(status: unknown): 0 | 1 {
   return status === "healthy" ? 0 : 1;
 }
 
+const DOCTOR_ADVISORY_ALERTS = [
+  /^cpu_warn_\d+%$/,
+  /^event_loop_lag_warn_\d+ms$/,
+  /^recovery_window$/,
+];
+
+export function healthStatusAllowsDoctor(
+  status: unknown,
+  alerts: string[] = [],
+): boolean {
+  if (status === "healthy") return true;
+  return (
+    status === "degraded" &&
+    alerts.length > 0 &&
+    alerts.every((alert) =>
+      DOCTOR_ADVISORY_ALERTS.some((pattern) => pattern.test(alert)),
+    )
+  );
+}
+
 export function evaluateHealth(
   snapshot: HealthSnapshot,
   config: Partial<ThresholdConfig> = {},
