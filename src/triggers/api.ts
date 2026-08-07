@@ -2,6 +2,7 @@ import { TriggerAction, type ISdk, type ApiRequest } from "iii-sdk";
 import type { Session, CompressedObservation, HookPayload, CommitLink, SessionSummary } from "../types.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { KV } from "../state/schema.js";
+import { checkPayloadFrameSize } from "../state/frame-guard.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
@@ -1609,11 +1610,16 @@ export function registerApiTriggers(
               (b.startedAt ?? "").localeCompare(a.startedAt ?? ""),
             )
             .slice(0, Math.min(2_000, requestedLimit));
-      const summaries = await Promise.all(
-        selected.map((s) =>
-          kv.get<SessionSummary>(KV.summaries, s.id).catch(() => null),
-        ),
-      );
+      const summaries: Array<SessionSummary | null> = [];
+      for (let batch = 0; batch < selected.length; batch += 10) {
+        const chunk = selected.slice(batch, batch + 10);
+        const results = await Promise.all(
+          chunk.map((s) =>
+            kv.get<SessionSummary>(KV.summaries, s.id).catch(() => null),
+          ),
+        );
+        summaries.push(...results);
+      }
       const withSummary = selected.map((s, i) =>
         summaries[i] ? { ...s, summary: summaries[i] } : s,
       );
@@ -1824,6 +1830,8 @@ export function registerApiTriggers(
         sessionId?: string;
         observationIds?: string[];
         memoryId?: string;
+        project?: string;
+        scope?: "project" | "global";
       }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
@@ -1834,7 +1842,22 @@ export function registerApiTriggers(
           body: { error: "sessionId or memoryId is required" },
         };
       }
-      const result = await sdk.trigger({ function_id: "mem::forget", payload: req.body });
+      const projectScope =
+        req.body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof req.body.project === "string" && req.body.project.trim()
+            ? { project: req.body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return {
+          status_code: 400,
+          body: { error: "project required unless scope is global" },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::forget",
+        payload: { ...req.body, ...projectScope },
+      });
       return { status_code: 200, body: result };
     },
   );
@@ -3986,6 +4009,11 @@ export function registerApiTriggers(
         graphNodes: delta(graphNodes),
         graphEdges: delta(graphEdges),
       };
+      const oversized = checkPayloadFrameSize(
+        body,
+        "use since to fetch only recent changes or project to narrow the export",
+      );
+      if (oversized) return { status_code: 413, body: oversized };
       return { status_code: 200, body };
     },
   );

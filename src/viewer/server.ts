@@ -38,12 +38,18 @@ function loadViewerFavicon(): Buffer | null {
 // disk read per /favicon.svg request.
 const VIEWER_FAVICON: Buffer | null = loadViewerFavicon();
 
-const ALLOWED_ORIGINS = (
-  process.env.VIEWER_ALLOWED_ORIGINS ||
-  "http://localhost:3111,http://localhost:3113,http://127.0.0.1:3111,http://127.0.0.1:3113"
-)
-  .split(",")
-  .map((o) => o.trim());
+const DEFAULT_ALLOWED_ORIGINS =
+  "http://localhost:3111,http://localhost:3113,http://127.0.0.1:3111,http://127.0.0.1:3113";
+
+function readAllowedOrigins(): string[] {
+  const origins = (process.env.VIEWER_ALLOWED_ORIGINS || DEFAULT_ALLOWED_ORIGINS)
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+  return origins.length > 0
+    ? origins
+    : DEFAULT_ALLOWED_ORIGINS.split(",");
+}
 
 // Hosts the viewer will accept in the Host header. Restricting this is the
 // defence against DNS rebinding: a browser visiting `attacker.com` whose
@@ -134,11 +140,14 @@ export function requireInboundBearer(
   return timingSafeCompare(match[1], secret);
 }
 
-function corsHeaders(req: IncomingMessage): Record<string, string> {
+function corsHeaders(
+  req: IncomingMessage,
+  allowedOrigins: string[],
+): Record<string, string> {
   const origin = req.headers.origin || "";
-  const allowed = ALLOWED_ORIGINS.includes(origin)
+  const allowed = allowedOrigins.includes(origin)
     ? origin
-    : ALLOWED_ORIGINS[0];
+    : allowedOrigins[0];
   return {
     "Access-Control-Allow-Origin": allowed,
     "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
@@ -152,18 +161,19 @@ function json(
   status: number,
   data: unknown,
   req?: IncomingMessage,
+  allowedOrigins: string[] = readAllowedOrigins(),
 ): void {
   const body = JSON.stringify(data);
   const cors = req
-    ? corsHeaders(req)
-    : { "Access-Control-Allow-Origin": ALLOWED_ORIGINS[0], Vary: "Origin" };
+    ? corsHeaders(req, allowedOrigins)
+    : { "Access-Control-Allow-Origin": allowedOrigins[0], Vary: "Origin" };
   res.writeHead(status, { ...cors, "Content-Type": "application/json" });
   res.end(body);
 }
 
-function readBody(req: IncomingMessage): Promise<string> {
+export function readBody(req: IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    let data = "";
+    const chunks: Buffer[] = [];
     let size = 0;
     req.on("data", (chunk: Buffer) => {
       size += chunk.length;
@@ -172,9 +182,9 @@ function readBody(req: IncomingMessage): Promise<string> {
         reject(new Error("too large"));
         return;
       }
-      data += chunk.toString();
+      chunks.push(chunk);
     });
-    req.on("end", () => resolve(data));
+    req.on("end", () => resolve(Buffer.concat(chunks).toString("utf8")));
     req.on("error", reject);
   });
 }
@@ -213,6 +223,7 @@ export function startViewerServer(
   const resolvedRestPort = restPort ?? port - 2;
   const requestedPort = port;
   const host = resolveViewerHost();
+  const allowedOrigins = readAllowedOrigins();
   let inboundSecret: string | null = null;
 
   // Non-loopback bind turns the viewer into a network-reachable
@@ -246,7 +257,7 @@ export function startViewerServer(
         addr && typeof addr === "object" && "port" in addr
           ? (addr.port as number)
           : port;
-      allowedHosts = buildAllowedHosts(ALLOWED_ORIGINS, actualPort, host);
+      allowedHosts = buildAllowedHosts(allowedOrigins, actualPort, host);
     }
     if (!isHostAllowed(req.headers.host, allowedHosts)) {
       res.writeHead(403, { "Content-Type": "text/plain" });
@@ -262,7 +273,7 @@ export function startViewerServer(
 
     if (method === "OPTIONS") {
       res.writeHead(204, {
-        ...corsHeaders(req),
+        ...corsHeaders(req, allowedOrigins),
         "Access-Control-Max-Age": "86400",
       });
       res.end();
@@ -325,10 +336,11 @@ export function startViewerServer(
         req,
         res,
         { legacySecret: secret, ...upstreamAuth },
+        allowedOrigins,
       );
     } catch (err) {
       console.error(`[viewer] proxy error on ${method} ${pathname}:`, err);
-      json(res, 502, { error: "upstream error" }, req);
+      json(res, 502, { error: "upstream error" }, req, allowedOrigins);
     }
   });
 
@@ -409,6 +421,7 @@ async function proxyToRestApi(
   req: IncomingMessage,
   res: ServerResponse,
   authConfig: ClientAuthConfig,
+  allowedOrigins: string[],
 ): Promise<void> {
   const upstreamPath = pathname.startsWith("/agentmemory/")
     ? pathname
@@ -445,6 +458,7 @@ async function proxyToRestApi(
             : "request scope bindings disagree",
       },
       req,
+      allowedOrigins,
     );
     return;
   }
@@ -468,13 +482,13 @@ async function proxyToRestApi(
   } catch (err) {
     clearTimeout(fetchTimeout);
     if (err instanceof Error && err.name === "AbortError") {
-      json(res, 504, { error: "upstream timeout" }, req);
+      json(res, 504, { error: "upstream timeout" }, req, allowedOrigins);
       return;
     }
     throw err;
   }
 
-  const cors = corsHeaders(req);
+  const cors = corsHeaders(req, allowedOrigins);
   const responseBody = await upstream.text();
   const responseHeaders: Record<string, string> = {
     ...cors,

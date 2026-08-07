@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 import pc from "picocolors";
@@ -22,8 +22,24 @@ const ENV_FILE = join(DATA_DIR, ".env");
 
 let warnPremiumModelShown = false;
 
+let envFileCache: Record<string, string> | undefined;
+let envFileCacheStamp: string | undefined;
+
 function loadEnvFile(): Record<string, string> {
-  if (!existsSync(ENV_FILE)) return {};
+  if (!existsSync(ENV_FILE)) {
+    envFileCache = {};
+    envFileCacheStamp = undefined;
+    return envFileCache;
+  }
+  const stat = statSync(ENV_FILE);
+  const stamp = [
+    stat.dev,
+    stat.ino,
+    stat.size,
+    stat.mtimeMs,
+    stat.ctimeMs,
+  ].join(":");
+  if (envFileCache && envFileCacheStamp === stamp) return envFileCache;
   const content = readFileSync(ENV_FILE, "utf-8");
   const vars: Record<string, string> = {};
   for (const line of content.split("\n")) {
@@ -43,7 +59,20 @@ function loadEnvFile(): Record<string, string> {
     }
     vars[key] = val;
   }
-  return vars;
+  envFileCache = vars;
+  envFileCacheStamp = stamp;
+  return envFileCache;
+}
+
+export function __resetEnvFileCache(): void {
+  envFileCache = undefined;
+  envFileCacheStamp = undefined;
+}
+
+export function hydrateProcessEnvFromFile(): void {
+  for (const [key, value] of Object.entries(loadEnvFile())) {
+    if (process.env[key] === undefined) process.env[key] = value;
+  }
 }
 
 function hasRealValue(v: string | undefined): v is string {
@@ -353,6 +382,23 @@ export function isAgentScopeIsolated(): boolean {
   return loadAgentScope()?.mode === "isolated";
 }
 
+const SNAPSHOT_INTERVAL_DEFAULT_SECONDS = 3600;
+const MIN_SNAPSHOT_INTERVAL_SECONDS = 1;
+const MAX_SNAPSHOT_INTERVAL_SECONDS = Math.floor(2_147_483_647 / 1000);
+
+function parseSnapshotIntervalSeconds(value: string | undefined): number {
+  if (!value) return SNAPSHOT_INTERVAL_DEFAULT_SECONDS;
+  const parsed = Number(value);
+  if (
+    !Number.isFinite(parsed) ||
+    parsed < MIN_SNAPSHOT_INTERVAL_SECONDS ||
+    parsed > MAX_SNAPSHOT_INTERVAL_SECONDS
+  ) {
+    return SNAPSHOT_INTERVAL_DEFAULT_SECONDS;
+  }
+  return parsed;
+}
+
 export function loadSnapshotConfig(): {
   enabled: boolean;
   interval: number;
@@ -361,7 +407,7 @@ export function loadSnapshotConfig(): {
   const env = getMergedEnv();
   return {
     enabled: env["SNAPSHOT_ENABLED"] === "true",
-    interval: safeParseInt(env["SNAPSHOT_INTERVAL"], 3600),
+    interval: parseSnapshotIntervalSeconds(env["SNAPSHOT_INTERVAL"]),
     dir: env["SNAPSHOT_DIR"] || join(homedir(), ".agentmemory", "snapshots"),
   };
 }
@@ -439,6 +485,16 @@ export function isContextInjectionEnabled(): boolean {
 
 export function getConsolidationDecayDays(): number {
   return safeParseInt(getMergedEnv()["CONSOLIDATION_DECAY_DAYS"], 30);
+}
+
+const CONSOLIDATION_COOLDOWN_DEFAULT_MS = 300000;
+
+export function getConsolidationCooldownMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_CONSOLIDATION_COOLDOWN_MS"],
+    CONSOLIDATION_COOLDOWN_DEFAULT_MS,
+  );
+  return raw >= 0 ? raw : CONSOLIDATION_COOLDOWN_DEFAULT_MS;
 }
 
 export function isStandaloneMcp(): boolean {

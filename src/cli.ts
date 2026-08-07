@@ -74,6 +74,7 @@ import {
   resolveClientRequestScope,
 } from "./client-auth.js";
 import { isStrictCapabilityMode } from "./auth.js";
+import { resolveDataDir } from "./cli-data-dir.js";
 
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
@@ -211,10 +212,12 @@ Options:
   --instance <N>     Shortcut for --port (3111 + N*100) to run multiple
                      daemons side-by-side without env gymnastics.
                      --instance 1 -> 3211/3212/3213/49234, etc. (max N=50)
+  --data-dir <path>  Override the persistent iii-engine state directory.
 
 Environment:
   AGENTMEMORY_URL              Full REST base URL (e.g. http://localhost:3111).
                                Honored by status, doctor, and MCP shim commands.
+  AGENTMEMORY_DATA_DIR         State directory fallback when --data-dir is not set.
   AGENTMEMORY_USE_DOCKER=1     Prefer the bundled docker-compose path over the
                                native iii-engine binary on first run.
   AGENTMEMORY_III_VERSION      Override pinned iii-engine version (default ${IIPINNED_VERSION}).
@@ -265,6 +268,13 @@ if (instanceIdx !== -1 && args[instanceIdx + 1]) {
       process.env["III_REST_PORT"] = String(base);
     }
   }
+}
+
+const dataDirResolution = resolveDataDir({ args });
+if (dataDirResolution.source === "flag" || dataDirResolution.source === "env") {
+  // Docker compose keeps its named volume unless the operator explicitly
+  // selected a bind-mounted directory.
+  process.env["AGENTMEMORY_DATA_DIR"] = dataDirResolution.dataDir;
 }
 
 const skipEngine = args.includes("--no-engine");
@@ -368,6 +378,17 @@ async function isEngineRunning(): Promise<boolean> {
       signal: AbortSignal.timeout(2000),
     });
     return true;
+  } catch {
+    return false;
+  }
+}
+
+async function probeLiveDaemon(): Promise<boolean> {
+  try {
+    const response = await fetch(`${getBaseUrl()}/agentmemory/livez`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    return response.ok;
   } catch {
     return false;
   }
@@ -942,7 +963,7 @@ async function startEngine(): Promise<boolean> {
         restPort: getRestPort(),
         streamPort: getStreamPort(),
         enginePort: getEnginePort(),
-      });
+      }, undefined, dataDirResolution.dataDir);
     } catch (error) {
       startupFailure = {
         kind: "engine-crashed",
@@ -1220,6 +1241,13 @@ function printReadyHint(consoleState: IiiConsoleState): void {
 }
 
 async function main() {
+  if (await probeLiveDaemon()) {
+    p.log.error(
+      `agentmemory is already running on port ${getRestPort()}. Starting a second worker can break the active daemon's REST routing. Use the running service, choose another --instance, or stop it before starting again.`,
+    );
+    process.exit(1);
+  }
+
   // `--reset` wipes preferences before anything else so the onboarding
   // flow below always runs fresh.
   if (IS_RESET) {
@@ -2858,7 +2886,7 @@ async function runImportJsonl(): Promise<void> {
   // consumed alongside the flag so they don't leak into positional
   // args (e.g. `--port 3112 import-jsonl` would otherwise turn
   // 3112 into pathArg).
-  const VALUE_FLAGS = new Set(["--port", "--tools"]);
+  const VALUE_FLAGS = new Set(["--port", "--tools", "--data-dir", "--instance"]);
   let maxFiles: number | undefined;
   const tail = args.slice(1);
   const positional: string[] = [];
@@ -3184,7 +3212,18 @@ const commands: Record<string, () => Promise<void>> = {
   "import-jsonl": runImportJsonl,
 };
 
-const handler = commands[args[0] ?? ""] ?? main;
+const first = args[0] ?? "";
+
+async function unknownCommand(): Promise<void> {
+  p.log.error(
+    `Unknown command: ${first}. Supported: ${Object.keys(commands).join(", ")}. Run \`agentmemory\` with no arguments to start the service, or \`agentmemory --help\` for usage.`,
+  );
+  process.exit(1);
+}
+
+const handler =
+  commands[first] ??
+  (first && !first.startsWith("-") ? unknownCommand : main);
 handler().catch((err) => {
   p.log.error(err instanceof Error ? err.message : String(err));
   process.exit(1);

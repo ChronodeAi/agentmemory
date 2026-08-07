@@ -1,5 +1,8 @@
+import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import type { HookType, RawObservation } from "../types.js";
 import { generateId } from "../state/schema.js";
+import { inferProjectId } from "../project-config.js";
 
 interface JsonlEntry {
   type?: string;
@@ -24,10 +27,59 @@ export interface ParsedTranscript {
   observations: RawObservation[];
 }
 
+const projectByCwd = new Map<string, string>();
+const MAX_PROJECT_CACHE_ENTRIES = 1024;
+const MAX_SESSION_ID_LENGTH = 512;
+const MAX_CWD_LENGTH = 4096;
+
+function boundedString(value: unknown, maxLength: number): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > maxLength) return undefined;
+  return trimmed;
+}
+
+function normalizeTimestamp(value: unknown): string | undefined {
+  const raw = boundedString(value, 128);
+  if (!raw) return undefined;
+  const parsed = Date.parse(raw);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : undefined;
+}
+
 function deriveProject(cwd: string): string {
-  if (!cwd) return "unknown";
-  const parts = cwd.split("/").filter(Boolean);
-  return parts[parts.length - 1] || "unknown";
+  const normalized = cwd.replace(/\\/g, "/").replace(/\/+$/, "");
+  const cached = projectByCwd.get(normalized);
+  if (cached) return cached;
+  const cwdExists = existsSync(cwd);
+  let project: string;
+  if (cwdExists) {
+    try {
+      project = inferProjectId(cwd);
+    } catch {
+      project = `local/${createHash("sha256").update(normalized).digest("hex").slice(0, 24)}`;
+    }
+  } else {
+    project = `local/${createHash("sha256").update(normalized).digest("hex").slice(0, 24)}`;
+  }
+  if (cwdExists) {
+    if (
+      !projectByCwd.has(normalized) &&
+      projectByCwd.size >= MAX_PROJECT_CACHE_ENTRIES
+    ) {
+      const oldest = projectByCwd.keys().next().value;
+      if (oldest !== undefined) projectByCwd.delete(oldest);
+    }
+    projectByCwd.set(normalized, project);
+  }
+  return project;
+}
+
+export function __resetReplayProjectCacheForTests(): void {
+  projectByCwd.clear();
+}
+
+export function __replayProjectCacheSizeForTests(): number {
+  return projectByCwd.size;
 }
 
 function toText(content: unknown): string {
@@ -94,13 +146,19 @@ export function parseJsonlText(text: string, fallbackSessionId?: string): Parsed
   let cwd = "";
   let firstTs = "";
   let lastTs = "";
+  const fallbackTimestamp = new Date().toISOString();
 
   const observations: RawObservation[] = [];
 
   for (const entry of entries) {
-    if (entry.sessionId && !sessionId) sessionId = entry.sessionId;
-    if (entry.cwd && !cwd) cwd = entry.cwd;
-    const ts = entry.timestamp || new Date().toISOString();
+    const entrySessionId = boundedString(
+      entry.sessionId,
+      MAX_SESSION_ID_LENGTH,
+    );
+    if (entrySessionId && !sessionId) sessionId = entrySessionId;
+    const entryCwd = boundedString(entry.cwd, MAX_CWD_LENGTH);
+    if (entryCwd && !cwd) cwd = entryCwd;
+    const ts = normalizeTimestamp(entry.timestamp) ?? fallbackTimestamp;
     if (!firstTs) firstTs = ts;
     lastTs = ts;
 
@@ -164,16 +222,20 @@ export function parseJsonlText(text: string, fallbackSessionId?: string): Parsed
     }
   }
 
-  const effectiveSessionId = sessionId || fallbackSessionId || generateId("sess");
+  const effectiveSessionId =
+    sessionId ||
+    boundedString(fallbackSessionId, MAX_SESSION_ID_LENGTH) ||
+    generateId("sess");
   for (const obs of observations) {
     if (obs.sessionId === "imported") obs.sessionId = effectiveSessionId;
   }
 
   const nowIso = new Date().toISOString();
+  const effectiveCwd = cwd || process.cwd();
   return {
     sessionId: effectiveSessionId,
-    project: deriveProject(cwd),
-    cwd: cwd || process.cwd(),
+    project: deriveProject(effectiveCwd),
+    cwd: effectiveCwd,
     startedAt: firstTs || nowIso,
     endedAt: lastTs || nowIso,
     observations,

@@ -149,6 +149,88 @@ describe("REST project scope regressions", () => {
     ).resolves.toMatchObject({ status_code: 400 });
   });
 
+  it("loads session summaries in bounded ordered batches within project scope", async () => {
+    const { functions, kv } = createSurfaces();
+    for (let index = 1; index <= 23; index += 1) {
+      const id = `session-a${String(index).padStart(2, "0")}`;
+      await kv.set("mem:sessions", id, {
+        id,
+        project: PROJECT_A,
+        status: "completed",
+        observationCount: index,
+        startedAt: `2026-07-25T00:${String(index).padStart(2, "0")}:00.000Z`,
+      });
+      await kv.set("mem:summaries", id, {
+        sessionId: id,
+        project: PROJECT_A,
+        createdAt: "2026-07-25T01:00:00.000Z",
+        title: `summary-${id}`,
+        narrative: "",
+        keyDecisions: [],
+        filesModified: [],
+        concepts: [],
+        observationCount: index,
+      });
+    }
+    for (let index = 1; index <= 3; index += 1) {
+      const id = `session-b${index}`;
+      await kv.set("mem:sessions", id, {
+        id,
+        project: PROJECT_B,
+        status: "completed",
+        observationCount: 100,
+        startedAt: `2026-07-25T01:0${index}:00.000Z`,
+      });
+      await kv.set("mem:summaries", id, {
+        sessionId: id,
+        project: PROJECT_B,
+        createdAt: "2026-07-25T01:00:00.000Z",
+        title: `summary-${id}`,
+        narrative: "",
+        keyDecisions: [],
+        filesModified: [],
+        concepts: [],
+        observationCount: 100,
+      });
+    }
+
+    const originalGet = kv.get;
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const summaryReads: string[] = [];
+    kv.get = async <T>(scope: string, key: string): Promise<T | null> => {
+      if (scope !== "mem:summaries") return originalGet<T>(scope, key);
+      summaryReads.push(key);
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      inFlight -= 1;
+      return originalGet<T>(scope, key);
+    };
+
+    const response = await functions.get("api::sessions")!({
+      headers: projectHeaders(PROJECT_A),
+      query_params: { project: PROJECT_A, limit: "23" },
+    });
+
+    expect(response.status_code).toBe(200);
+    const sessions = response.body["sessions"] as Array<{
+      id: string;
+      summary?: { title: string };
+    }>;
+    const expectedIds = Array.from({ length: 23 }, (_, index) =>
+      `session-a${String(23 - index).padStart(2, "0")}`,
+    );
+    expect(sessions.map((session) => session.id)).toEqual(expectedIds);
+    expect(sessions.map((session) => session.summary?.title)).toEqual(
+      expectedIds.map((id) => `summary-${id}`),
+    );
+    expect(summaryReads).toEqual(expectedIds);
+    expect(summaryReads.every((id) => id.startsWith("session-a"))).toBe(true);
+    expect(maxInFlight).toBeGreaterThan(1);
+    expect(maxInFlight).toBeLessThanOrEqual(10);
+  });
+
   it("bounds dashboard collection payloads and reports their full totals", async () => {
     const { functions, kv } = createSurfaces();
     const surfaces = [

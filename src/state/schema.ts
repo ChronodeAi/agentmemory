@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { hasCjk, segmentCjk } from "./cjk-segmenter.js";
 
 export const KV = {
   sessions: "mem:sessions",
@@ -102,11 +103,38 @@ export function fingerprintId(prefix: string, content: string): string {
   return `${prefix}_${hash.slice(0, 16)}`;
 }
 
+function jaccardTokens(text: string): Set<string> {
+  if (!hasCjk(text)) {
+    return new Set(text.split(/\s+/).filter((token) => token.length > 2));
+  }
+  const tokens = new Set<string>();
+  for (const raw of text.split(/\s+/)) {
+    if (!raw) continue;
+    if (!hasCjk(raw)) {
+      if (raw.length > 2) tokens.add(raw);
+      continue;
+    }
+    for (const segment of segmentCjk(raw)) {
+      if (segment) tokens.add(segment);
+    }
+    const characters = Array.from(raw);
+    if (characters.length === 1) tokens.add(characters[0]!);
+    for (let index = 0; index < characters.length - 1; index++) {
+      tokens.add(characters[index]! + characters[index + 1]!);
+    }
+  }
+  return tokens;
+}
+
 export function jaccardSimilarity(a: string, b: string): number {
-  const setA = new Set(a.split(/\s+/).filter((t) => t.length > 2));
-  const setB = new Set(b.split(/\s+/).filter((t) => t.length > 2));
-  if (setA.size === 0 && setB.size === 0) return 1;
-  if (setA.size === 0 || setB.size === 0) return 0;
+  const normalizedA = a.normalize("NFC");
+  const normalizedB = b.normalize("NFC");
+  const setA = jaccardTokens(normalizedA);
+  const setB = jaccardTokens(normalizedB);
+  if (setA.size === 0 || setB.size === 0) {
+    const compact = (value: string) => value.trim().replace(/\s+/g, " ");
+    return compact(normalizedA) === compact(normalizedB) ? 1 : 0;
+  }
   let intersection = 0;
   for (const word of setA) {
     if (setB.has(word)) intersection++;

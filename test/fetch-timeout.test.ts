@@ -74,6 +74,178 @@ describe("fetchWithTimeout", () => {
   });
 });
 
+describe("fetchWithTimeout bounded retry", () => {
+  function queuedFetch(
+    responses: Array<{ status: number; headers?: Record<string, string> }>,
+  ): { fetch: typeof fetch; calls: () => number } {
+    let i = 0;
+    const impl = (async () => {
+      const spec = responses[Math.min(i, responses.length - 1)];
+      i++;
+      return new Response(null, {
+        status: spec.status,
+        headers: spec.headers,
+      });
+    }) as typeof fetch;
+    return { fetch: impl, calls: () => i };
+  }
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    delete process.env["AGENTMEMORY_LLM_TIMEOUT_MS"];
+  });
+
+  it("caps the first attempt at the hard budget, not the raw caller timeout", async () => {
+    const signals: AbortSignal[] = [];
+    const capturing = ((_url: string, init?: RequestInit) => {
+      const signal = init!.signal as AbortSignal;
+      signals.push(signal);
+      return new Promise<Response>((_resolve, reject) => {
+        signal.addEventListener("abort", () =>
+          reject(new DOMException("AbortError", "AbortError")),
+        );
+      });
+    }) as typeof fetch;
+    vi.spyOn(globalThis, "fetch").mockImplementation(capturing);
+    vi.useFakeTimers();
+
+    const p = fetchWithTimeout("https://example.com", {}, 300000);
+    p.catch(() => {});
+
+    expect(signals).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(169999);
+    expect(signals[0].aborted).toBe(false);
+    await vi.advanceTimersByTimeAsync(2);
+    expect(signals[0].aborted).toBe(true);
+
+    await expect(p).rejects.toThrow();
+  });
+
+  it("retries once on 429 then resolves the follow-up 200", async () => {
+    const q = queuedFetch([{ status: 429 }, { status: 200 }]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(q.fetch);
+    vi.useFakeTimers();
+
+    const p = fetchWithTimeout("https://example.com", {}, 60000);
+    await vi.advanceTimersByTimeAsync(500);
+    const res = await p;
+
+    expect(res.status).toBe(200);
+    expect(q.calls()).toBe(2);
+  });
+
+  it("caps hostile Retry-After and stays within the total budget", async () => {
+    const q = queuedFetch([
+      { status: 429, headers: { "Retry-After": "100000" } },
+      { status: 200 },
+    ]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(q.fetch);
+    vi.useFakeTimers();
+    const start = Date.now();
+
+    const p = fetchWithTimeout("https://example.com", {}, 60000);
+    await vi.runAllTimersAsync();
+    const res = await p;
+    const elapsed = Date.now() - start;
+
+    expect(res.status).toBe(200);
+    expect(q.calls()).toBe(2);
+    expect(elapsed).toBeLessThanOrEqual(5000);
+    expect(elapsed).toBeLessThan(60000);
+  });
+
+  it("does not retry when the capped delay cannot fit inside a small budget", async () => {
+    const q = queuedFetch([
+      { status: 429, headers: { "Retry-After": "100000" } },
+      { status: 200 },
+    ]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(q.fetch);
+    vi.useFakeTimers();
+
+    const p = fetchWithTimeout("https://example.com", {}, 1000);
+    await vi.runAllTimersAsync();
+    const res = await p;
+
+    expect(res.status).toBe(429);
+    expect(q.calls()).toBe(1);
+  });
+
+  it("stops persistent 503 at the attempt cap and within the deadline", async () => {
+    const q = queuedFetch([{ status: 503 }]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(q.fetch);
+    vi.useFakeTimers();
+    const start = Date.now();
+
+    const p = fetchWithTimeout("https://example.com", {}, 60000);
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.advanceTimersByTimeAsync(1000);
+    const res = await p;
+    const elapsed = Date.now() - start;
+
+    expect(res.status).toBe(503);
+    expect(q.calls()).toBe(3);
+    expect(elapsed).toBeLessThan(60000);
+    expect(elapsed).toBeLessThanOrEqual(1500);
+  });
+
+  it("does not retry non-429/503 responses", async () => {
+    const q = queuedFetch([{ status: 500 }, { status: 200 }]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(q.fetch);
+    vi.useFakeTimers();
+
+    const res = await fetchWithTimeout("https://example.com", {}, 60000);
+
+    expect(res.status).toBe(500);
+    expect(q.calls()).toBe(1);
+  });
+
+  it("cancels a discarded retry response body before the next attempt", async () => {
+    let cancelled = 0;
+    let calls = 0;
+    vi.spyOn(globalThis, "fetch").mockImplementation((async () => {
+      calls++;
+      if (calls === 1) {
+        return new Response(
+          new ReadableStream({
+            cancel() {
+              cancelled++;
+            },
+          }),
+          { status: 429 },
+        );
+      }
+      return new Response(null, { status: 200 });
+    }) as typeof fetch);
+    vi.useFakeTimers();
+
+    const p = fetchWithTimeout("https://example.com", {}, 60000);
+    await vi.advanceTimersByTimeAsync(500);
+    const res = await p;
+
+    expect(res.status).toBe(200);
+    expect(calls).toBe(2);
+    expect(cancelled).toBe(1);
+  });
+
+  it("parses an HTTP-date Retry-After and honors the bounded delay", async () => {
+    const future = new Date(Date.now() + 2000).toUTCString();
+    const q = queuedFetch([
+      { status: 429, headers: { "Retry-After": future } },
+      { status: 200 },
+    ]);
+    vi.spyOn(globalThis, "fetch").mockImplementation(q.fetch);
+    vi.useFakeTimers();
+
+    const p = fetchWithTimeout("https://example.com", {}, 60000);
+    await vi.advanceTimersByTimeAsync(2000);
+    const res = await p;
+
+    expect(res.status).toBe(200);
+    expect(q.calls()).toBe(2);
+  });
+});
+
 // ─────────────────────────────────────────────────────────────
 // Provider hang regression tests
 // Each provider must call fetchWithTimeout, which honours the
@@ -343,4 +515,3 @@ describe("OpenAIProvider thinking-model fallback (#627)", () => {
     expect(out).toBe("real content");
   });
 });
-

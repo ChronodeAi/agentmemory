@@ -211,6 +211,21 @@ describe("viewer request handler DNS rebinding defence (e2e)", () => {
     }
   });
 
+  it("reads allowed origins when the viewer starts, after user config hydration", async () => {
+    const previous = process.env["VIEWER_ALLOWED_ORIGINS"];
+    process.env["VIEWER_ALLOWED_ORIGINS"] = "http://memory.internal:8080";
+    let port = 0;
+    try {
+      ({ port } = await spinUpViewer());
+    } finally {
+      if (previous === undefined) delete process.env["VIEWER_ALLOWED_ORIGINS"];
+      else process.env["VIEWER_ALLOWED_ORIGINS"] = previous;
+    }
+
+    const response = await request(port, "memory.internal:8080", "/");
+    expect(response.status).not.toBe(403);
+  });
+
   it("serves /favicon.svg with image/svg+xml so the tight CSP can drop data: (#447)", async () => {
     const { port } = await spinUpViewer();
     const res = await request(port, `localhost:${port}`, "/favicon.svg");

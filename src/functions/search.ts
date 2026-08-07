@@ -363,6 +363,75 @@ function getRebuildEmbedBatchSize(): number {
   return Number.isFinite(n) && n > 0 ? n : DEFAULT_REBUILD_EMBED_BATCH
 }
 
+export interface IndexRecordPolicy {
+  observationExternalProcessing?: (
+    observation: CompressedObservation,
+  ) => boolean
+  memoryExternalProcessing?: (memory: Memory) => boolean
+}
+
+export async function indexRecords(
+  observations: CompressedObservation[],
+  memories: Memory[],
+  policy: IndexRecordPolicy = {},
+): Promise<number> {
+  const idx = getSearchIndex()
+  const vectorEnabled = Boolean(vectorIndex && currentEmbeddingProvider)
+  const batchSize = getRebuildEmbedBatchSize()
+  const pending: Parameters<typeof vectorIndexAddBatchGuarded>[0] = []
+  let count = 0
+
+  const flush = async (): Promise<void> => {
+    if (pending.length === 0) return
+    await vectorIndexAddBatchGuarded(pending)
+    pending.length = 0
+  }
+  const enqueue = async (
+    job: Parameters<typeof vectorIndexAddBatchGuarded>[0][number],
+  ): Promise<void> => {
+    if (!vectorEnabled) return
+    pending.push(job)
+    if (pending.length >= batchSize) await flush()
+  }
+
+  for (const memory of memories) {
+    if (memory.isLatest === false || !memory.title || !memory.content) continue
+    idx.add(memoryToObservation(memory))
+    await enqueue({
+      id: memory.id,
+      sessionId: memory.sessionIds?.[0] ?? "memory",
+      text: memory.title + " " + memory.content,
+      context: { kind: "memory", logId: memory.id },
+      externalProcessing: policy.memoryExternalProcessing?.(memory) ?? false,
+    })
+    count++
+  }
+
+  for (const observation of observations) {
+    if (
+      isRetrievalGeneratedObservation(observation) ||
+      !observation.title ||
+      !observation.narrative
+    ) {
+      continue
+    }
+    idx.add(observation)
+    await enqueue({
+      id: observation.id,
+      sessionId: observation.sessionId,
+      text: observation.title + " " + observation.narrative,
+      context: { kind: "observation", logId: observation.id },
+      externalProcessing:
+        policy.observationExternalProcessing?.(observation) ?? false,
+    })
+    count++
+  }
+
+  await flush()
+  scheduleIndexSave()
+  return count
+}
+
 export function rebuildIndex(kv: StateKV): Promise<number> {
   return runIndexMaintenance(async () => {
     const count = await performRebuildIndex(kv)
@@ -484,7 +553,7 @@ async function performVectorIndexRepair(kv: StateKV): Promise<number> {
         context: { kind: "memory", logId: memory.id },
         externalProcessing:
           memory.project === undefined
-            ? true
+            ? false
             : (projectPrivacy.get(memory.project) ?? false),
       })
       continue
@@ -567,7 +636,7 @@ async function performRebuildIndex(kv: StateKV): Promise<number> {
         context: { kind: "memory", logId: memory.id },
         externalProcessing:
           memory.project === undefined
-            ? true
+            ? false
             : (projectPrivacy.get(memory.project) ?? false),
       })
       count++

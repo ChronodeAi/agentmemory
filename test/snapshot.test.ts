@@ -53,6 +53,7 @@ vi.mock("node:fs", () => ({
 import {
   PERSISTED_NAMESPACE_MANIFEST,
   registerSnapshotFunction,
+  startSnapshotScheduler,
 } from "../src/functions/snapshot.js";
 import { logger } from "../src/logger.js";
 import {
@@ -495,6 +496,77 @@ describe("Snapshot Functions", () => {
       success: false,
       status: "rejected",
     });
+  });
+
+  it("skips overlapping snapshot captures and releases the guard", async () => {
+    let releaseFirst!: () => void;
+    const firstListGate = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    let listCalls = 0;
+    const localSdk = mockSdk();
+    const localKv = mockKV();
+    const originalList = localKv.list.bind(localKv);
+    localKv.list = async <T>(scope: string): Promise<T[]> => {
+      listCalls++;
+      if (listCalls === 1) await firstListGate;
+      return originalList<T>(scope);
+    };
+    registerSnapshotFunction(
+      localSdk as never,
+      localKv as never,
+      "/tmp/reentrant",
+    );
+
+    const first = localSdk.trigger("mem::snapshot-create", {
+      message: "first",
+    });
+    await Promise.resolve();
+
+    await expect(
+      localSdk.trigger("mem::snapshot-create", { message: "second" }),
+    ).resolves.toEqual({
+      success: true,
+      message: "Snapshot already in progress",
+    });
+
+    releaseFirst();
+    await expect(first).resolves.toMatchObject({
+      success: true,
+      status: "complete",
+    });
+    await expect(
+      localSdk.trigger("mem::snapshot-create", { message: "third" }),
+    ).resolves.toMatchObject({
+      success: true,
+      status: "complete",
+    });
+  });
+
+  it("schedules periodic snapshots and stops the timer", async () => {
+    vi.useFakeTimers();
+    try {
+      const trigger = vi.fn().mockResolvedValue(undefined);
+      const scheduler = startSnapshotScheduler({ trigger } as never, 2);
+
+      await vi.advanceTimersByTimeAsync(1999);
+      expect(trigger).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      expect(trigger).toHaveBeenCalledTimes(1);
+      expect(trigger).toHaveBeenCalledWith(
+        expect.objectContaining({
+          function_id: "mem::snapshot-create",
+          payload: {},
+        }),
+      );
+
+      scheduler.stop();
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(trigger).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

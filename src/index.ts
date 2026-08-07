@@ -1,5 +1,6 @@
 import { registerWorker } from "iii-sdk";
 import {
+  hydrateProcessEnvFromFile,
   loadConfig,
   getEnvVar,
   loadEmbeddingConfig,
@@ -73,7 +74,10 @@ import { registerGraphFunction } from "./functions/graph.js";
 import { registerConsolidationPipelineFunction } from "./functions/consolidation-pipeline.js";
 import { registerTeamFunction } from "./functions/team.js";
 import { registerGovernanceFunction } from "./functions/governance.js";
-import { registerSnapshotFunction } from "./functions/snapshot.js";
+import {
+  registerSnapshotFunction,
+  startSnapshotScheduler,
+} from "./functions/snapshot.js";
 import { registerActionsFunction } from "./functions/actions.js";
 import { registerFrontierFunction } from "./functions/frontier.js";
 import { registerLeasesFunction } from "./functions/leases.js";
@@ -173,6 +177,8 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function main() {
+  hydrateProcessEnvFromFile();
+
   const config = loadConfig();
   const embeddingConfig = loadEmbeddingConfig();
   const fallbackConfig = loadFallbackConfig();
@@ -368,8 +374,10 @@ async function main() {
   }
 
   const snapshotConfig = loadSnapshotConfig();
+  let snapshotScheduler: { stop: () => void } | undefined;
   if (snapshotConfig.enabled) {
     registerSnapshotFunction(sdk, kv, snapshotConfig.dir);
+    snapshotScheduler = startSnapshotScheduler(sdk, snapshotConfig.interval);
     bootLog(
       `Git snapshots: ${snapshotConfig.dir} (every ${snapshotConfig.interval}s)`,
     );
@@ -709,6 +717,7 @@ async function main() {
     try {
       healthMonitor.stop();
       dedupMap.stop();
+      snapshotScheduler?.stop();
       indexPersistence.stop();
       await Promise.race([
         new Promise<void>((resolve) => viewerServer.close(() => resolve())),

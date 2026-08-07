@@ -42,28 +42,6 @@ async function main() {
     return;
   }
 
-  if (process.env["CONSOLIDATION_ENABLED"] === "true") {
-    const consolidationResults = await Promise.allSettled([
-      deliverProjectRequest(
-        "/agentmemory/crystals/auto",
-        project,
-        { olderThanDays: 0, project },
-        { timeoutMs: 2500 },
-      ),
-      deliverProjectRequest(
-        "/agentmemory/consolidate-pipeline",
-        project,
-        { tier: "all", force: true, project },
-        { timeoutMs: 2500 },
-      ),
-    ]);
-    for (const result of consolidationResults) {
-      if (result.status === "rejected") {
-        reportHookDeliveryFailure("session consolidation", result.reason);
-      }
-    }
-  }
-
   if (process.env["CLAUDE_MEMORY_BRIDGE"] === "true") {
     try {
       await deliverProjectRequest(

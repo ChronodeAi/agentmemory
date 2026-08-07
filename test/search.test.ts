@@ -630,6 +630,48 @@ describe("mem::search", () => {
     setEmbeddingProvider(null);
   });
 
+  it("does not send an unscoped memory to an external embedder during rebuild", async () => {
+    const session = await kv.get<Session>(KV.sessions, "ses_1");
+    await kv.set(KV.sessions, "ses_1", {
+      ...session!,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    await kv.set(KV.memories, "mem_global", {
+      id: "mem_global",
+      createdAt: "2026-08-07T00:00:00Z",
+      updatedAt: "2026-08-07T00:00:00Z",
+      type: "fact",
+      title: "Unscoped legacy memory",
+      content: "This legacy record has no canonical project binding.",
+      concepts: ["legacy"],
+      files: [],
+      sessionIds: [],
+      strength: 1,
+      version: 1,
+      isLatest: true,
+    });
+    const embedBatch = vi.fn(async (texts: string[]) =>
+      texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+    );
+    setEmbeddingProvider({
+      name: "openai",
+      dimensions: 3,
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+      embedBatch,
+    });
+    setVectorIndex(new VectorIndex());
+
+    await rebuildIndex(kv as never);
+
+    expect(embedBatch).not.toHaveBeenCalled();
+    expect(
+      getSearchIndex().entriesSnapshot().some((entry) => entry.obsId === "mem_global"),
+    ).toBe(true);
+    setVectorIndex(null);
+    setEmbeddingProvider(null);
+  });
+
   it("allows strict-project observations through a local OpenAI-compatible embedder", async () => {
     const session = await kv.get<Session>(KV.sessions, "ses_1");
     expect(session).not.toBeNull();

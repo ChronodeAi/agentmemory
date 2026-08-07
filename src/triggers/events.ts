@@ -5,14 +5,38 @@ import { StateKV } from "../state/kv.js";
 import { isReflectEnabled } from "../functions/slots.js";
 import {
   getAgentId,
+  getConsolidationCooldownMs,
   getEnvVar,
+  isConsolidationEnabled,
   isGraphExtractionEnabled,
 } from "../config.js";
 import { logger } from "../logger.js";
+import { withKeyedLock } from "../state/keyed-mutex.js";
 import {
   closeStaleSessions,
   startOrResumeSession,
 } from "../functions/session-lifecycle.js";
+
+function consolidationMarkerKey(project: string): string {
+  return `consolidation:last-run:${encodeURIComponent(project)}`;
+}
+
+async function reserveProjectConsolidation(
+  kv: StateKV,
+  project: string,
+): Promise<boolean> {
+  return withKeyedLock(`consolidation:stop:${project}`, async () => {
+    const cooldownMs = getConsolidationCooldownMs();
+    if (cooldownMs <= 0) return true;
+    const key = consolidationMarkerKey(project);
+    const marker = await kv.get<{ at?: number }>(KV.config, key).catch(() => null);
+    const lastRun = typeof marker?.at === "number" ? marker.at : 0;
+    const now = Date.now();
+    if (now - lastRun < cooldownMs) return false;
+    await kv.set(KV.config, key, { at: now, project });
+    return true;
+  });
+}
 
 export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction(
@@ -77,7 +101,11 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     config: { topic: "agentmemory.observation" },
   });
 
-  sdk.registerFunction("event::session::stopped", async (data: { sessionId: string; project: string }) => {
+  sdk.registerFunction("event::session::stopped", async (data: {
+    sessionId: string;
+    project: string;
+    skipConsolidation?: boolean;
+  }) => {
     const session = await kv.get<Session>(KV.sessions, data.sessionId);
     if (!session || !data.project || session.project !== data.project) {
       return {
@@ -143,6 +171,43 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
           sessionId: data.sessionId,
           error: err instanceof Error ? err.message : String(err),
         });
+      }
+    }
+    if (isConsolidationEnabled() && !data.skipConsolidation) {
+      if (await reserveProjectConsolidation(kv, session.project)) {
+        const fire = async (functionId: string, payload: unknown) => {
+          try {
+            await sdk.trigger({
+              function_id: functionId,
+              payload,
+              action: TriggerAction.Void(),
+            });
+            return true;
+          } catch (error) {
+            logger.warn(`${functionId} trigger failed`, {
+              sessionId: data.sessionId,
+              project: session.project,
+              error: error instanceof Error ? error.message : String(error),
+            });
+            return false;
+          }
+        };
+        const results = await Promise.all([
+          fire("mem::consolidate-pipeline", {
+            tier: "all",
+            force: true,
+            project: session.project,
+          }),
+          fire("mem::auto-crystallize", {
+            olderThanDays: 0,
+            project: session.project,
+          }),
+        ]);
+        if (results.some((result) => !result)) {
+          await kv
+            .delete(KV.config, consolidationMarkerKey(session.project))
+            .catch(() => {});
+        }
       }
     }
     return summary;

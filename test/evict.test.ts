@@ -11,6 +11,11 @@ vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
+vi.mock("../src/config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../src/config.js")>()),
+  isConsolidationEnabled: () => true,
+}));
+
 type Store = Map<string, Map<string, unknown>>;
 type Handler = (payload: unknown) => unknown | Promise<unknown>;
 
@@ -145,7 +150,11 @@ describe("mem::evict stale sessions", () => {
 
     registerEvictFunction(sdk as never, kv as never);
     sdk.registerFunction("event::session::stopped", async (payload) => {
-      expect(payload).toEqual({ sessionId, project: "agentmemory" });
+      expect(payload).toEqual({
+        sessionId,
+        project: "agentmemory",
+        skipConsolidation: true,
+      });
       expect(await kv.get(KV.sessions, sessionId)).toMatchObject({
         id: sessionId,
       });
@@ -154,6 +163,7 @@ describe("mem::evict stale sessions", () => {
     sdk.registerFunction("mem::consolidate-pipeline", () => ({
       success: true,
     }));
+    sdk.registerFunction("mem::auto-crystallize", () => ({ success: true }));
 
     const result = (await sdk.trigger({
       function_id: "mem::evict",
@@ -186,7 +196,11 @@ describe("mem::evict stale sessions", () => {
       calls.find(
         (call) => call.function_id === "mem::consolidate-pipeline",
       )?.payload,
-    ).toEqual({ tier: "all", project: "agentmemory" });
+    ).toEqual({ tier: "all", force: true, project: "agentmemory" });
+    expect(
+      calls.find((call) => call.function_id === "mem::auto-crystallize")
+        ?.payload,
+    ).toEqual({ olderThanDays: 0, project: "agentmemory" });
   });
 
   it("keeps a stale observed session when recovery fails", async () => {

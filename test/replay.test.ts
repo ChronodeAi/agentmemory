@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseJsonlText } from "../src/replay/jsonl-parser.js";
+import {
+  __replayProjectCacheSizeForTests,
+  __resetReplayProjectCacheForTests,
+  parseJsonlText,
+} from "../src/replay/jsonl-parser.js";
 import { projectTimeline } from "../src/replay/timeline.js";
 
 const fx = (name: string) =>
@@ -11,7 +15,7 @@ describe("parseJsonlText", () => {
   it("parses basic user/assistant exchange", () => {
     const out = parseJsonlText(fx("basic.jsonl"));
     expect(out.sessionId).toBe("sess-basic");
-    expect(out.project).toBe("project");
+    expect(out.project).toMatch(/^local\/[a-f0-9]{24}$/);
     expect(out.cwd).toBe("/Users/alice/project");
     expect(out.observations).toHaveLength(2);
     expect(out.observations[0].hookType).toBe("prompt_submit");
@@ -97,6 +101,53 @@ describe("parseJsonlText", () => {
     const out = parseJsonlText(text, "fb-used");
     expect(out.sessionId).toBe("fb-used");
   });
+
+  it("ignores malformed cwd and session metadata", () => {
+    const text = JSON.stringify({
+      type: "user",
+      cwd: { unexpected: true },
+      sessionId: { unexpected: true },
+      timestamp: { unexpected: true },
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    });
+    const out = parseJsonlText(text, "bounded-fallback");
+    expect(out.sessionId).toBe("bounded-fallback");
+    expect(out.cwd).toBe(process.cwd());
+    expect(out.project).not.toBe("[object Object]");
+    expect(out.startedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it("bounds string metadata and rejects invalid timestamps", () => {
+    const text = JSON.stringify({
+      type: "user",
+      cwd: "x".repeat(4097),
+      sessionId: "   ",
+      timestamp: "not-a-timestamp",
+      message: { role: "user", content: [{ type: "text", text: "hi" }] },
+    });
+    const out = parseJsonlText(text, "  bounded-fallback  ");
+    expect(out.sessionId).toBe("bounded-fallback");
+    expect(out.cwd).toBe(process.cwd());
+    expect(Number.isFinite(Date.parse(out.startedAt))).toBe(true);
+    expect(out.startedAt).toBe(out.endedAt);
+  });
+
+  it("does not cache attacker-controlled nonexistent cwd values", () => {
+    __resetReplayProjectCacheForTests();
+    for (let index = 0; index < 20; index++) {
+      parseJsonlText(
+        JSON.stringify({
+          type: "user",
+          cwd: `/path/that/does/not/exist/${index}`,
+          message: {
+            role: "user",
+            content: [{ type: "text", text: "hi" }],
+          },
+        }),
+      );
+    }
+    expect(__replayProjectCacheSizeForTests()).toBe(0);
+  });
 });
 
 describe("projectTimeline", () => {
@@ -142,4 +193,3 @@ describe("projectTimeline", () => {
     expect(out.startedAt).toBe(out.endedAt);
   });
 });
-

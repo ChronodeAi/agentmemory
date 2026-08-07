@@ -1,6 +1,77 @@
-import { watch, promises as fsp, statSync } from "node:fs";
-import { resolve, relative, join, extname, sep, basename } from "node:path";
-import { randomBytes } from "node:crypto";
+import { watch, promises as fsp, statSync, realpathSync } from "node:fs";
+import { resolve, relative, join, extname, sep, basename, isAbsolute } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import { execFileSync } from "node:child_process";
+
+function git(cwd, args) {
+  try {
+    const output = execFileSync("git", args, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+      timeout: 750,
+    }).trim();
+    return output || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function normalizeGitRemote(remote) {
+  let value = remote.trim();
+  if (!value) return undefined;
+  const scp = value.match(/^(?:[^@/\s]+@)?([^:/\s]+):(.+)$/);
+  if (scp && !value.includes("://")) value = `ssh://${scp[1]}/${scp[2]}`;
+  try {
+    const parsed = new URL(value);
+    if (!parsed.hostname || parsed.protocol === "file:") return undefined;
+    const path = decodeURIComponent(parsed.pathname)
+      .replace(/^\/+/, "")
+      .replace(/\/+$/, "")
+      .replace(/\.git$/i, "");
+    const segments = path.split("/").filter(Boolean);
+    if (segments.length < 2) return undefined;
+    const hostname = parsed.hostname.toLowerCase();
+    const host = parsed.port ? `${hostname}:${parsed.port}` : hostname;
+    const normalizedSegments = ["github.com", "gitlab.com"].includes(hostname)
+      ? segments.map((segment) => segment.toLowerCase())
+      : segments;
+    return `${host}/${normalizedSegments.join("/")}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function isWithinRoot(root, candidate) {
+  const fromRoot = relative(root, candidate);
+  return (
+    fromRoot === "" ||
+    (fromRoot !== ".." &&
+      !fromRoot.startsWith(`..${sep}`) &&
+      !isAbsolute(fromRoot))
+  );
+}
+
+export function deriveProjectId(dir) {
+  const requested = resolve(dir);
+  let root = git(requested, ["rev-parse", "--show-toplevel"]) || requested;
+  try {
+    root = realpathSync.native(root);
+  } catch {
+    root = resolve(root);
+  }
+  const remote =
+    git(root, ["remote", "get-url", "origin"]) ||
+    git(root, ["remote", "get-url", "--all", "upstream"]);
+  const normalized = remote ? normalizeGitRemote(remote) : undefined;
+  if (remote && !normalized) {
+    throw new Error("configured Git remote cannot be normalized safely");
+  }
+  return (
+    normalized ||
+    `local/${createHash("sha256").update(root).digest("hex").slice(0, 24)}`
+  );
+}
 
 const TEXT_EXTENSIONS = new Set([
   ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
@@ -121,12 +192,22 @@ export class FilesystemWatcher {
     this.roots = (config.roots || []).map((r) => resolve(r));
     this.baseUrl = (config.baseUrl || "http://localhost:3111").replace(/\/+$/, "");
     this.secret = config.secret;
+    this.projectByRoot = new Map(
+      this.roots.map((root) => [root, config.project || deriveProjectId(root)]),
+    );
     this.project =
       config.project ||
-      (this.roots[0] ? basename(this.roots[0]) : "filesystem-watcher");
+      this.projectByRoot.get(this.roots[0]) ||
+      "filesystem-watcher";
+    this.sessionByRoot = new Map(
+      this.roots.map((root) => [
+        root,
+        config.sessionId ||
+          `fs-watcher-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`,
+      ]),
+    );
     this.sessionId =
-      config.sessionId ||
-      `fs-watcher-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
+      config.sessionId || this.sessionByRoot.get(this.roots[0]);
     this.ignore = [...DEFAULT_IGNORE, ...(config.ignorePatterns || [])];
     this.allowBinary = Boolean(config.allowBinary);
     this.logger = config.logger || console;
@@ -193,13 +274,38 @@ export class FilesystemWatcher {
   }
 
   async flush(rootDir, relPath) {
-    const absPath = join(rootDir, relPath);
-    if (this.isIgnored(relPath)) return;
+    const canonicalRoot = resolve(rootDir);
+    if (!this.roots.includes(canonicalRoot)) {
+      this.logger.warn?.(`[fs-watcher] refusing unknown root: ${canonicalRoot}`);
+      return;
+    }
+    if (
+      typeof relPath !== "string" ||
+      !relPath ||
+      isAbsolute(relPath) ||
+      relPath.split(/[\\/]+/).includes("..")
+    ) {
+      this.logger.warn?.("[fs-watcher] refusing path outside watched root");
+      return;
+    }
+    const normalizedRelPath = relPath.split(sep).join("/");
+    const absPath = resolve(canonicalRoot, normalizedRelPath);
+    if (!isWithinRoot(canonicalRoot, absPath)) {
+      this.logger.warn?.("[fs-watcher] refusing path outside watched root");
+      return;
+    }
+    if (this.isIgnored(normalizedRelPath)) return;
     let exists = true;
     let size = 0;
     try {
       const st = statSync(absPath);
       if (!st.isFile()) return;
+      const realPath = realpathSync.native(absPath);
+      const realRoot = realpathSync.native(canonicalRoot);
+      if (!isWithinRoot(realRoot, realPath)) {
+        this.logger.warn?.("[fs-watcher] refusing symlink outside watched root");
+        return;
+      }
       size = st.size;
     } catch {
       exists = false;
@@ -213,19 +319,19 @@ export class FilesystemWatcher {
     const truncated = exists && size > MAX_PREVIEW_BYTES;
     const payload = {
       hookType: "post_tool_use",
-      sessionId: this.sessionId,
-      project: this.project,
-      cwd: rootDir,
+      sessionId: this.sessionByRoot.get(canonicalRoot) || this.sessionId,
+      project: this.projectByRoot.get(canonicalRoot) || this.project,
+      cwd: canonicalRoot,
       timestamp: new Date().toISOString(),
       data: {
         source: "filesystem-watcher",
         changeKind,
-        files: [relPath],
-        content: this.formatContent(relPath, changeKind, preview, {
+        files: [normalizedRelPath],
+        content: this.formatContent(normalizedRelPath, changeKind, preview, {
           size,
           truncated,
         }),
-        rootDir,
+        rootDir: canonicalRoot,
         absPath,
         size,
         truncated,
@@ -248,6 +354,9 @@ export class FilesystemWatcher {
     const failures = [];
     for (const root of this.roots) {
       try {
+        const st = statSync(root, { throwIfNoEntry: false });
+        if (!st) throw new Error("no such directory");
+        if (!st.isDirectory()) throw new Error("not a directory");
         const handle = watch(
           root,
           { recursive: true, persistent: true },

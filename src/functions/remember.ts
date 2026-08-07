@@ -1,5 +1,5 @@
 import { TriggerAction, type ISdk } from "iii-sdk";
-import type { Memory } from "../types.js";
+import type { Memory, Session, SessionSummary } from "../types.js";
 import { KV, generateId, jaccardSimilarity } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
@@ -10,7 +10,10 @@ import { getSearchIndex, vectorIndexAddGuarded, vectorIndexRemove, flushIndexSav
 import { getAgentId } from "../config.js";
 import { stripPrivateData } from "./privacy.js";
 import { logger } from "../logger.js";
-import { requireProjectReadScope } from "../project-scope.js";
+import {
+  recordMatchesProject,
+  requireProjectReadScope,
+} from "../project-scope.js";
 
 export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::remember", 
@@ -174,7 +177,10 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       sessionId?: string;
       observationIds?: string[];
       memoryId?: string;
+      project?: string;
+      scope?: "project" | "global";
     }) => {
+      const projectScope = requireProjectReadScope(data, "mem::forget");
       let deleted = 0;
       const deletedMemoryIds: string[] = [];
       const deletedObservationIds: string[] = [];
@@ -183,15 +189,17 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
 
       if (data.memoryId) {
         const mem = await kv.get<Memory>(KV.memories, data.memoryId);
-        await kv.delete(KV.memories, data.memoryId);
-        if (mem?.imageRef) {
-          await decrementImageRef(kv, sdk, mem.imageRef);
+        if (mem && recordMatchesProject(mem.project, projectScope)) {
+          await kv.delete(KV.memories, data.memoryId);
+          if (mem.imageRef) {
+            await decrementImageRef(kv, sdk, mem.imageRef);
+          }
+          await deleteAccessLog(kv, data.memoryId);
+          getSearchIndex().remove(data.memoryId);
+          vectorIndexRemove(data.memoryId);
+          deletedMemoryIds.push(data.memoryId);
+          deleted++;
         }
-        await deleteAccessLog(kv, data.memoryId);
-        getSearchIndex().remove(data.memoryId);
-        vectorIndexRemove(data.memoryId);
-        deletedMemoryIds.push(data.memoryId);
-        deleted++;
       }
 
       if (
@@ -199,20 +207,28 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
         data.observationIds &&
         data.observationIds.length > 0
       ) {
+        const session = await kv.get<Session>(KV.sessions, data.sessionId);
+        const authorized =
+          projectScope.kind === "global" ||
+          (!!session && recordMatchesProject(session.project, projectScope));
+        if (!authorized) return { success: true, deleted: 0 };
+
         for (const obsId of data.observationIds) {
           const obs = await kv.get<{ imageData?: string; imageRef?: string }>(
             KV.observations(data.sessionId),
             obsId,
           );
-          await kv.delete(KV.observations(data.sessionId), obsId);
-          if (obs?.imageData) await decrementImageRef(kv, sdk, obs.imageData);
-          if (obs?.imageRef && obs.imageRef !== obs.imageData) {
-            await decrementImageRef(kv, sdk, obs.imageRef);
+          if (obs) {
+            await kv.delete(KV.observations(data.sessionId), obsId);
+            if (obs.imageData) await decrementImageRef(kv, sdk, obs.imageData);
+            if (obs.imageRef && obs.imageRef !== obs.imageData) {
+              await decrementImageRef(kv, sdk, obs.imageRef);
+            }
+            getSearchIndex().remove(obsId);
+            vectorIndexRemove(obsId);
+            deletedObservationIds.push(obsId);
+            deleted++;
           }
-          getSearchIndex().remove(obsId);
-          vectorIndexRemove(obsId);
-          deletedObservationIds.push(obsId);
-          deleted++;
         }
       }
 
@@ -221,6 +237,16 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
         (!data.observationIds || data.observationIds.length === 0) &&
         !data.memoryId
       ) {
+        const session = await kv.get<Session>(KV.sessions, data.sessionId);
+        const summary = await kv.get<SessionSummary>(
+          KV.summaries,
+          data.sessionId,
+        );
+        const authorized =
+          projectScope.kind === "global" ||
+          (!!session && recordMatchesProject(session.project, projectScope));
+        if (!authorized) return { success: true, deleted: 0 };
+
         const observations = await kv.list<{ id: string; imageData?: string; imageRef?: string }>(
           KV.observations(data.sessionId),
         );
@@ -235,10 +261,15 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           deletedObservationIds.push(obs.id);
           deleted++;
         }
-        await kv.delete(KV.sessions, data.sessionId);
-        await kv.delete(KV.summaries, data.sessionId);
-        deletedSession = true;
-        deleted += 2;
+        if (session) {
+          await kv.delete(KV.sessions, data.sessionId);
+          deletedSession = true;
+          deleted++;
+        }
+        if (summary && recordMatchesProject(summary.project, projectScope)) {
+          await kv.delete(KV.summaries, data.sessionId);
+          deleted++;
+        }
       }
 
       if (deleted > 0) {

@@ -5,6 +5,11 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { registerExportImportFunction } from "../src/functions/export-import.js";
+import {
+  getSearchIndex,
+  setEmbeddingProvider,
+  setVectorIndex,
+} from "../src/functions/search.js";
 import type {
   Session,
   CompressedObservation,
@@ -106,6 +111,9 @@ describe("Export/Import Functions", () => {
   let kv: ReturnType<typeof mockKV>;
 
   beforeEach(async () => {
+    getSearchIndex().clear();
+    setEmbeddingProvider(null);
+    setVectorIndex(null);
     sdk = mockSdk();
     kv = mockKV();
     registerExportImportFunction(sdk as never, kv as never);
@@ -186,6 +194,55 @@ describe("Export/Import Functions", () => {
     expect(allSessions.length).toBe(2);
   });
 
+  it("makes newly imported observations and memories searchable immediately", async () => {
+    const observation: CompressedObservation = {
+      ...testObs,
+      id: "obs_imported",
+      sessionId: "ses_imported",
+      title: "Kubernetes rollout strategy",
+      narrative: "Adjusted the kubernetes deployment rollout window",
+    };
+    const memory: Memory = {
+      ...testMemory,
+      id: "mem_imported",
+      project: "my-project",
+      title: "Postgres connection pooling",
+      content: "Use pgbouncer for postgres connection pooling",
+    };
+    const exportData: ExportData = {
+      version: "0.9.28",
+      exportedAt: new Date().toISOString(),
+      sessions: [
+        {
+          ...testSession,
+          id: "ses_imported",
+          privacy: "strict",
+          externalProcessing: false,
+        },
+      ],
+      observations: { ses_imported: [observation] },
+      memories: [memory],
+      summaries: [],
+    };
+
+    const result = (await sdk.trigger("mem::import", {
+      exportData,
+      strategy: "merge",
+    })) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    expect(
+      getSearchIndex()
+        .search("kubernetes rollout")
+        .some((entry) => entry.obsId === observation.id),
+    ).toBe(true);
+    expect(
+      getSearchIndex()
+        .search("postgres pooling")
+        .some((entry) => entry.obsId === memory.id),
+    ).toBe(true);
+  });
+
   it("import with skip strategy does not overwrite existing", async () => {
     const exportData: ExportData = {
       version: "0.3.0",
@@ -207,6 +264,7 @@ describe("Export/Import Functions", () => {
   });
 
   it("import with replace strategy clears existing data first", async () => {
+    getSearchIndex().add(testObs);
     const newSession: Session = {
       id: "ses_new",
       project: "new-project",
@@ -234,6 +292,7 @@ describe("Export/Import Functions", () => {
 
     const oldSession = await kv.get("mem:sessions", "ses_1");
     expect(oldSession).toBeNull();
+    expect(getSearchIndex().has(testObs.id)).toBe(false);
   });
 
   it("export then import round-trip preserves data", async () => {

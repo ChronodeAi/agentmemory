@@ -26,9 +26,11 @@ import type {
 } from "../types.js";
 import { normalizeAccessLog } from "./access-tracker.js";
 import { KV } from "../state/schema.js";
+import { checkPayloadFrameSize } from "../state/frame-guard.js";
 import { StateKV } from "../state/kv.js";
 import { VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
+import { indexRecords, rebuildIndex } from "./search.js";
 import { logger } from "../logger.js";
 
 export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
@@ -186,6 +188,17 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         summaries: summaries.length,
       });
 
+      const oversized = checkPayloadFrameSize(
+        exportData,
+        "narrow the range with maxSessions/offset or export fewer sections",
+      );
+      if (oversized) {
+        logger.warn("Export exceeds transport frame limit", {
+          bytes: oversized.bytes,
+        });
+        return oversized;
+      }
+
       return exportData;
     },
   );
@@ -291,6 +304,8 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         summaries: 0,
         skipped: 0,
       };
+      const indexObservations: CompressedObservation[] = [];
+      const indexMemories: Memory[] = [];
 
       if (strategy === "replace") {
         const existing = await kv.list<Session>(KV.sessions);
@@ -391,6 +406,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           }
           await kv.set(KV.observations(sessionId), o.id, o);
           stats.observations++;
+          indexObservations.push(o);
         }
       }
 
@@ -410,6 +426,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         }
         await kv.set(KV.memories, memory.id, memory);
         stats.memories++;
+        indexMemories.push(memory);
       }
 
       for (const summary of importData.summaries) {
@@ -603,6 +620,45 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           }
           await kv.set(KV.accessLog, log.memoryId, log);
         }
+      }
+
+      try {
+        if (strategy === "replace") {
+          await rebuildIndex(kv);
+        } else {
+          const sessions = await kv.list<Session>(KV.sessions);
+          const sessionById = new Map(
+            sessions.map((session) => [session.id, session]),
+          );
+          const projectPermitsExternal = new Map<string, boolean>();
+          for (const session of sessions) {
+            const permits =
+              session.privacy !== "strict" &&
+              session.externalProcessing !== false;
+            projectPermitsExternal.set(
+              session.project,
+              (projectPermitsExternal.get(session.project) ?? true) && permits,
+            );
+          }
+          await indexRecords(indexObservations, indexMemories, {
+            observationExternalProcessing: (observation) => {
+              const session = sessionById.get(observation.sessionId);
+              return Boolean(
+                session &&
+                  session.privacy !== "strict" &&
+                  session.externalProcessing !== false,
+              );
+            },
+            memoryExternalProcessing: (memory) =>
+              memory.project === undefined
+                ? false
+                : (projectPermitsExternal.get(memory.project) ?? false),
+          });
+        }
+      } catch (error) {
+        logger.warn("Import indexing failed; restart rebuild will recover", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       }
 
       logger.info("Import complete", { strategy, ...stats });

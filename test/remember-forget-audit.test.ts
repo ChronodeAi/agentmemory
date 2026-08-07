@@ -61,7 +61,7 @@ describe("mem::forget audit coverage (issue #125)", () => {
 
     const result = await sdk.trigger({
       function_id: "mem::forget",
-      payload: { memoryId: "mem_a" },
+      payload: { memoryId: "mem_a", scope: "global" },
     });
     expect((result as { deleted: number }).deleted).toBe(1);
 
@@ -93,7 +93,7 @@ describe("mem::forget audit coverage (issue #125)", () => {
 
     await sdk.trigger({
       function_id: "mem::forget",
-      payload: { sessionId: "sess_1" },
+      payload: { sessionId: "sess_1", scope: "global" },
     });
 
     const auditRows = await kv.list<{
@@ -116,7 +116,7 @@ describe("mem::forget audit coverage (issue #125)", () => {
 
     await sdk.trigger({
       function_id: "mem::forget",
-      payload: { sessionId: undefined, memoryId: undefined },
+      payload: { sessionId: undefined, memoryId: undefined, scope: "global" },
     });
 
     const auditRows = await kv.list("mem:audit");
@@ -167,7 +167,7 @@ describe("mem::forget search-index cleanup", () => {
 
     await sdk.trigger({
       function_id: "mem::forget",
-      payload: { memoryId: "mem_a" },
+      payload: { memoryId: "mem_a", scope: "global" },
     });
 
     expect(getSearchIndex().has("mem_a")).toBe(false);
@@ -185,7 +185,11 @@ describe("mem::forget search-index cleanup", () => {
 
     await sdk.trigger({
       function_id: "mem::forget",
-      payload: { sessionId: "ses_1", observationIds: ["obs_a"] },
+      payload: {
+        sessionId: "ses_1",
+        observationIds: ["obs_a"],
+        scope: "global",
+      },
     });
 
     expect(getSearchIndex().has("obs_a")).toBe(false);
@@ -203,9 +207,53 @@ describe("mem::forget search-index cleanup", () => {
 
     await sdk.trigger({
       function_id: "mem::forget",
-      payload: { memoryId: "mem_a" },
+      payload: { memoryId: "mem_a", scope: "global" },
     });
 
     expect(persistence.save).toHaveBeenCalled();
+  });
+
+  it("reports no deletion for a missing memory and leaves indexes untouched", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRememberFunction(sdk as never, kv as never);
+    getSearchIndex().add(memoryToObservation(makeMemory("mem_missing")));
+
+    const result = await sdk.trigger({
+      function_id: "mem::forget",
+      payload: { memoryId: "mem_missing", scope: "global" },
+    });
+
+    expect(result).toEqual({ success: true, deleted: 0 });
+    expect(getSearchIndex().has("mem_missing")).toBe(true);
+    expect(await kv.list("mem:audit")).toHaveLength(0);
+  });
+
+  it("fails closed across project boundaries", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRememberFunction(sdk as never, kv as never);
+    const memory = { ...makeMemory("mem_a"), project: "github.com/acme/a" };
+    await kv.set("mem:memories", memory.id, memory);
+
+    const result = await sdk.trigger({
+      function_id: "mem::forget",
+      payload: { memoryId: memory.id, project: "github.com/acme/b" },
+    });
+
+    expect(result).toEqual({ success: true, deleted: 0 });
+    expect(await kv.get("mem:memories", memory.id)).toEqual(memory);
+  });
+
+  it("requires explicit project or global scope", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRememberFunction(sdk as never, kv as never);
+    await expect(
+      sdk.trigger({
+        function_id: "mem::forget",
+        payload: { memoryId: "mem_a" },
+      }),
+    ).rejects.toThrow("project is required");
   });
 });

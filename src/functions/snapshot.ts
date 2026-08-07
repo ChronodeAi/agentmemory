@@ -1,4 +1,4 @@
-import type { ISdk } from "iii-sdk";
+import { TriggerAction, type ISdk } from "iii-sdk";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -631,9 +631,14 @@ export function registerSnapshotFunction(
   snapshotDir: string,
 ): void {
   installNamespaceKeyTracking(kv);
+  let snapshotInFlight = false;
   sdk.registerFunction(
     "mem::snapshot-create",
     async (data?: { message?: string }) => {
+      if (snapshotInFlight) {
+        return { success: true, message: "Snapshot already in progress" };
+      }
+      snapshotInFlight = true;
       try {
         await ensureGitRepo(snapshotDir);
         const timestamp = new Date().toISOString();
@@ -690,6 +695,8 @@ export function registerSnapshotFunction(
           status: "incomplete",
           error: message,
         } satisfies SnapshotIncompleteResult;
+      } finally {
+        snapshotInFlight = false;
       }
     },
   );
@@ -831,4 +838,27 @@ export function registerSnapshotFunction(
       }
     },
   );
+}
+
+export function startSnapshotScheduler(
+  sdk: ISdk,
+  intervalSeconds: number,
+): { stop: () => void } {
+  const timer = setInterval(() => {
+    Promise.resolve(
+      sdk.trigger({
+        function_id: "mem::snapshot-create",
+        payload: {},
+        action: TriggerAction.Void(),
+      }),
+    ).catch((error) => {
+      logger.warn("Scheduled snapshot trigger failed", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  }, intervalSeconds * 1000);
+  timer.unref();
+  return {
+    stop: () => clearInterval(timer),
+  };
 }
