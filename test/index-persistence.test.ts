@@ -825,11 +825,28 @@ describe("IndexPersistence", () => {
 
     await expect(kv.get(BM25_SCOPE, BM25_MANIFEST_KEY)).resolves.toBeNull();
 
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(30_000);
     await vi.runAllTimersAsync();
 
     const saved = await kv.get<string>(BM25_SCOPE, BM25_MANIFEST_KEY);
     expect(saved).not.toBeNull();
+  });
+
+  it("supports a bounded custom debounce for controlled runtimes", async () => {
+    const persistence = new IndexPersistence(
+      kv as never,
+      new SearchIndex(),
+      null,
+      { debounceMs: 250 },
+    );
+
+    persistence.scheduleSave();
+    vi.advanceTimersByTime(249);
+    await expect(kv.get(BM25_SCOPE, BM25_MANIFEST_KEY)).resolves.toBeNull();
+
+    vi.advanceTimersByTime(1);
+    await vi.runAllTimersAsync();
+    await expect(kv.get(BM25_SCOPE, BM25_MANIFEST_KEY)).resolves.not.toBeNull();
   });
 
   it("serializes overlapping saves and publishes the latest complete snapshot", async () => {
@@ -931,7 +948,7 @@ describe("IndexPersistence", () => {
 
     try {
       persistence.scheduleSave();
-      vi.advanceTimersByTime(5000);
+      vi.advanceTimersByTime(30_000);
       await vi.runAllTimersAsync();
       // give microtasks a chance to flush
       await Promise.resolve();

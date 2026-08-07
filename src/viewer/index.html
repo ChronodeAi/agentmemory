@@ -1111,10 +1111,11 @@
     var CB_STATE_COLORS = { closed: 'badge-green', open: 'badge-red', 'half-open': 'badge-yellow' };
     var TAB_IDS = ['dashboard', 'graph', 'memories', 'timeline', 'sessions', 'lessons', 'actions', 'crystals', 'audit', 'activity', 'profile', 'replay'];
     var VIEWER_TOKEN_STORAGE_KEY = 'agentmemory-viewer-token';
+    var DASHBOARD_REQUEST_TIMEOUT_MS = 10000;
 
     var state = {
       activeTab: 'dashboard',
-      dashboard: { loaded: false, health: null, sessions: [], memories: [], graphStats: null, recentAudit: [], lessons: [], crystals: [] },
+      dashboard: { loaded: false, dirty: false, refreshError: '', health: null, sessions: [], sessionTotal: 0, activeSessions: 0, totalObservations: 0, memories: [], memoryTotal: 0, semantic: [], semanticTotal: 0, procedural: [], proceduralTotal: 0, relations: [], relationTotal: 0, graphStats: null, recentAudit: [], lessons: [], crystals: [] },
       graph: { loaded: false, nodes: [], edges: [], stats: null, filters: {}, selectedNode: null, queryError: null, truncated: false, totalNodes: 0, totalEdges: 0 },
       memories: { loaded: false, items: [], search: '', typeFilter: '' },
       timeline: { loaded: false, observations: [], sessions: [], sessionId: '', minImportance: 0, page: 0, pageSize: 50 },
@@ -1255,6 +1256,7 @@
     }
 
     async function api(path, opts) {
+      var requestTimer = null;
       try {
         var url = REST + '/agentmemory/' + path;
         var headers = Object.assign({ 'Cache-Control': 'no-cache' }, (opts && opts.headers) || {});
@@ -1263,18 +1265,29 @@
           headers.Authorization = 'Bearer ' + viewerToken;
         }
         var fetchOpts = Object.assign({}, opts || {}, { headers: headers });
+        var readErrorBody = path === 'health' || !!fetchOpts.readErrorBody;
+        var timeoutMs = Number(fetchOpts.timeoutMs) || 0;
+        delete fetchOpts.readErrorBody;
+        delete fetchOpts.timeoutMs;
+        if (timeoutMs > 0 && !fetchOpts.signal && typeof AbortController === 'function') {
+          var controller = new AbortController();
+          fetchOpts.signal = controller.signal;
+          requestTimer = setTimeout(function() { controller.abort(); }, timeoutMs);
+        }
         var res = await fetch(url, fetchOpts);
         if (!res.ok) {
           if (res.status === 401) showViewerAuthPrompt();
-          // Health uses 503 to report a valid, structured critical snapshot.
-          // Preserve that body so the dashboard renders "critical" instead of
-          // treating an unhealthy service as an unknown network failure.
-          if (path === 'health' && res.status === 503) {
-            var criticalHealth = await res.json();
-            if (criticalHealth && typeof criticalHealth === 'object') {
-              hideViewerAuthPrompt();
-              return criticalHealth;
+          if (!readErrorBody) {
+            console.warn('[viewer] API ' + (fetchOpts.method || 'GET') + ' ' + path + ' returned ' + res.status);
+            return null;
+          }
+          try {
+            var errorBody = await res.json();
+            if (errorBody && typeof errorBody === 'object') {
+              return errorBody;
             }
+          } catch (parseErr) {
+            console.debug('[viewer] API ' + path + ' non-2xx body was not JSON:', parseErr);
           }
           console.warn('[viewer] API ' + (fetchOpts.method || 'GET') + ' ' + path + ' returned ' + res.status);
           return null;
@@ -1284,9 +1297,11 @@
       } catch (err) {
         console.warn('[viewer] API error on ' + path + ':', err);
         return null;
+      } finally {
+        if (requestTimer) clearTimeout(requestTimer);
       }
     }
-    async function apiGet(path) { return api(path); }
+    async function apiGet(path, opts) { return api(path, opts); }
     async function apiPost(path, body) {
       return api(path, {
         method: 'POST',
@@ -1368,53 +1383,101 @@
       }
     }
 
-    async function loadDashboard() {
+    var dashboardLoadPromise = null;
+    function loadDashboard(options) {
+      if (dashboardLoadPromise) return dashboardLoadPromise;
+      options = options || {};
       var el = document.getElementById('view-dashboard');
-      el.innerHTML = '<div class="loading">Loading dashboard...</div>';
-      try {
-        var results = await Promise.all([
-          apiGet('health'),
-          apiGet('sessions?scope=global'),
-          apiGet('memories?latest=true&limit=500&scope=global'),
-          apiGet('graph/stats?scope=global'),
-          apiGet('audit?limit=5&scope=global'),
-          apiGet('semantic?scope=global'),
-          apiGet('procedural?scope=global'),
-          apiGet('relations?scope=global'),
-          apiGet('lessons?scope=global'),
-          apiGet('crystals?scope=global')
-        ]);
-        state.dashboard.health = results[0];
-        state.dashboard.sessions = (results[1] && results[1].sessions) || [];
-        state.dashboard.memories = (results[2] && results[2].memories) || [];
-        state.dashboard.graphStats = results[3];
-        state.dashboard.recentAudit = (results[4] && results[4].entries) || [];
-        state.dashboard.semantic = (results[5] && results[5].facts) || (results[5] && results[5].semantic) || [];
-        state.dashboard.procedural = (results[6] && results[6].procedures) || (results[6] && results[6].procedural) || [];
-        state.dashboard.lessons = (results[8] && results[8].lessons) || [];
-        state.dashboard.crystals = (results[9] && results[9].crystals) || [];
-        state.dashboard.relations = (results[7] && results[7].relations) || [];
-        state.dashboard.loaded = true;
-        renderDashboard();
-      } catch (err) {
-        // Without this catch, any uncaught error in the await Promise.all
-        // or the renderDashboard call leaves the dashboard stuck on
-        // "Loading dashboard..." forever with no indication to the user
-        // (#323). apiGet() already swallows network/HTTP errors and
-        // returns null, but renderDashboard can still throw on shape
-        // surprises (CSP-blocked event handler binding, undefined fields).
-        // Surface the error in the panel + log full detail to console.
-        var msg = (err && err.message) ? err.message : String(err);
-        console.error('[viewer] loadDashboard failed:', err);
-        el.innerHTML =
-          '<div class="loading" style="color:var(--accent);">' +
-          'Dashboard failed to load: ' + msg +
-          '<br><br><span style="font-size:12px;color:var(--ink-muted);">' +
-          'Check the browser console for the full error. If you see CSP ' +
-          'violations, please open an issue with the agentmemory version ' +
-          '(top-right of the viewer) and the violation text.' +
-          '</span></div>';
-      }
+      var background = !!options.background && state.dashboard.loaded;
+      if (!background) el.innerHTML = '<div class="loading">Loading dashboard...</div>';
+      dashboardLoadPromise = (async function() {
+        try {
+          var results = await Promise.all([
+            api('health', { readErrorBody: true, timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('sessions?scope=global&limit=50', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('memories?latest=true&count=true&scope=global', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('graph/stats?scope=global', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('audit?limit=5&scope=global', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('semantic?scope=global&limit=5', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('procedural?scope=global&limit=5', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('relations?scope=global&limit=8', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('lessons?scope=global', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS }),
+            apiGet('crystals?scope=global', { timeoutMs: DASHBOARD_REQUEST_TIMEOUT_MS })
+          ]);
+          var healthResult = results[0];
+          var healthValid = !!(healthResult && (
+            typeof healthResult.status === 'string' ||
+            (healthResult.health && typeof healthResult.health.status === 'string')
+          ));
+          var refreshFailed = !healthValid || results.slice(1).some(function(result) { return result === null; });
+          if (healthValid) {
+            state.dashboard.health = healthResult;
+          } else if (background) {
+            var previousHealth = state.dashboard.health || {};
+            state.dashboard.health = Object.assign({}, previousHealth, {
+              status: 'unavailable',
+              health: Object.assign({}, previousHealth.health || {}, {
+                status: 'unavailable',
+                connectionState: 'unavailable'
+              })
+            });
+          }
+          if (results[1] !== null) {
+            state.dashboard.sessions = (results[1] && results[1].sessions) || [];
+            state.dashboard.sessionTotal = (results[1] && typeof results[1].total === 'number') ? results[1].total : state.dashboard.sessions.length;
+            state.dashboard.activeSessions = (results[1] && typeof results[1].active === 'number') ? results[1].active : state.dashboard.sessions.filter(function(s) { return s.status === 'active'; }).length;
+            state.dashboard.totalObservations = (results[1] && typeof results[1].totalObservations === 'number') ? results[1].totalObservations : state.dashboard.sessions.reduce(function(total, session) { return total + (session.observationCount || 0); }, 0);
+          }
+          if (results[2] !== null) {
+            state.dashboard.memories = (results[2] && results[2].memories) || [];
+            state.dashboard.memoryTotal = (results[2] && typeof results[2].total === 'number') ? results[2].total : state.dashboard.memories.length;
+          }
+          if (results[3] !== null) state.dashboard.graphStats = results[3];
+          if (results[4] !== null) state.dashboard.recentAudit = (results[4] && results[4].entries) || [];
+          if (results[5] !== null) {
+            state.dashboard.semantic = (results[5] && results[5].facts) || (results[5] && results[5].semantic) || [];
+            state.dashboard.semanticTotal = (results[5] && typeof results[5].total === 'number') ? results[5].total : state.dashboard.semantic.length;
+          }
+          if (results[6] !== null) {
+            state.dashboard.procedural = (results[6] && results[6].procedures) || (results[6] && results[6].procedural) || [];
+            state.dashboard.proceduralTotal = (results[6] && typeof results[6].total === 'number') ? results[6].total : state.dashboard.procedural.length;
+          }
+          if (results[8] !== null) state.dashboard.lessons = (results[8] && results[8].lessons) || [];
+          if (results[9] !== null) state.dashboard.crystals = (results[9] && results[9].crystals) || [];
+          if (results[7] !== null) {
+            state.dashboard.relations = (results[7] && results[7].relations) || [];
+            state.dashboard.relationTotal = (results[7] && typeof results[7].total === 'number') ? results[7].total : state.dashboard.relations.length;
+          }
+          state.dashboard.refreshError = refreshFailed ? 'Some dashboard data could not be refreshed. Showing last known values.' : '';
+          state.dashboard.dirty = refreshFailed;
+          state.dashboard.loaded = true;
+          renderDashboard();
+        } catch (err) {
+          // Without this catch, any uncaught error in the await Promise.all
+          // or the renderDashboard call leaves the dashboard stuck on
+          // "Loading dashboard..." forever with no indication to the user
+          // (#323). apiGet() already swallows network/HTTP errors and
+          // returns null, but renderDashboard can still throw on shape
+          // surprises (CSP-blocked event handler binding, undefined fields).
+          // Surface the error in the panel + log full detail to console.
+          var msg = (err && err.message) ? err.message : String(err);
+          console.error('[viewer] loadDashboard failed:', err);
+          if (!state.dashboard.loaded) {
+            el.innerHTML =
+              '<div class="loading" style="color:var(--accent);">' +
+              'Dashboard failed to load: ' + msg +
+              '<br><br><span style="font-size:12px;color:var(--ink-muted);">' +
+              'Check the browser console for the full error. If you see CSP ' +
+              'violations, please open an issue with the agentmemory version ' +
+              '(top-right of the viewer) and the violation text.' +
+              '</span></div>';
+          }
+        }
+      })();
+      dashboardLoadPromise = dashboardLoadPromise.finally(function() {
+        dashboardLoadPromise = null;
+      });
+      return dashboardLoadPromise;
     }
 
     function renderDashboard() {
@@ -1430,7 +1493,9 @@
         : 'incompatible';
       var connectionStatus = snap.connectionState || (d.loaded ? 'unavailable' : 'initializing');
       var dotClass = healthStatus === 'healthy' ? 'healthy' : healthStatus === 'degraded' ? 'degraded' : healthStatus === 'critical' ? 'critical' : '';
-      var activeSessions = d.sessions.filter(function(s) { return s.status === 'active'; }).length;
+      var sessionTotal = typeof d.sessionTotal === 'number' ? d.sessionTotal : d.sessions.length;
+      var activeSessions = typeof d.activeSessions === 'number' ? d.activeSessions : d.sessions.filter(function(s) { return s.status === 'active'; }).length;
+      var memoryTotal = typeof d.memoryTotal === 'number' ? d.memoryTotal : d.memories.length;
       var gs = d.graphStats || {};
       var nodeCount = gs.totalNodes !== undefined ? gs.totalNodes : (gs.nodes !== undefined ? gs.nodes : (gs.nodeCount || 0));
       var edgeCount = gs.totalEdges !== undefined ? gs.totalEdges : (gs.edges !== undefined ? gs.edges : (gs.edgeCount || 0));
@@ -1439,8 +1504,11 @@
       var workers = snap.workers || [];
 
       var html = '';
+      if (d.refreshError) {
+        html += '<div class="card" style="margin-bottom:14px;border-color:var(--yellow);"><div class="card-title" style="color:var(--yellow);">Refresh incomplete</div><div style="font-size:12px;color:var(--ink-muted);">' + esc(d.refreshError) + '</div></div>';
+      }
       // First-run hero: empty dashboard = guided next step
-      if (d.sessions.length === 0) {
+      if (sessionTotal === 0) {
         html += '<div class="card" style="margin-bottom:14px;padding:24px 28px;background:var(--bg-subtle);border-left:3px solid var(--accent);">' +
           '<div style="font-family:var(--font-ui);font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:8px;">First run &rarr; magical moment in 10 seconds</div>' +
           '<div style="font-family:var(--font-display,Lora,Georgia,serif);font-size:22px;font-weight:700;color:var(--ink);margin-bottom:8px;">Seed sample data + prove semantic recall works</div>' +
@@ -1450,8 +1518,8 @@
           '</div>';
       }
       html += '<div class="stats-grid">';
-      html += '<div class="stat-card"><div class="label">Sessions</div><div class="value">' + d.sessions.length + '</div><div class="sub">' + activeSessions + ' active</div></div>';
-      html += '<div class="stat-card"><div class="label">Memories</div><div class="value">' + d.memories.length + '</div><div class="sub">latest versions</div></div>';
+      html += '<div class="stat-card"><div class="label">Sessions</div><div class="value">' + sessionTotal + '</div><div class="sub">' + activeSessions + ' active</div></div>';
+      html += '<div class="stat-card"><div class="label">Memories</div><div class="value">' + memoryTotal + '</div><div class="sub">latest versions</div></div>';
       var lessonCount = (d.lessons || []).length;
       var crystalCount = (d.crystals || []).length;
       html += '<div class="stat-card"><div class="label">Lessons</div><div class="value">' + lessonCount + '</div><div class="sub">confidence-scored</div></div>';
@@ -1466,10 +1534,10 @@
         html += '<div class="stat-card"><div class="label">Circuit Breaker</div><div class="value"><span class="cb-indicator ' + cbClass + '">' + esc(cb.state) + '</span></div>';
         html += '<div class="sub">' + (cb.failures || 0) + ' failures</div></div>';
       }
-      var totalObs = d.sessions.reduce(function(a, s) { return a + (s.observationCount || 0); }, 0);
+      var totalObs = typeof d.totalObservations === 'number' ? d.totalObservations : d.sessions.reduce(function(a, s) { return a + (s.observationCount || 0); }, 0);
       var tokenBudget = parseInt(new URLSearchParams(window.location.search).get('tokenBudget') || '2000', 10) || 2000;
       var estFull = totalObs * 80;
-      var estInjected = d.sessions.length * tokenBudget;
+      var estInjected = sessionTotal * tokenBudget;
       var savings = estFull > 0 ? Math.round((1 - estInjected / Math.max(estFull, 1)) * 100) : 0;
       if (savings < 0) savings = 0;
       var tokensSaved = Math.max(0, estFull - estInjected);
@@ -1612,6 +1680,9 @@
       var semFacts = d.semantic || [];
       var procItems = d.procedural || [];
       var relItems = d.relations || [];
+      var semanticTotal = typeof d.semanticTotal === 'number' ? d.semanticTotal : semFacts.length;
+      var proceduralTotal = typeof d.proceduralTotal === 'number' ? d.proceduralTotal : procItems.length;
+      var relationTotal = typeof d.relationTotal === 'number' ? d.relationTotal : relItems.length;
 
       html += '<hr class="section-rule">';
       html += '<div class="two-col">';
@@ -1657,9 +1728,9 @@
       html += '</div>';
 
       html += '<div class="card" style="margin-top:16px;"><div class="card-title">Consolidation Status</div>';
-      html += '<div class="consolidation-row"><span class="cl">Semantic facts</span><span class="cv">' + semFacts.length + '</span></div>';
-      html += '<div class="consolidation-row"><span class="cl">Procedures</span><span class="cv">' + procItems.length + '</span></div>';
-      html += '<div class="consolidation-row"><span class="cl">Relations</span><span class="cv">' + relItems.length + '</span></div>';
+      html += '<div class="consolidation-row"><span class="cl">Semantic facts</span><span class="cv">' + semanticTotal + '</span></div>';
+      html += '<div class="consolidation-row"><span class="cl">Procedures</span><span class="cv">' + proceduralTotal + '</span></div>';
+      html += '<div class="consolidation-row"><span class="cl">Relations</span><span class="cv">' + relationTotal + '</span></div>';
       html += '</div>';
 
       if (relItems.length > 0) {
@@ -1684,8 +1755,7 @@
 
     var dashboardTimer = null;
     function refreshDashboard() {
-      state.dashboard.loaded = false;
-      loadDashboard();
+      return loadDashboard({ background: state.dashboard.loaded });
     }
     function startDashboardAutoRefresh() {
       if (dashboardTimer) clearInterval(dashboardTimer);
@@ -2421,24 +2491,35 @@
       }
     }
 
-    async function loadMemories() {
+    var memoriesLoading = false;
+    async function loadMemories(options) {
+      if (memoriesLoading) return;
+      memoriesLoading = true;
+      options = options || {};
       var el = document.getElementById('view-memories');
-      el.innerHTML = '<div class="loading">Loading memories...</div>';
-      // cap at 2000 so the viewer remains responsive on large
-      // corpora. Older endpoints returned the full unbounded list which
-      // hit the iii invocation timeout and the UI fell through to 0.
-      var result = await apiGet('memories?latest=true&limit=2000&scope=global');
-      var items = (result && result.memories) || [];
-      // Newest first — server returns KV-insertion order.
-      items.sort(function(a, b) {
-        var ac = (a && a.createdAt) || (a && a.updatedAt) || '';
-        var bc = (b && b.createdAt) || (b && b.updatedAt) || '';
-        return bc.localeCompare(ac);
-      });
-      state.memories.items = items;
-      state.memories.total = (result && typeof result.total === 'number') ? result.total : items.length;
-      state.memories.loaded = true;
-      renderMemories();
+      if (!options.background || !state.memories.loaded) {
+        el.innerHTML = '<div class="loading">Loading memories...</div>';
+      }
+      try {
+        // cap at 2000 so the viewer remains responsive on large
+        // corpora. Older endpoints returned the full unbounded list which
+        // hit the iii invocation timeout and the UI fell through to 0.
+        var result = await apiGet('memories?latest=true&limit=2000&scope=global');
+        if (options.background && result === null) return;
+        var items = (result && result.memories) || [];
+        // Newest first — server returns KV-insertion order.
+        items.sort(function(a, b) {
+          var ac = (a && a.createdAt) || (a && a.updatedAt) || '';
+          var bc = (b && b.createdAt) || (b && b.updatedAt) || '';
+          return bc.localeCompare(ac);
+        });
+        state.memories.items = items;
+        state.memories.total = (result && typeof result.total === 'number') ? result.total : items.length;
+        state.memories.loaded = true;
+        renderMemories();
+      } finally {
+        memoriesLoading = false;
+      }
     }
 
     function renderMemories() {
@@ -2798,32 +2879,43 @@
       renderObservations();
     }
 
-    async function loadActivity() {
+    var activityLoading = false;
+    async function loadActivity(options) {
+      if (activityLoading) return;
+      activityLoading = true;
+      options = options || {};
       var el = document.getElementById('view-activity');
-      el.innerHTML = '<div class="loading">Loading activity...</div>';
-      var results = await Promise.all([
-        apiGet('sessions?scope=global'),
-        apiGet('audit?limit=200&scope=global')
-      ]);
-      var sessions = (results[0] && results[0].sessions) || [];
-      var auditEntries = (results[1] && results[1].entries) || [];
+      if (!options.background || !state.activity.loaded) {
+        el.innerHTML = '<div class="loading">Loading activity...</div>';
+      }
+      try {
+        var results = await Promise.all([
+          apiGet('sessions?scope=global&limit=50'),
+          apiGet('audit?limit=200&scope=global')
+        ]);
+        if (options.background && (results[0] === null || results[1] === null)) return;
+        var sessions = (results[0] && results[0].sessions) || [];
+        var auditEntries = (results[1] && results[1].entries) || [];
 
-      var allObs = [];
-      var sorted = sessions.slice().sort(function(a, b) { return (b.startedAt || '').localeCompare(a.startedAt || ''); });
-      var recentSessions = sorted.slice(0, 5);
+        var allObs = [];
+        var sorted = sessions.slice().sort(function(a, b) { return (b.startedAt || '').localeCompare(a.startedAt || ''); });
+        var recentSessions = sorted.slice(0, 5);
 
-      var obsResults = await Promise.all(recentSessions.filter(function(s) { return sessionId(s); }).map(function(s) {
-        return apiGet('observations?sessionId=' + encodeURIComponent(sessionId(s)) + '&project=' + encodeURIComponent(s.project || ''));
-      }));
-      obsResults.forEach(function(r) {
-        if (r && r.observations) allObs = allObs.concat(r.observations);
-      });
+        var obsResults = await Promise.all(recentSessions.filter(function(s) { return sessionId(s); }).map(function(s) {
+          return apiGet('observations?sessionId=' + encodeURIComponent(sessionId(s)) + '&project=' + encodeURIComponent(s.project || ''));
+        }));
+        obsResults.forEach(function(r) {
+          if (r && r.observations) allObs = allObs.concat(r.observations);
+        });
 
-      state.activity.sessions = sessions;
-      state.activity.observations = allObs;
-      state.activity.audit = auditEntries;
-      state.activity.loaded = true;
-      renderActivity();
+        state.activity.sessions = sessions;
+        state.activity.observations = allObs;
+        state.activity.audit = auditEntries;
+        state.activity.loaded = true;
+        renderActivity();
+      } finally {
+        activityLoading = false;
+      }
     }
 
     function renderActivity() {
@@ -2935,13 +3027,24 @@
       el.innerHTML = html;
     }
 
-    async function loadSessions() {
+    var sessionsLoading = false;
+    async function loadSessions(options) {
+      if (sessionsLoading) return;
+      sessionsLoading = true;
+      options = options || {};
       var el = document.getElementById('view-sessions');
-      el.innerHTML = '<div class="loading">Loading sessions...</div>';
-      var result = await apiGet('sessions?scope=global');
-      state.sessions.items = (result && result.sessions) || [];
-      state.sessions.loaded = true;
-      renderSessions();
+      if (!options.background || !state.sessions.loaded) {
+        el.innerHTML = '<div class="loading">Loading sessions...</div>';
+      }
+      try {
+        var result = await apiGet('sessions?scope=global');
+        if (options.background && result === null) return;
+        state.sessions.items = (result && result.sessions) || [];
+        state.sessions.loaded = true;
+        renderSessions();
+      } finally {
+        sessionsLoading = false;
+      }
     }
 
     function renderSessions() {
@@ -3549,7 +3652,7 @@
     var directFailures = 0;
     var DIRECT_FAILURE_THRESHOLD = 2;
     var pollTimer = null;
-    var POLL_INTERVAL_MS = 10000;
+    var POLL_INTERVAL_MS = 30000;
 
     function setWsStatus(text, cls) {
       var el = document.getElementById('ws-status');
@@ -3567,17 +3670,13 @@
       pollTimer = setInterval(function() {
         tick++;
         if (state.activeTab === 'dashboard') {
-          state.dashboard.loaded = false;
-          loadDashboard();
+          loadDashboard({ background: state.dashboard.loaded });
         } else if (state.activeTab === 'memories') {
-          state.memories.loaded = false;
-          loadMemories();
+          loadMemories({ background: state.memories.loaded });
         } else if (state.activeTab === 'sessions') {
-          state.sessions.loaded = false;
-          loadSessions();
+          loadSessions({ background: state.sessions.loaded });
         } else if (state.activeTab === 'activity') {
-          state.activity.loaded = false;
-          loadActivity();
+          loadActivity({ background: state.activity.loaded });
         }
         if (tick % WS_REPROBE_EVERY_TICKS === 0) {
           var ws = state.ws;
@@ -3732,8 +3831,11 @@
         }
       }
       if (state.activeTab === 'dashboard') {
-        state.dashboard.loaded = false;
-        loadDashboard();
+        // The dashboard declares a 30-second refresh cadence. Live events are
+        // reflected immediately in timeline/activity views; reloading all ten
+        // dashboard endpoints per observation caused request storms and blank
+        // frames during active coding sessions.
+        state.dashboard.dirty = true;
       }
       if (state.activeTab === 'activity' && msg.observation) {
         state.activity.observations.unshift(msg.observation);

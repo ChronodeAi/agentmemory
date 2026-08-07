@@ -124,6 +124,45 @@ describe("Relations Functions", () => {
       const updated1 = await kv.get<Memory>("mem:memories", "mem_1");
       expect(updated1!.relatedIds!.filter((id) => id === "mem_2").length).toBe(1);
     });
+
+    it("rejects cross-project relations and records project identity", async () => {
+      await kv.set(
+        "mem:memories",
+        "mem_a1",
+        makeMemory({ id: "mem_a1", project: "project-a" }),
+      );
+      await kv.set(
+        "mem:memories",
+        "mem_a2",
+        makeMemory({ id: "mem_a2", project: "project-a" }),
+      );
+      await kv.set(
+        "mem:memories",
+        "mem_b1",
+        makeMemory({ id: "mem_b1", project: "project-b" }),
+      );
+
+      const accepted = (await sdk.trigger("mem::relate", {
+        sourceId: "mem_a1",
+        targetId: "mem_a2",
+        type: "related",
+      })) as { success: boolean; relation: { project?: string } };
+      expect(accepted).toMatchObject({
+        success: true,
+        relation: { project: "project-a" },
+      });
+
+      await expect(
+        sdk.trigger("mem::relate", {
+          sourceId: "mem_a1",
+          targetId: "mem_b1",
+          type: "related",
+        }),
+      ).resolves.toMatchObject({
+        success: false,
+        error: "source and target memories must belong to the same project",
+      });
+    });
   });
 
   describe("mem::evolve", () => {

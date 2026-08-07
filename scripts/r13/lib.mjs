@@ -69,6 +69,15 @@ export function processTreeRss(rows, roots) {
   return processTreeMetrics(rows, roots).rssBytes;
 }
 
+export function processExitDiagnostic(child, stdoutPath, stderrPath) {
+  if (!child || (child.exitCode === null && child.signalCode === null)) {
+    return null;
+  }
+  const exitCode = child.exitCode === null ? "null" : String(child.exitCode);
+  const signal = child.signalCode ?? "none";
+  return `Agentmemory exited before becoming live (exit_code=${exitCode}, signal=${signal}); diagnostics: stdout=${stdoutPath}, stderr=${stderrPath}`;
+}
+
 function exited(child) {
   return !child || child.exitCode !== null || child.signalCode !== null;
 }

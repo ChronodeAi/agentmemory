@@ -13,6 +13,7 @@ import test from "node:test";
 import {
   isAcceptedNode,
   normalizeTestPath,
+  processExitDiagnostic,
   processTreeMetrics,
   processTreeRss,
   sha256,
@@ -137,6 +138,21 @@ test("hashing is stable", () => {
     sha256("agentmemory"),
     "94fc11d980ea813257a38b4b8b64e175fe7a97cacaf24c96854345703378ec77",
   );
+});
+
+test("reports an early service exit without embedding raw output", () => {
+  const active = { exitCode: null, signalCode: null };
+  assert.equal(processExitDiagnostic(active, "/tmp/stdout", "/tmp/stderr"), null);
+
+  const exited = { exitCode: 1, signalCode: null, stderr: "secret-value" };
+  const diagnostic = processExitDiagnostic(
+    exited,
+    "/tmp/stdout",
+    "/tmp/stderr",
+  );
+  assert.match(diagnostic, /exit_code=1, signal=none/);
+  assert.match(diagnostic, /stdout=\/tmp\/stdout, stderr=\/tmp\/stderr/);
+  assert.doesNotMatch(diagnostic, /secret-value/);
 });
 
 test("escalates to SIGKILL when a process ignores SIGTERM", async () => {

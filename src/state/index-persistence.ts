@@ -5,7 +5,7 @@ import { KV, generateId } from "./schema.js";
 import { logger } from "../logger.js";
 import { safeAudit } from "../functions/audit.js";
 
-const DEBOUNCE_MS = 5000;
+const DEFAULT_DEBOUNCE_MS = 30_000;
 const FAILURE_LOG_THROTTLE_MS = 60_000;
 const INDEX_PERSISTENCE_FUNCTION_ID = "mem::index-persistence";
 const BM25_KEY = "data";
@@ -31,7 +31,17 @@ type IndexShardManifest = IndexShardGeneration & {
 type IndexPersistenceOptions = {
   shardChars?: number;
   createGeneration?: () => string;
+  debounceMs?: number;
 };
+
+function debounceMs(options: IndexPersistenceOptions): number {
+  const configured = options.debounceMs;
+  if (typeof configured !== "number" || !Number.isFinite(configured)) {
+    return DEFAULT_DEBOUNCE_MS;
+  }
+  const wholeMs = Math.floor(configured);
+  return wholeMs >= 1 ? wholeMs : DEFAULT_DEBOUNCE_MS;
+}
 
 function shardChars(options: IndexPersistenceOptions): number {
   const configured = options.shardChars;
@@ -95,7 +105,7 @@ export class IndexPersistence {
     // rejections through logFailure() instead.
     this.timer = setTimeout(() => {
       this.save().catch((err) => this.logFailure(err));
-    }, DEBOUNCE_MS);
+    }, debounceMs(this.options));
   }
 
   cancelScheduledSave(): void {

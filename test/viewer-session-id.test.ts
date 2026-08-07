@@ -166,7 +166,7 @@ function loadViewerSandbox() {
   };
 
   const scriptWithoutAutoStart = scriptMatch[1].replace(
-    /\n\s*loadTab\('dashboard'\);\n\s*connectWs\(\);\n\s*startDashboardAutoRefresh\(\);\s*$/,
+    /\n\s*(?:loadTab\('dashboard'\)|switchTab\(tabFromRoute\(\), \{ replaceRoute: true \}\));\n\s*connectWs\(\);\n\s*startDashboardAutoRefresh\(\);\s*$/,
     "\n",
   );
 
@@ -274,7 +274,19 @@ describe("viewer session rendering", () => {
     await sandbox.loadDashboard();
 
     expect(requests).toContain(
-      "http://localhost:3113/agentmemory/sessions?scope=global",
+      "http://localhost:3113/agentmemory/sessions?scope=global&limit=50",
+    );
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/memories?latest=true&count=true&scope=global",
+    );
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/semantic?scope=global&limit=5",
+    );
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/procedural?scope=global&limit=5",
+    );
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/relations?scope=global&limit=8",
     );
     expect(requests).toContain(
       "http://localhost:3113/agentmemory/lessons?scope=global",
@@ -285,6 +297,117 @@ describe("viewer session rendering", () => {
     expect(requests).not.toContain(
       "http://localhost:3113/agentmemory/sessions",
     );
+  });
+
+  it("keeps the rendered dashboard visible and coalesces overlapping refreshes", async () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    const dashboard = getElement("view-dashboard");
+    dashboard.innerHTML = "stable dashboard";
+    sandbox.state.dashboard.loaded = true;
+    let releaseFetch!: () => void;
+    const fetchGate = new Promise<void>((resolve) => {
+      releaseFetch = resolve;
+    });
+    let requestCount = 0;
+    sandbox.fetch = async () => {
+      requestCount += 1;
+      await fetchGate;
+      return { ok: true, json: async () => ({}) };
+    };
+
+    const first = sandbox.refreshDashboard();
+    const second = sandbox.refreshDashboard();
+
+    expect(first).toBe(second);
+    expect(requestCount).toBe(10);
+    expect(dashboard.innerHTML).toBe("stable dashboard");
+
+    releaseFetch();
+    await Promise.all([first, second]);
+    expect(dashboard.innerHTML).not.toContain("Loading dashboard");
+  });
+
+  it("retains last-known-good data but marks failed background health unavailable", async () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    sandbox.state.dashboard = {
+      loaded: true,
+      dirty: false,
+      refreshError: "",
+      health: {
+        status: "healthy",
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+        health: { status: "healthy", connectionState: "connected" },
+      },
+      sessions: [{ id: "session-1", status: "completed", observationCount: 4 }],
+      sessionTotal: 7,
+      activeSessions: 1,
+      totalObservations: 42,
+      memories: [{ id: "memory-1" }],
+      memoryTotal: 3,
+      graphStats: { totalNodes: 2, totalEdges: 1 },
+      recentAudit: [],
+      lessons: [],
+      crystals: [],
+    };
+    sandbox.fetch = async () => ({
+      ok: false,
+      status: 500,
+      json: async () => ({ error: "synthetic background failure" }),
+    });
+
+    await sandbox.refreshDashboard();
+
+    expect(sandbox.state.dashboard.sessions).toHaveLength(1);
+    expect(sandbox.state.dashboard.sessionTotal).toBe(7);
+    expect(sandbox.state.dashboard.totalObservations).toBe(42);
+    expect(sandbox.state.dashboard.memories).toHaveLength(1);
+    expect(sandbox.state.dashboard.memoryTotal).toBe(3);
+    expect(sandbox.state.dashboard.graphStats).toEqual({
+      totalNodes: 2,
+      totalEdges: 1,
+    });
+    expect(sandbox.state.dashboard.health.status).toBe("unavailable");
+    expect(sandbox.state.dashboard.health.health.status).toBe("unavailable");
+    expect(sandbox.state.dashboard.health.health.connectionState).toBe(
+      "unavailable",
+    );
+    expect(sandbox.state.dashboard.dirty).toBe(true);
+    expect(sandbox.state.dashboard.refreshError).toContain(
+      "Showing last known values",
+    );
+    expect(getElement("view-dashboard").innerHTML).toContain(
+      "Refresh incomplete",
+    );
+    expect(getElement("view-dashboard").innerHTML).toContain("unavailable");
+  });
+
+  it("does not reload the aggregate dashboard for each live observation", () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    const dashboard = getElement("view-dashboard");
+    dashboard.innerHTML = "stable dashboard";
+    sandbox.state.activeTab = "dashboard";
+    sandbox.state.dashboard.loaded = true;
+    let requestCount = 0;
+    sandbox.fetch = async () => {
+      requestCount += 1;
+      return { ok: true, json: async () => ({}) };
+    };
+
+    sandbox.routeWsMessage({
+      observation: {
+        id: "obs-1",
+        sessionId: "session-1",
+        timestamp: "2026-08-06T00:00:00.000Z",
+      },
+    });
+
+    expect(requestCount).toBe(0);
+    expect(dashboard.innerHTML).toBe("stable dashboard");
+    expect(sandbox.state.dashboard.dirty).toBe(true);
+    expect(sandbox.POLL_INTERVAL_MS).toBe(30_000);
   });
 
   it("falls back to nested health and reports failed health as unavailable", () => {

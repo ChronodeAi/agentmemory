@@ -6,6 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.28-chronode.1] - 2026-08-06
+
+Chronode fork prerelease based on upstream v0.9.28. This build gives the fork
+an explicit runtime and package identity, enforces project scope on legacy REST
+memory and replay reads, rejects cross-project memory relations, reduces viewer
+request amplification, and hardens health/index persistence under large local
+corpora. It is a local canary build, not an upstream Agentmemory release.
+
 ## [0.9.28] — 2026-07-19
 
 Patch release: hardens the hook runner against malformed payloads and closes a cross-agent context leak. No breaking changes; drop-in upgrade.

@@ -284,8 +284,8 @@ describe("agentmemory integration", () => {
 
   describe("dashboard list endpoints", () => {
     it("GET /semantic returns { semantic: [...] }", async () => {
-      const res = await fetch(url("/agentmemory/semantic"), {
-        headers: SECRET ? authHeaders() : undefined,
+      const res = await fetch(url(`/agentmemory/semantic?project=${encodeURIComponent(PROJECT)}`), {
+        headers: authHeaders(PROJECT),
       });
       expect(res.status).toBe(200);
       const body = (await json(res)) as { semantic: unknown[] };
@@ -293,8 +293,8 @@ describe("agentmemory integration", () => {
     });
 
     it("GET /procedural returns { procedural: [...] }", async () => {
-      const res = await fetch(url("/agentmemory/procedural"), {
-        headers: SECRET ? authHeaders() : undefined,
+      const res = await fetch(url(`/agentmemory/procedural?project=${encodeURIComponent(PROJECT)}`), {
+        headers: authHeaders(PROJECT),
       });
       expect(res.status).toBe(200);
       const body = (await json(res)) as { procedural: unknown[] };
@@ -302,8 +302,8 @@ describe("agentmemory integration", () => {
     });
 
     it("GET /relations returns { relations: [...] }", async () => {
-      const res = await fetch(url("/agentmemory/relations"), {
-        headers: SECRET ? authHeaders() : undefined,
+      const res = await fetch(url(`/agentmemory/relations?project=${encodeURIComponent(PROJECT)}`), {
+        headers: authHeaders(PROJECT),
       });
       expect(res.status).toBe(200);
       const body = (await json(res)) as { relations: unknown[] };

@@ -135,12 +135,38 @@ export function evaluateHealth(
     degraded = true;
   }
 
+  const admissionForCpu = snapshot.captureAdmission;
+  const captureRatio = admissionForCpu && admissionForCpu.limit > 0
+    ? admissionForCpu.active / admissionForCpu.limit
+    : 0;
+  const captureFailures =
+    (admissionForCpu?.rejectedSinceLastCollection ?? 0) > 0 ||
+    (admissionForCpu?.failedSinceLastCollection ?? 0) > 0;
+  const cpuPressureSignal =
+    snapshot.eventLoopLagMs > cfg.eventLoopLagWarnMs ||
+    captureRatio >= 0.9 ||
+    captureFailures;
+  const cpuCriticalSignal =
+    snapshot.eventLoopLagMs > cfg.eventLoopLagCriticalMs ||
+    captureRatio >= 1;
   if (snapshot.cpu.percent > cfg.cpuCriticalPercent) {
-    alerts.push(`cpu_critical_${Math.round(snapshot.cpu.percent)}%`);
-    critical = true;
+    if (cpuCriticalSignal) {
+      alerts.push(`cpu_critical_${Math.round(snapshot.cpu.percent)}%`);
+      critical = true;
+    } else if (cpuPressureSignal) {
+      alerts.push(`cpu_warn_${Math.round(snapshot.cpu.percent)}%`);
+      degraded = true;
+    } else {
+      alerts.push(`cpu_warn_${Math.round(snapshot.cpu.percent)}%`);
+      degraded = true;
+    }
   } else if (snapshot.cpu.percent > cfg.cpuWarnPercent) {
-    alerts.push(`cpu_warn_${Math.round(snapshot.cpu.percent)}%`);
-    degraded = true;
+    if (cpuPressureSignal) {
+      alerts.push(`cpu_warn_${Math.round(snapshot.cpu.percent)}%`);
+      degraded = true;
+    } else {
+      notes.push(`cpu_busy_${Math.round(snapshot.cpu.percent)}%`);
+    }
   }
 
   const memPercent =
@@ -184,7 +210,7 @@ export function evaluateHealth(
     degraded = true;
   }
 
-  const admission = snapshot.captureAdmission;
+  const admission = admissionForCpu;
   if (admission) {
     if (admission.limit > 0 && admission.active >= admission.limit) {
       alerts.push("capture_capacity_exhausted");

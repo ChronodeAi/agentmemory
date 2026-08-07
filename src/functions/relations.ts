@@ -57,6 +57,12 @@ export function registerRelationsFunction(sdk: ISdk, kv: StateKV): void {
             error: "source or target memory not found",
           };
         }
+        if (source.project !== target.project) {
+          return {
+            success: false,
+            error: "source and target memories must belong to the same project",
+          };
+        }
 
         const confidence =
           data.confidence !== undefined
@@ -69,6 +75,7 @@ export function registerRelationsFunction(sdk: ISdk, kv: StateKV): void {
           targetId: data.targetId,
           createdAt: new Date().toISOString(),
           confidence,
+          project: source.project,
         };
 
         const relationId = generateId("rel");
@@ -174,6 +181,7 @@ export function registerRelationsFunction(sdk: ISdk, kv: StateKV): void {
         targetId: existing.id,
         createdAt: now,
         confidence: 1.0,
+        project: existing.project,
       };
       const relationId = generateId("rel");
       await kv.set(KV.relations, relationId, relation);

@@ -28,7 +28,11 @@ import {
   closeStaleSessions,
   startOrResumeSession,
 } from "../functions/session-lifecycle.js";
-import { requireProjectReadScope } from "../project-scope.js";
+import {
+  filterRecordsByProject,
+  recordMatchesProject,
+  requireProjectReadScope,
+} from "../project-scope.js";
 import {
   isGraphExtractionEnabled,
   isConsolidationEnabled,
@@ -302,6 +306,33 @@ export function registerApiTriggers(
           status_code: decision.statusCode,
           body: { error: decision.error },
         };
+  };
+  const queryReadScope = (
+    req: ApiRequest,
+    operation: string,
+  ):
+    | { scope: ReturnType<typeof requireProjectReadScope>; error?: never }
+    | { scope?: never; error: Response } => {
+    try {
+      return {
+        scope: requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          operation,
+        ),
+      };
+    } catch (error) {
+      return {
+        error: {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        },
+      };
+    }
   };
 
   sdk.registerFunction(
@@ -1048,9 +1079,15 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const scopeResult = queryReadScope(req, "api::replay::load");
+      if (scopeResult.error) return scopeResult.error;
       const sessionId = asNonEmptyString(req.query_params?.["sessionId"]);
       if (!sessionId) {
         return { status_code: 400, body: { error: "sessionId is required" } };
+      }
+      const session = await kv.get<Session>(KV.sessions, sessionId);
+      if (!session || !recordMatchesProject(session.project, scopeResult.scope)) {
+        return { status_code: 404, body: { error: "session not found for project" } };
       }
       const result = await sdk.trigger({
         function_id: "mem::replay::load",
@@ -1069,7 +1106,12 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const sessions = await kv.list<Session>(KV.sessions);
+      const scopeResult = queryReadScope(req, "api::replay::sessions");
+      if (scopeResult.error) return scopeResult.error;
+      const sessions = filterRecordsByProject(
+        await kv.list<Session>(KV.sessions),
+        scopeResult.scope,
+      );
       sessions.sort((a, b) =>
         (b.startedAt || "").localeCompare(a.startedAt || ""),
       );
@@ -1544,15 +1586,41 @@ export function registerApiTriggers(
       const filtered = filterAgentId
         ? sessions.filter((s) => s.agentId === filterAgentId)
         : sessions;
+      const total = filtered.length;
+      const active = filtered.filter((session) => session.status === "active").length;
+      const totalObservations = filtered.reduce(
+        (sum, session) => sum + (session.observationCount ?? 0),
+        0,
+      );
+      const requestedLimit = parseOptionalPositiveInt(
+        req.query_params?.["limit"],
+      );
+      if (requestedLimit === null) {
+        return {
+          status_code: 400,
+          body: { error: "limit must be a positive integer" },
+        };
+      }
+      const selected = requestedLimit === undefined
+        ? filtered
+        : filtered
+            .slice()
+            .sort((a, b) =>
+              (b.startedAt ?? "").localeCompare(a.startedAt ?? ""),
+            )
+            .slice(0, Math.min(2_000, requestedLimit));
       const summaries = await Promise.all(
-        filtered.map((s) =>
+        selected.map((s) =>
           kv.get<SessionSummary>(KV.summaries, s.id).catch(() => null),
         ),
       );
-      const withSummary = filtered.map((s, i) =>
+      const withSummary = selected.map((s, i) =>
         summaries[i] ? { ...s, summary: summaries[i] } : s,
       );
-      return { status_code: 200, body: { sessions: withSummary } };
+      return {
+        status_code: 200,
+        body: { sessions: withSummary, total, active, totalObservations },
+      };
     },
   );
   registerApiTrigger({
@@ -2875,7 +2943,12 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const memories = await kv.list<import("../types.js").Memory>(KV.memories);
+      const scopeResult = queryReadScope(req, "api::memories");
+      if (scopeResult.error) return scopeResult.error;
+      const memories = filterRecordsByProject(
+        await kv.list<import("../types.js").Memory>(KV.memories),
+        scopeResult.scope,
+      );
       const latest = req.query_params?.["latest"] === "true";
       // agentId filter. Request param wins, env AGENT_ID (when
       // scope=isolated) is the fallback. Shared mode keeps the tag but
@@ -2959,12 +3032,14 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const scopeResult = queryReadScope(req, "api::memory-by-id");
+      if (scopeResult.error) return scopeResult.error;
       const id = req.path_params?.["id"];
       if (!id || typeof id !== "string") {
         return { status_code: 400, body: { error: "id path parameter is required" } };
       }
       const memory = await kv.get<import("../types.js").Memory>(KV.memories, id);
-      if (!memory) {
+      if (!memory || !recordMatchesProject(memory.project, scopeResult.scope)) {
         return { status_code: 404, body: { error: `memory not found: ${id}` } };
       }
       return { status_code: 200, body: { memory } };
@@ -2980,8 +3055,23 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const semantic = await kv.list<import("../types.js").SemanticMemory>(KV.semantic);
-      return { status_code: 200, body: { semantic } };
+      const scopeResult = queryReadScope(req, "api::semantic-list");
+      if (scopeResult.error) return scopeResult.error;
+      const semantic = filterRecordsByProject(
+        await kv.list<import("../types.js").SemanticMemory>(KV.semantic),
+        scopeResult.scope,
+      );
+      const limit = parseOptionalPositiveInt(req.query_params?.["limit"]);
+      if (limit === null) {
+        return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      }
+      return {
+        status_code: 200,
+        body: {
+          semantic: limit === undefined ? semantic : semantic.slice(0, Math.min(5_000, limit)),
+          total: semantic.length,
+        },
+      };
     },
   );
   registerApiTrigger({
@@ -2994,8 +3084,23 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const procedural = await kv.list<import("../types.js").ProceduralMemory>(KV.procedural);
-      return { status_code: 200, body: { procedural } };
+      const scopeResult = queryReadScope(req, "api::procedural-list");
+      if (scopeResult.error) return scopeResult.error;
+      const procedural = filterRecordsByProject(
+        await kv.list<import("../types.js").ProceduralMemory>(KV.procedural),
+        scopeResult.scope,
+      );
+      const limit = parseOptionalPositiveInt(req.query_params?.["limit"]);
+      if (limit === null) {
+        return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      }
+      return {
+        status_code: 200,
+        body: {
+          procedural: limit === undefined ? procedural : procedural.slice(0, Math.min(5_000, limit)),
+          total: procedural.length,
+        },
+      };
     },
   );
   registerApiTrigger({
@@ -3008,8 +3113,40 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const relations = await kv.list<import("../types.js").MemoryRelation>(KV.relations);
-      return { status_code: 200, body: { relations } };
+      const scopeResult = queryReadScope(req, "api::relations-list");
+      if (scopeResult.error) return scopeResult.error;
+      const allRelations = await kv.list<import("../types.js").MemoryRelation>(KV.relations);
+      let relations = allRelations;
+      if (scopeResult.scope.kind === "project") {
+        const [memories, semantic, procedural] = await Promise.all([
+          kv.list<import("../types.js").Memory>(KV.memories),
+          kv.list<import("../types.js").SemanticMemory>(KV.semantic),
+          kv.list<import("../types.js").ProceduralMemory>(KV.procedural),
+        ]);
+        const projectRecordIds = new Set([
+          ...filterRecordsByProject(memories, scopeResult.scope).map(({ id }) => id),
+          ...filterRecordsByProject(semantic, scopeResult.scope).map(({ id }) => id),
+          ...filterRecordsByProject(procedural, scopeResult.scope).map(({ id }) => id),
+        ]);
+        relations = allRelations.filter(
+          (relation) =>
+            relation.project === scopeResult.scope.project ||
+            (relation.project === undefined &&
+              projectRecordIds.has(relation.sourceId) &&
+              projectRecordIds.has(relation.targetId)),
+        );
+      }
+      const limit = parseOptionalPositiveInt(req.query_params?.["limit"]);
+      if (limit === null) {
+        return { status_code: 400, body: { error: "limit must be a positive integer" } };
+      }
+      return {
+        status_code: 200,
+        body: {
+          relations: limit === undefined ? relations : relations.slice(0, Math.min(5_000, limit)),
+          total: relations.length,
+        },
+      };
     },
   );
   registerApiTrigger({

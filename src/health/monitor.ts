@@ -17,6 +17,26 @@ interface HealthMonitorOptions {
   getSearchIndexStatus?: () => NonNullable<HealthSnapshot["searchIndex"]>;
 }
 
+function compactWorker(
+  worker: unknown,
+  index: number,
+): HealthSnapshot["workers"][number] {
+  const record = worker && typeof worker === "object"
+    ? worker as Record<string, unknown>
+    : {};
+  const rawId = record.id ?? record.workerId ?? record.worker_id;
+  const id = typeof rawId === "string" && rawId.length > 0
+    ? rawId
+    : `worker-${index + 1}`;
+  const name = typeof record.name === "string" && record.name.length > 0
+    ? record.name
+    : id;
+  const status = typeof record.status === "string" && record.status.length > 0
+    ? record.status
+    : "unknown";
+  return { id, name, status };
+}
+
 function criticalCollectionSnapshot(error: string): HealthSnapshot {
   const now = Date.now();
   const mem = process.memoryUsage();
@@ -56,6 +76,7 @@ export function registerHealthMonitor(
   let recovering = false;
   let previousRejected = 0;
   let previousFailed = 0;
+  let collectionInFlight: Promise<HealthSnapshot> | null = null;
 
   const eventSdk = sdk as ISdk & {
     on?: (event: string, listener: (state?: unknown) => void) => void;
@@ -66,7 +87,7 @@ export function registerHealthMonitor(
     });
   }
 
-  async function collectHealth(): Promise<HealthSnapshot> {
+  async function collectHealthOnce(): Promise<HealthSnapshot> {
     const mem = process.memoryUsage();
     const currentCpu = process.cpuUsage();
     const now = Date.now();
@@ -89,14 +110,14 @@ export function registerHealthMonitor(
     try {
       const result = await sdk.trigger<
         unknown,
-        { workers?: HealthSnapshot["workers"] }
+        { workers?: unknown }
       >({ function_id: "engine::workers::list", payload: {} });
       if (!Array.isArray(result?.workers)) {
         workerProbeStatus = "invalid";
       } else if (result.workers.length === 0) {
         workerProbeStatus = "empty";
       } else {
-        workers = result.workers;
+        workers = result.workers.map(compactWorker);
       }
     } catch {
       workerProbeStatus = "error";
@@ -217,6 +238,15 @@ export function registerHealthMonitor(
     }
     latestInMemoryHealth = snapshot;
     return snapshot;
+  }
+
+  function collectHealth(): Promise<HealthSnapshot> {
+    if (collectionInFlight) return collectionInFlight;
+    const current = collectHealthOnce().finally(() => {
+      if (collectionInFlight === current) collectionInFlight = null;
+    });
+    collectionInFlight = current;
+    return current;
   }
 
   const recordCollectionFailure = (error: unknown): void => {

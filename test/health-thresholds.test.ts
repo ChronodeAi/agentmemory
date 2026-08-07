@@ -61,6 +61,40 @@ describe("evaluateHealth memory severity", () => {
     expect(healthStatusAllowsDoctor("unknown", [])).toBe(false);
   });
 
+  it("reports CPU above the critical threshold as degraded even when responsive", () => {
+    const evaluated = evaluateHealth(
+      snap({ cpu: { userMicros: 1, systemMicros: 1, percent: 98 } }),
+    );
+    expect(evaluated.status).toBe("degraded");
+    expect(evaluated.alerts).toContain("cpu_warn_98%");
+    expect(evaluated.notes).toEqual([]);
+  });
+
+  it("keeps responsive CPU in the warning band advisory", () => {
+    const evaluated = evaluateHealth(
+      snap({ cpu: { userMicros: 1, systemMicros: 1, percent: 85 } }),
+    );
+    expect(evaluated.status).toBe("healthy");
+    expect(evaluated.alerts).toEqual([]);
+    expect(evaluated.notes).toContain("cpu_busy_85%");
+  });
+
+  it("escalates high CPU when responsiveness is also impaired", () => {
+    const evaluated = evaluateHealth(
+      snap({
+        cpu: { userMicros: 1, systemMicros: 1, percent: 98 },
+        eventLoopLagMs: 750,
+      }),
+    );
+    expect(evaluated.status).toBe("critical");
+    expect(evaluated.alerts).toEqual(
+      expect.arrayContaining([
+        "cpu_critical_98%",
+        "event_loop_lag_critical_750ms",
+      ]),
+    );
+  });
+
   it("fails health when KV or worker probing is unavailable", () => {
     expect(
       evaluateHealth(
@@ -342,6 +376,46 @@ describe("evaluateHealth memory severity", () => {
 });
 
 describe("health dependency probing", () => {
+  it("coalesces overlapping collections and persists compact worker metadata", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    let releaseWorker!: () => void;
+    const workerGate = new Promise<void>((resolve) => {
+      releaseWorker = resolve;
+    });
+    let workerCalls = 0;
+    sdk.registerFunction("engine::workers::list", async () => {
+      workerCalls += 1;
+      await workerGate;
+      return {
+        workers: [{
+          id: "worker-1",
+          name: "worker",
+          status: "running",
+          functions: Array.from({ length: 289 }, (_, i) => `fn-${i}`),
+          active_invocations: 14,
+        }],
+      };
+    });
+
+    const monitor = registerHealthMonitor(sdk as never, kv as never);
+    const first = monitor.collectNow();
+    const second = monitor.collectNow();
+    expect(first).toBe(second);
+    releaseWorker();
+    try {
+      const [firstSnapshot, secondSnapshot] = await Promise.all([first, second]);
+      expect(workerCalls).toBe(1);
+      expect(firstSnapshot).toBe(secondSnapshot);
+      expect(firstSnapshot.workers).toEqual([
+        { id: "worker-1", name: "worker", status: "running" },
+      ]);
+      expect(firstSnapshot.workers[0]).not.toHaveProperty("functions");
+    } finally {
+      monitor.stop();
+    }
+  });
+
   it("includes the live search-index state in collected health", async () => {
     const sdk = mockSdk();
     const kv = mockKV();

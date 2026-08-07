@@ -35,9 +35,10 @@ describe("memories + export pagination (#544)", () => {
     );
   });
 
-  it("viewer dashboard caps memories?latest fetch with limit", () => {
+  it("viewer dashboard requests a count while the memories tab stays bounded", () => {
     const viewer = readFileSync("src/viewer/index.html", "utf-8");
-    expect(viewer).toMatch(/memories\?latest=true&limit=500/);
+    expect(viewer).toMatch(/memories\?latest=true&count=true&scope=global/);
     expect(viewer).toMatch(/memories\?latest=true&limit=2000/);
+    expect(viewer).not.toMatch(/memories\?latest=true&limit=500/);
   });
 });

@@ -18,6 +18,7 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 import {
   isAcceptedNode,
   normalizeTestPath,
+  processExitDiagnostic,
   processTreeMetrics,
   sha256,
   terminateProcessTree,
@@ -208,9 +209,21 @@ function installEngine(home) {
   return { source, sha256: digest, verified };
 }
 
-async function waitForService(base, timeout = 45_000) {
+async function waitForService(
+  base,
+  service,
+  stdoutPath,
+  stderrPath,
+  timeout = 45_000,
+) {
   const deadline = Date.now() + timeout;
   while (Date.now() < deadline) {
+    const exitDiagnostic = processExitDiagnostic(
+      service,
+      stdoutPath,
+      stderrPath,
+    );
+    if (exitDiagnostic) throw new Error(exitDiagnostic);
     try {
       const response = await fetch(`${base}/agentmemory/livez`, {
         signal: AbortSignal.timeout(1000),
@@ -221,7 +234,9 @@ async function waitForService(base, timeout = 45_000) {
     }
     await new Promise((resolvePromise) => setTimeout(resolvePromise, 250));
   }
-  throw new Error(`Agentmemory did not become live at ${base}`);
+  throw new Error(
+    `Agentmemory did not become live at ${base}; diagnostics: stdout=${stdoutPath}, stderr=${stderrPath}`,
+  );
 }
 
 function psRows() {
@@ -472,7 +487,12 @@ async function runOnce(index) {
   }, 250);
 
   try {
-    await waitForService(env.AGENTMEMORY_URL);
+    await waitForService(
+      env.AGENTMEMORY_URL,
+      service,
+      stdoutPath,
+      stderrPath,
+    );
     testProcess = spawn(
       join(root, "node_modules", ".bin", "vitest"),
       ["run", "--config", "vitest.r13.config.ts", "--no-color"],

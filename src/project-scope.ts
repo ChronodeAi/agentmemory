@@ -53,6 +53,15 @@ export function recordMatchesProject(
   return scope.kind === "global" || recordProject === scope.project;
 }
 
+export function filterRecordsByProject<T extends { project?: string | null }>(
+  records: T[],
+  scope: ProjectReadScope,
+): T[] {
+  return scope.kind === "global"
+    ? records
+    : records.filter((record) => recordMatchesProject(record.project, scope));
+}
+
 export function authorizeProjectScopeRequest(
   headers: Record<string, string | string[] | undefined> | undefined,
   scope: ProjectReadScope,
