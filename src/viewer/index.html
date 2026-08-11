@@ -1368,50 +1368,63 @@
       }
     }
 
+    var dashboardLoadPromise = null;
+    var dashboardLiveRefreshTimer = null;
+    var DASHBOARD_LIVE_REFRESH_DELAY_MS = 3000;
+
     async function loadDashboard() {
+      if (dashboardLoadPromise) return dashboardLoadPromise;
       var el = document.getElementById('view-dashboard');
-      el.innerHTML = '<div class="loading">Loading dashboard...</div>';
+      var hadDashboard = state.dashboard.loaded;
+      if (!hadDashboard) {
+        el.innerHTML = '<div class="loading">Loading dashboard...</div>';
+      }
+      var currentLoad = (async function() {
+        try {
+          var results = await Promise.all([
+            apiGet('health'),
+            apiGet('sessions?scope=global'),
+            apiGet('memories?latest=true&limit=500&scope=global'),
+            apiGet('graph/stats?scope=global'),
+            apiGet('semantic?scope=global'),
+            apiGet('procedural?scope=global'),
+            apiGet('relations?scope=global'),
+            apiGet('lessons?scope=global'),
+            apiGet('crystals?scope=global')
+          ]);
+          state.dashboard.health = results[0];
+          state.dashboard.sessions = (results[1] && results[1].sessions) || [];
+          state.dashboard.memories = (results[2] && results[2].memories) || [];
+          state.dashboard.graphStats = results[3];
+          state.dashboard.semantic = (results[4] && results[4].facts) || (results[4] && results[4].semantic) || [];
+          state.dashboard.procedural = (results[5] && results[5].procedures) || (results[5] && results[5].procedural) || [];
+          state.dashboard.lessons = (results[7] && results[7].lessons) || [];
+          state.dashboard.crystals = (results[8] && results[8].crystals) || [];
+          state.dashboard.relations = (results[6] && results[6].relations) || [];
+          state.dashboard.loaded = true;
+          renderDashboard();
+        } catch (err) {
+          // Preserve a rendered dashboard on background-refresh failure.
+          // Initial failures still surface a useful error instead of leaving
+          // the dashboard stuck on "Loading dashboard..." forever (#323).
+          var msg = (err && err.message) ? err.message : String(err);
+          console.error('[viewer] loadDashboard failed:', err);
+          if (hadDashboard) return;
+          el.innerHTML =
+            '<div class="loading" style="color:var(--accent);">' +
+            'Dashboard failed to load: ' + msg +
+            '<br><br><span style="font-size:12px;color:var(--ink-muted);">' +
+            'Check the browser console for the full error. If you see CSP ' +
+            'violations, please open an issue with the agentmemory version ' +
+            '(top-right of the viewer) and the violation text.' +
+            '</span></div>';
+        }
+      })();
+      dashboardLoadPromise = currentLoad;
       try {
-        var results = await Promise.all([
-          apiGet('health'),
-          apiGet('sessions?scope=global'),
-          apiGet('memories?latest=true&limit=500&scope=global'),
-          apiGet('graph/stats?scope=global'),
-          apiGet('semantic?scope=global'),
-          apiGet('procedural?scope=global'),
-          apiGet('relations?scope=global'),
-          apiGet('lessons?scope=global'),
-          apiGet('crystals?scope=global')
-        ]);
-        state.dashboard.health = results[0];
-        state.dashboard.sessions = (results[1] && results[1].sessions) || [];
-        state.dashboard.memories = (results[2] && results[2].memories) || [];
-        state.dashboard.graphStats = results[3];
-        state.dashboard.semantic = (results[4] && results[4].facts) || (results[4] && results[4].semantic) || [];
-        state.dashboard.procedural = (results[5] && results[5].procedures) || (results[5] && results[5].procedural) || [];
-        state.dashboard.lessons = (results[7] && results[7].lessons) || [];
-        state.dashboard.crystals = (results[8] && results[8].crystals) || [];
-        state.dashboard.relations = (results[6] && results[6].relations) || [];
-        state.dashboard.loaded = true;
-        renderDashboard();
-      } catch (err) {
-        // Without this catch, any uncaught error in the await Promise.all
-        // or the renderDashboard call leaves the dashboard stuck on
-        // "Loading dashboard..." forever with no indication to the user
-        // (#323). apiGet() already swallows network/HTTP errors and
-        // returns null, but renderDashboard can still throw on shape
-        // surprises (CSP-blocked event handler binding, undefined fields).
-        // Surface the error in the panel + log full detail to console.
-        var msg = (err && err.message) ? err.message : String(err);
-        console.error('[viewer] loadDashboard failed:', err);
-        el.innerHTML =
-          '<div class="loading" style="color:var(--accent);">' +
-          'Dashboard failed to load: ' + msg +
-          '<br><br><span style="font-size:12px;color:var(--ink-muted);">' +
-          'Check the browser console for the full error. If you see CSP ' +
-          'violations, please open an issue with the agentmemory version ' +
-          '(top-right of the viewer) and the violation text.' +
-          '</span></div>';
+        return await currentLoad;
+      } finally {
+        if (dashboardLoadPromise === currentLoad) dashboardLoadPromise = null;
       }
     }
 
@@ -1679,8 +1692,14 @@
 
     var dashboardTimer = null;
     function refreshDashboard() {
-      state.dashboard.loaded = false;
-      loadDashboard();
+      return loadDashboard();
+    }
+    function scheduleDashboardLiveRefresh() {
+      if (dashboardLiveRefreshTimer) clearTimeout(dashboardLiveRefreshTimer);
+      dashboardLiveRefreshTimer = setTimeout(function() {
+        dashboardLiveRefreshTimer = null;
+        if (state.activeTab === 'dashboard') refreshDashboard();
+      }, DASHBOARD_LIVE_REFRESH_DELAY_MS);
     }
     function startDashboardAutoRefresh() {
       if (dashboardTimer) clearInterval(dashboardTimer);
@@ -3562,8 +3581,7 @@
       pollTimer = setInterval(function() {
         tick++;
         if (state.activeTab === 'dashboard') {
-          state.dashboard.loaded = false;
-          loadDashboard();
+          refreshDashboard();
         } else if (state.activeTab === 'memories') {
           state.memories.loaded = false;
           loadMemories();
@@ -3727,8 +3745,7 @@
         }
       }
       if (state.activeTab === 'dashboard') {
-        state.dashboard.loaded = false;
-        loadDashboard();
+        scheduleDashboardLiveRefresh();
       }
       if (state.activeTab === 'activity' && msg.observation) {
         state.activity.observations.unshift(msg.observation);

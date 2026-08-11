@@ -166,7 +166,7 @@ function loadViewerSandbox() {
   };
 
   const scriptWithoutAutoStart = scriptMatch[1].replace(
-    /\n\s*loadTab\('dashboard'\);\n\s*connectWs\(\);\n\s*startDashboardAutoRefresh\(\);\s*$/,
+    /\n\s*switchTab\(tabFromRoute\(\), \{ replaceRoute: true \}\);\n\s*connectWs\(\);\n\s*startDashboardAutoRefresh\(\);\s*$/,
     "\n",
   );
 
@@ -288,6 +288,47 @@ describe("viewer session rendering", () => {
     expect(requests).not.toContain(
       "http://localhost:3113/agentmemory/sessions",
     );
+  });
+
+  it("coalesces dashboard loads and preserves rendered content during refresh", async () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    const pending: Array<(value: unknown) => void> = [];
+    let requests = 0;
+    sandbox.state.dashboard.loaded = true;
+    getElement("view-dashboard").innerHTML = "stable dashboard";
+    sandbox.fetch = async () => {
+      requests += 1;
+      return await new Promise((resolve) => pending.push(resolve));
+    };
+
+    const first = sandbox.loadDashboard();
+    const second = sandbox.loadDashboard();
+
+    expect(requests).toBe(9);
+    expect(getElement("view-dashboard").innerHTML).toBe("stable dashboard");
+
+    pending.forEach((resolve) =>
+      resolve({ ok: true, json: async () => ({}) }),
+    );
+    await Promise.all([first, second]);
+    expect(requests).toBe(9);
+  });
+
+  it("debounces live observations instead of refreshing immediately", () => {
+    const { sandbox } = loadViewerSandbox();
+    let requests = 0;
+    sandbox.state.activeTab = "dashboard";
+    sandbox.state.dashboard.loaded = true;
+    sandbox.fetch = async () => {
+      requests += 1;
+      return { ok: true, json: async () => ({}) };
+    };
+
+    sandbox.routeWsMessage({
+      observation: { id: "obs-live", timestamp: "2026-08-10T00:00:00Z" },
+    });
+
+    expect(requests).toBe(0);
   });
 
   it("falls back to nested health and reports failed health as unavailable", () => {
