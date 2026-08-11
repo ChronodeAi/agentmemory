@@ -381,4 +381,19 @@ describe("Copilot hook scripts", () => {
       },
     });
   });
+
+  it("session-end delegates consolidation to one server-side session pipeline", async () => {
+    const result = await runHook(
+      "scripts/session-end.mjs",
+      {
+        sessionId: "copilot-session",
+        cwd: "C:\\repo",
+      },
+      { CONSOLIDATION_ENABLED: "true" },
+    );
+
+    expect(result.requests.map((request) => request.path)).toEqual([
+      "/agentmemory/session/end",
+    ]);
+  });
 });

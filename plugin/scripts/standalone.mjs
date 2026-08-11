@@ -1,7 +1,8 @@
 #!/usr/bin/env node
+import { n as generateId } from "./schema-Dttua2Zo.mjs";
+import { i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, r as createProjectCapabilityToken } from "./auth-Evr8deOq.mjs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { createHmac, randomBytes } from "node:crypto";
 import { homedir } from "node:os";
 //#region src/mcp/in-memory-kv.ts
 var InMemoryKV = class {
@@ -1610,41 +1611,9 @@ function getAllTools() {
 }
 //#endregion
 //#region src/version.ts
-const VERSION = "0.9.28-chronode.3";
+const VERSION = "0.9.28-chronode.4";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
-//#endregion
-//#region src/state/schema.ts
-function generateId(prefix) {
-	return `${prefix}_${Date.now().toString(36)}_${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`;
-}
-randomBytes(32);
-const PROJECT_CAPABILITY_TOKEN_VERSION = "amcap1";
-const PROJECT_CAPABILITY_PROJECT_HEADER = "x-agentmemory-project";
-function hmac(value, secret) {
-	return createHmac("sha256", secret).update(value).digest("base64url");
-}
-function createProjectCapabilityToken(claims, signingSecret) {
-	if (!signingSecret) throw new Error("project capability signing secret is required");
-	const normalized = {
-		version: 1,
-		audience: claims.audience.trim(),
-		project: claims.project.trim(),
-		expiresAt: claims.expiresAt,
-		...claims.issuedAt !== void 0 ? { issuedAt: claims.issuedAt } : {},
-		...claims.capabilityId ? { capabilityId: claims.capabilityId.trim() } : {}
-	};
-	if (!normalized.audience || !normalized.project || !Number.isSafeInteger(normalized.expiresAt)) throw new Error("invalid project capability claims");
-	const signed = `${PROJECT_CAPABILITY_TOKEN_VERSION}.${Buffer.from(JSON.stringify(normalized)).toString("base64url")}`;
-	return `${signed}.${hmac(signed, signingSecret)}`;
-}
-function isStrictCapabilityMode(value = process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"]) {
-	return ![
-		"false",
-		"0",
-		"off"
-	].includes((value ?? "").trim().toLowerCase());
-}
 //#endregion
 //#region src/mcp/rest-proxy.ts
 const DEFAULT_URL = "http://localhost:3111";

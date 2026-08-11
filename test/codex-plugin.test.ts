@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
 import {
   cpSync,
@@ -53,6 +53,46 @@ describe("Plugin hook manifests", () => {
       expect(readFileSync(join(scriptsDirectory, entry), "utf8")).not.toContain(
         "sourceMappingURL",
       );
+    }
+  });
+
+  it("executes every hook from an isolated published plugin tree", () => {
+    const isolatedRoot = mkdtempSync(
+      join(tmpdir(), "agentmemory-hook-publish-tree-"),
+    );
+    const isolatedPlugin = join(isolatedRoot, "plugin");
+    const home = join(isolatedRoot, "home");
+    cpSync(pluginRoot, isolatedPlugin, { recursive: true });
+    const { NODE_PATH: _nodePath, ...cleanEnv } = process.env;
+    const commands = ["hooks.json", "hooks.codex.json"].flatMap((manifest) =>
+      hookCommands(join(isolatedPlugin, "hooks", manifest)),
+    );
+    const scripts = new Set(
+      commands.map((command) => {
+        const match = command.match(/\/scripts\/([^\"]+\.mjs)\"$/);
+        expect(match, command).not.toBeNull();
+        return match![1];
+      }),
+    );
+
+    try {
+      for (const script of scripts) {
+        const result = spawnSync(
+          process.execPath,
+          [join(isolatedPlugin, "scripts", script)],
+          {
+            cwd: isolatedPlugin,
+            env: { ...cleanEnv, HOME: home },
+            input: "not-json\n",
+            encoding: "utf8",
+            timeout: 5_000,
+          },
+        );
+        expect(result.error, `${script}: ${result.stderr}`).toBeUndefined();
+        expect(result.status, `${script}: ${result.stderr}`).toBe(0);
+      }
+    } finally {
+      rmSync(isolatedRoot, { recursive: true, force: true });
     }
   });
 });
