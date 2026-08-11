@@ -520,5 +520,3 @@ if (import.meta.url === invokedPath) main().catch((error) => {
 });
 //#endregion
 export { collectCommitLinkage };
-
-//# sourceMappingURL=post-commit.mjs.map

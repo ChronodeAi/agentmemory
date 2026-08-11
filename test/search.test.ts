@@ -11,6 +11,7 @@ import {
   getSearchIndexDrift,
   getSearchIndexRuntimeStatus,
   markSearchIndexReady,
+  reconcileCanonicalSearchIndex,
   rebuildIndex,
   repairVectorIndexFromKeyword,
   registerSearchFunction,
@@ -419,6 +420,92 @@ describe("mem::search", () => {
     expect(scheduleSave).toHaveBeenCalledOnce();
   });
 
+  it("repairs a persisted index that missed canonical writes before a crash", async () => {
+    const obsA = await kv.get<CompressedObservation>(
+      KV.observations("ses_1"),
+      "obs_a",
+    );
+    getSearchIndex().add(obsA!);
+    getSearchIndex().add({
+      ...obsA!,
+      id: "obs_stale",
+      title: "stale derived row",
+      narrative: "This row no longer exists in canonical state.",
+    });
+
+    const result = await reconcileCanonicalSearchIndex(kv as never);
+
+    expect(result).toEqual({
+      canonicalEntries: 2,
+      addedKeywordEntries: 1,
+      removedKeywordEntries: 1,
+    });
+    expect(getSearchIndex().has("obs_a")).toBe(true);
+    expect(getSearchIndex().has("obs_b")).toBe(true);
+    expect(getSearchIndex().has("obs_stale")).toBe(false);
+    expect(getSearchIndex().search("button styling")[0]?.obsId).toBe("obs_b");
+  });
+
+  it("does not mutate a loaded index when canonical inventory fails", async () => {
+    const obsA = await kv.get<CompressedObservation>(
+      KV.observations("ses_1"),
+      "obs_a",
+    );
+    getSearchIndex().add(obsA!);
+    const failingKv = {
+      ...kv,
+      list: vi.fn(async <T>(scope: string): Promise<T[]> => {
+        if (scope === KV.observations("ses_1")) {
+          throw new Error("canonical inventory unavailable");
+        }
+        return kv.list<T>(scope);
+      }),
+    };
+
+    await expect(
+      reconcileCanonicalSearchIndex(failingKv as never),
+    ).rejects.toThrow("canonical inventory unavailable");
+    expect(getSearchIndex().entriesSnapshot().map((entry) => entry.obsId)).toEqual([
+      "obs_a",
+    ]);
+  });
+
+  it("fails a full rebuild when any canonical observation inventory fails", async () => {
+    const failingKv = {
+      ...kv,
+      list: vi.fn(async <T>(scope: string): Promise<T[]> => {
+        if (scope === KV.observations("ses_1")) {
+          throw new Error("canonical observations unavailable");
+        }
+        return kv.list<T>(scope);
+      }),
+    };
+
+    await expect(rebuildIndex(failingKv as never)).rejects.toThrow(
+      "canonical observations unavailable",
+    );
+    expect(getSearchIndexRuntimeStatus().status).toBe("failed");
+  });
+
+  it("fails before reconciliation mutation when the startup budget is exceeded", async () => {
+    const obsA = await kv.get<CompressedObservation>(
+      KV.observations("ses_1"),
+      "obs_a",
+    );
+    getSearchIndex().add(obsA!);
+    process.env.AGENTMEMORY_STARTUP_RECONCILE_MAX_ENTRIES = "1";
+    try {
+      await expect(
+        reconcileCanonicalSearchIndex(kv as never),
+      ).rejects.toThrow("canonical search inventory exceeds startup limit");
+      expect(
+        getSearchIndex().entriesSnapshot().map((entry) => entry.obsId),
+      ).toEqual(["obs_a"]);
+    } finally {
+      delete process.env.AGENTMEMORY_STARTUP_RECONCILE_MAX_ENTRIES;
+    }
+  });
+
   it("refuses to persist equal-sized indexes with different identifiers", async () => {
     const obsA = await kv.get<CompressedObservation>(
       KV.observations("ses_1"),
@@ -626,8 +713,84 @@ describe("mem::search", () => {
 
     expect(embedBatch).not.toHaveBeenCalled();
     expect(getVectorIndex()?.size).toBe(0);
+    expect(getSearchIndexDrift()).toEqual({
+      missingVectorIds: [],
+      orphanVectorIds: [],
+    });
+    expect(getSearchIndexRuntimeStatus()).toEqual({
+      status: "ready",
+      keywordEntries: 2,
+      vectorEntries: 0,
+    });
     setVectorIndex(null);
     setEmbeddingProvider(null);
+  });
+
+  it("never sends project-scoped memories to an external embedder", async () => {
+    await kv.set(KV.memories, "mem_private", {
+      id: "mem_private",
+      createdAt: "2026-02-01T00:00:00Z",
+      updatedAt: "2026-02-01T00:00:00Z",
+      type: "fact",
+      title: "Project-only boundary marker",
+      content: "This project memory must remain local during rebuild.",
+      concepts: ["privacy"],
+      files: [],
+      sessionIds: ["ses_1"],
+      strength: 7,
+      version: 1,
+      isLatest: true,
+      project: "demo",
+    });
+    const embedBatch = vi.fn(async (texts: string[]) =>
+      texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+    );
+    setEmbeddingProvider({
+      name: "remote-test",
+      dimensions: 3,
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+      embedBatch,
+    });
+    setVectorIndex(new VectorIndex());
+
+    await rebuildIndex(kv as never);
+
+    const submitted = embedBatch.mock.calls.flatMap(([texts]) => texts);
+    expect(submitted.some((text) => text.includes("boundary marker"))).toBe(false);
+    expect(submitted.length).toBeGreaterThan(0);
+    expect(getSearchIndexDrift()).toEqual({
+      missingVectorIds: [],
+      orphanVectorIds: [],
+    });
+    expect(getSearchIndexRuntimeStatus()).toEqual({
+      status: "ready",
+      keywordEntries: 3,
+      vectorEntries: 2,
+    });
+  });
+
+  it("bounds canonical reconciliation embedding batches", async () => {
+    const embedBatch = vi.fn(async (texts: string[]) =>
+      texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+    );
+    setEmbeddingProvider({
+      name: "local-test",
+      processingLocation: "local",
+      dimensions: 3,
+      embed: async () => new Float32Array([0.1, 0.2, 0.3]),
+      embedBatch,
+    });
+    setVectorIndex(new VectorIndex());
+    process.env.REBUILD_EMBED_BATCH_SIZE = "1";
+    try {
+      await reconcileCanonicalSearchIndex(kv as never);
+      expect(embedBatch.mock.calls.length).toBe(2);
+      expect(embedBatch.mock.calls.every(([texts]) => texts.length === 1)).toBe(
+        true,
+      );
+    } finally {
+      delete process.env.REBUILD_EMBED_BATCH_SIZE;
+    }
   });
 
   it("allows strict-project observations through a local OpenAI-compatible embedder", async () => {

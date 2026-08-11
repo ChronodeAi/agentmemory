@@ -274,7 +274,7 @@ describe("viewer session rendering", () => {
     await sandbox.loadDashboard();
 
     expect(requests).toContain(
-      "http://localhost:3113/agentmemory/sessions?scope=global",
+      "http://localhost:3113/agentmemory/sessions?scope=global&limit=200",
     );
     expect(requests).toContain(
       "http://localhost:3113/agentmemory/lessons?scope=global",
@@ -288,6 +288,62 @@ describe("viewer session rendering", () => {
     expect(requests).not.toContain(
       "http://localhost:3113/agentmemory/sessions",
     );
+  });
+
+  it("renders global totals while labeling metrics derived from the bounded sample", async () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    let request = 0;
+    const responses = [
+      {
+        status: "healthy",
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+        health: {},
+      },
+      {
+        total: 756,
+        sessions: [
+          { id: "ses-1", status: "active", observationCount: 20 },
+          { id: "ses-2", status: "completed", observationCount: 10 },
+        ],
+      },
+      { total: 687, memories: [{ id: "mem-1" }] },
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+    ];
+    sandbox.fetch = async () => ({
+      ok: true,
+      json: async () => responses[request++],
+    });
+
+    await sandbox.loadDashboard();
+    const html = getElement("view-dashboard").innerHTML;
+    expect(html).toContain('<div class="value">756</div>');
+    expect(html).toContain('<div class="value">687</div>');
+    expect(html).toContain("1 active in recent 2");
+    expect(html).toContain("recent 2-session sample");
+  });
+
+  it("does not schedule a full dashboard reload for each live observation", () => {
+    const { sandbox } = loadViewerSandbox();
+    let scheduled = 0;
+    sandbox.setTimeout = () => {
+      scheduled += 1;
+      return 1;
+    };
+    sandbox.state.activeTab = "dashboard";
+
+    sandbox.routeWsMessage({
+      observation: { id: "obs-1", sessionId: "session-1" },
+    });
+
+    expect(scheduled).toBe(0);
   });
 
   it("coalesces dashboard loads and preserves rendered content during refresh", async () => {

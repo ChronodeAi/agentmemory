@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
@@ -57,8 +60,14 @@ function mockSdk() {
 }
 
 describe("observe implicit session create (#638)", () => {
+  let lockRoot: string;
+  let previousLockRoot: string | undefined;
+
   beforeEach(() => {
     vi.resetModules();
+    lockRoot = mkdtempSync(join(tmpdir(), "agentmemory-observe-locks-"));
+    previousLockRoot = process.env["AGENTMEMORY_PROCESS_LOCK_DIR"];
+    process.env["AGENTMEMORY_PROCESS_LOCK_DIR"] = lockRoot;
   });
 
   afterEach(async () => {
@@ -67,6 +76,12 @@ describe("observe implicit session create (#638)", () => {
     );
     setIndexPersistence(null);
     setVectorIndex(null);
+    if (previousLockRoot === undefined) {
+      delete process.env["AGENTMEMORY_PROCESS_LOCK_DIR"];
+    } else {
+      process.env["AGENTMEMORY_PROCESS_LOCK_DIR"] = previousLockRoot;
+    }
+    rmSync(lockRoot, { recursive: true, force: true });
   });
 
   it("creates the session on first observe when project+cwd present and session record missing", async () => {
@@ -98,22 +113,25 @@ describe("observe implicit session create (#638)", () => {
     expect(session.firstPrompt).toBe("ship the helm chart");
   });
 
-  it("does not implicit-create when project+cwd missing (test-payload back-compat)", async () => {
-    const { registerObserveFunction } = await import("../src/functions/observe.js");
+  it("rejects unscoped observations before persistence", async () => {
+    const { registerObserveFunction, getCaptureAdmissionMetrics } = await import("../src/functions/observe.js");
     const sdk = mockSdk();
     const kv = mockKV();
     registerObserveFunction(sdk as never, kv as never);
 
-    await sdk.trigger("mem::observe", {
+    const result = await sdk.trigger("mem::observe", {
       sessionId: "ses_no_project",
       hookType: "post_tool_use",
       timestamp: new Date().toISOString(),
       data: { tool_name: "Read", tool_input: { file_path: "x.ts" } },
     });
 
-    const sessionScope = kv.store.get("mem:sessions");
-    // Either no scope at all, or no entry for this session
-    expect(sessionScope?.get("ses_no_project")).toBeUndefined();
+    expect(result).toEqual({ success: false, error: "project_scope_required" });
+    expect(kv.store.get("mem:sessions")?.get("ses_no_project")).toBeUndefined();
+    expect(kv.store.get("mem:obs:ses_no_project")?.size ?? 0).toBe(0);
+    expect(getCaptureAdmissionMetrics().scopeDenialReasons).toMatchObject({
+      project_scope_missing: 1,
+    });
   });
 
   it("schedules persistence after indexing a synthetic observation", async () => {
@@ -258,7 +276,7 @@ describe("observe implicit session create (#638)", () => {
     const session = kv.store.get("mem:sessions")!.get("ses_existing") as Record<string, unknown>;
     expect(result).toEqual({
       success: false,
-      error: "session project or cwd does not match observation",
+      error: "session project does not match observation",
     });
     expect(session.project).toBe("/orig/project");
     expect(session.firstPrompt).toBe("original first prompt");
@@ -267,9 +285,86 @@ describe("observe implicit session create (#638)", () => {
     expect(
       kv.store.get("mem:obs:ses_existing")?.size ?? 0,
     ).toBe(0);
-    expect(getCaptureAdmissionMetrics().failureReasons).toEqual({
-      session_scope_mismatch: 1,
+    expect(getCaptureAdmissionMetrics().failureReasons).toEqual({});
+    expect(getCaptureAdmissionMetrics().scopeDenialReasons).toEqual({
+      project_scope_mismatch: 1,
     });
+  });
+
+  it("checks session scope before returning a deduplication success", async () => {
+    const { registerObserveFunction } = await import("../src/functions/observe.js");
+    const { DedupMap } = await import("../src/functions/dedup.js");
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const dedup = new DedupMap();
+    registerObserveFunction(sdk as never, kv as never, dedup);
+
+    await kv.set("mem:sessions", "ses_dedup_scope", {
+      id: "ses_dedup_scope",
+      project: "github.com/example/original",
+      cwd: "/original",
+      startedAt: "2026-01-01T00:00:00Z",
+      status: "active",
+      observationCount: 0,
+    });
+    const data = {
+      tool_name: "Read",
+      tool_input: { file_path: "src/index.ts" },
+      tool_output: "bounded",
+    };
+    expect(await sdk.trigger("mem::observe", {
+      sessionId: "ses_dedup_scope",
+      project: "github.com/example/original",
+      cwd: "/original",
+      hookType: "post_tool_use",
+      timestamp: new Date().toISOString(),
+      data,
+    })).toMatchObject({ success: true });
+
+    expect(await sdk.trigger("mem::observe", {
+      sessionId: "ses_dedup_scope",
+      project: "github.com/example/other",
+      cwd: "/other",
+      hookType: "post_tool_use",
+      timestamp: new Date().toISOString(),
+      data,
+    })).toEqual({
+      success: false,
+      error: "session project does not match observation",
+    });
+    expect(kv.store.get("mem:obs:ses_dedup_scope")?.size).toBe(1);
+    dedup.stop();
+  });
+
+  it("accepts a cwd change when the canonical project scope is unchanged", async () => {
+    const { registerObserveFunction, getCaptureAdmissionMetrics } = await import("../src/functions/observe.js");
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    await kv.set("mem:sessions", "ses_same_project", {
+      id: "ses_same_project",
+      project: "github.com/example/repo",
+      cwd: "/checkout/main",
+      startedAt: "2026-01-01T00:00:00Z",
+      status: "active",
+      observationCount: 0,
+    });
+
+    const result = await sdk.trigger("mem::observe", {
+      sessionId: "ses_same_project",
+      project: "github.com/example/repo",
+      cwd: "/checkout/worktree",
+      hookType: "post_tool_use",
+      timestamp: new Date().toISOString(),
+      data: { tool_name: "Read" },
+    });
+
+    expect(result).toMatchObject({ success: true });
+    expect(getCaptureAdmissionMetrics().scopeDenied).toBe(0);
+    expect(
+      (kv.store.get("mem:sessions")!.get("ses_same_project") as Record<string, unknown>).cwd,
+    ).toBe("/checkout/main");
   });
 
   it("classifies invalid payload failures without storing payload content", async () => {

@@ -20,10 +20,11 @@ import {
   createImageEmbeddingProvider,
 } from "./providers/index.js";
 import { StateKV } from "./state/kv.js";
-import { KV } from "./state/schema.js";
 import { VectorIndex } from "./state/vector-index.js";
 import { HybridSearch } from "./state/hybrid-search.js";
 import { IndexPersistence } from "./state/index-persistence.js";
+import { createStartupGate } from "./state/startup-gate.js";
+import { createStartupTimeBudget } from "./state/startup-timeout.js";
 import { registerPrivacyFunction } from "./functions/privacy.js";
 import { registerObserveFunction } from "./functions/observe.js";
 import { registerImageQuotaCleanup } from "./functions/image-quota-cleanup.js";
@@ -40,12 +41,12 @@ import {
   flushIndexSave,
   incrementalVectorRepairLimit,
   markSearchIndexReady,
+  reconcileCanonicalSearchIndex,
   repairVectorIndexFromKeyword,
   scheduleIndexSave,
   setVectorIndex,
   setEmbeddingProvider,
   setIndexPersistence,
-  vectorIndexAddGuarded,
 } from "./functions/search.js";
 import { registerContextFunction } from "./functions/context.js";
 import { registerSummarizeFunction } from "./functions/summarize.js";
@@ -72,7 +73,10 @@ import { registerClaudeBridgeFunction } from "./functions/claude-bridge.js";
 import { registerGraphFunction } from "./functions/graph.js";
 import { registerConsolidationPipelineFunction } from "./functions/consolidation-pipeline.js";
 import { registerTeamFunction } from "./functions/team.js";
-import { registerGovernanceFunction } from "./functions/governance.js";
+import {
+  reconcileGovernanceDeleteIntents,
+  registerGovernanceFunction,
+} from "./functions/governance.js";
 import { registerSnapshotFunction } from "./functions/snapshot.js";
 import { registerActionsFunction } from "./functions/actions.js";
 import { registerFrontierFunction } from "./functions/frontier.js";
@@ -102,16 +106,20 @@ import { registerRetentionFunctions } from "./functions/retention.js";
 import { registerCompressFileFunction } from "./functions/compress-file.js";
 import { registerReplayFunctions } from "./functions/replay.js";
 import { registerApiTriggers } from "./triggers/api.js";
-import { registerEventTriggers } from "./triggers/events.js";
+import {
+  reconcileBackgroundPipelines,
+  registerEventTriggers,
+} from "./triggers/events.js";
 import { registerMcpEndpoints } from "./mcp/server.js";
 import { getAllTools } from "./mcp/tools-registry.js";
 import { startViewerServer } from "./viewer/server.js";
 import { MetricsStore } from "./eval/metrics-store.js";
 import { DedupMap } from "./functions/dedup.js";
 import { registerHealthMonitor } from "./health/monitor.js";
+import { recoverAuditGaps } from "./functions/audit.js";
 import { initMetrics, OTEL_CONFIG } from "./telemetry/setup.js";
 import { VERSION } from "./version.js";
-import { bootLog } from "./logger.js";
+import { bootLog, logger } from "./logger.js";
 import { mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -166,10 +174,13 @@ process.on("unhandledRejection", (reason) => {
   if (now - lastUnhandledLogAt < 60_000) return;
   lastUnhandledLogAt = now;
   const r = reason as { code?: string; function_id?: string; message?: string };
-  console.warn(
-    `[agentmemory] unhandledRejection (suppressed):`,
-    r?.code ? `${r.code} ${r.function_id ?? ""} ${r.message ?? ""}`.trim() : reason,
-  );
+  logger.warn("unhandled rejection suppressed", {
+    code: r?.code,
+    functionId: r?.function_id,
+    message:
+      r?.message ??
+      (reason instanceof Error ? reason.message : "unclassified rejection"),
+  });
 });
 
 async function main() {
@@ -207,7 +218,7 @@ async function main() {
   );
   bootLog(`Streams: ws://localhost:${config.streamsPort}`);
 
-  const sdk = registerWorker(config.engineUrl, {
+  const connectedSdk = registerWorker(config.engineUrl, {
     workerName: "agentmemory",
     invocationTimeoutMs: 180000,
     otel: {
@@ -228,6 +239,8 @@ async function main() {
       framework: "iii-sdk",
     },
   });
+  const startupGate = createStartupGate(connectedSdk);
+  const sdk = startupGate.sdk;
 
   writeWorkerPidfile();
 
@@ -420,11 +433,40 @@ async function main() {
     DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
   );
 
+  const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
   const healthMonitor = registerHealthMonitor(sdk, kv, {
     getSearchIndexStatus: getSearchIndexRuntimeStatus,
+    getIndexPersistenceStatus: () => indexPersistence.getHealthStatus(),
   });
-
-  const indexPersistence = new IndexPersistence(kv, bm25Index, vectorIndex);
+  const startupMaintenanceBudget = createStartupTimeBudget();
+  try {
+    const recoveredAuditRows = await startupMaintenanceBudget.run(
+      "audit-gap recovery",
+      () => recoverAuditGaps(kv),
+    );
+    if (recoveredAuditRows > 0) {
+      bootLog(`Recovered ${recoveredAuditRows} pending audit rows`);
+    }
+  } catch (error) {
+    logger.warn("Pending audit recovery failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
+  try {
+    const recoveredDeletes = await startupMaintenanceBudget.run(
+      "governance-delete reconciliation",
+      () => reconcileGovernanceDeleteIntents(kv),
+    );
+    if (recoveredDeletes > 0) {
+      bootLog(`Reconciled ${recoveredDeletes} interrupted governance deletes`);
+    }
+  } catch (error) {
+    logger.warn("Governance delete reconciliation failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
   // Wire the persistence hook so delete paths can flush BM25/vector
   // index mutations to disk. Without this, an in-memory remove can be
   // lost across a hard process exit and the persisted snapshot
@@ -437,7 +479,9 @@ async function main() {
   });
 
   const loaded = await indexPersistence.load().catch((err) => {
-    console.warn(`[agentmemory] Failed to load persisted index:`, err);
+    logger.warn("Failed to load persisted index", {
+      error: err instanceof Error ? err.message : String(err),
+    });
     return null;
   });
   if (loaded?.bm25 && loaded.bm25.size > 0) {
@@ -500,6 +544,24 @@ async function main() {
     }
   }
 
+  let canonicalIndexChanged = false;
+  if (loaded?.bm25 && loaded.bm25.size > 0) {
+    const reconciliation = await startupMaintenanceBudget.run(
+      "canonical search-index reconciliation",
+      () => reconcileCanonicalSearchIndex(kv),
+    );
+    canonicalIndexChanged =
+      reconciliation.addedKeywordEntries > 0 ||
+      reconciliation.removedKeywordEntries > 0;
+    if (canonicalIndexChanged) {
+      bootLog(
+        `Reconciled persisted search index with canonical state: ` +
+          `${reconciliation.addedKeywordEntries} added, ` +
+          `${reconciliation.removedKeywordEntries} removed`,
+      );
+    }
+  }
+
   const vectorExpected = embeddingProvider !== null && vectorIndex !== null;
   const initialDrift = vectorExpected
     ? getSearchIndexDrift()
@@ -513,24 +575,19 @@ async function main() {
     (vectorExpected && driftCount > incrementalRepairLimit);
 
   if (needsRebuild) {
-    // Fire-and-forget. Large corpora can still take minutes to embed even
-    // with batching; keep the REST/viewer surfaces available and expose the
-    // rebuild as degraded health until the complete index is published.
-    void rebuildIndex(kv)
-      .then((indexCount) => {
-        if (indexCount > 0) {
-          bootLog(`Search index rebuilt: ${indexCount} entries`);
-          scheduleIndexSave();
-        }
-        void healthMonitor.collectNow().catch(() => undefined);
-      })
-      .catch((err) => {
-        console.warn(`[agentmemory] Failed to rebuild search index:`, err);
-        void healthMonitor.collectNow().catch(() => undefined);
-      });
+    const indexCount = await startupMaintenanceBudget.run(
+      "canonical search-index rebuild",
+      () => rebuildIndex(kv),
+    );
+    if (indexCount > 0) bootLog(`Search index rebuilt: ${indexCount} entries`);
+    scheduleIndexSave();
+    void healthMonitor.collectNow().catch(() => undefined);
   } else {
     if (vectorExpected && driftCount > 0) {
-      const repaired = await repairVectorIndexFromKeyword(kv);
+      const repaired = await startupMaintenanceBudget.run(
+        "vector-index repair",
+        () => repairVectorIndexFromKeyword(kv),
+      );
       bootLog(
         `Repaired ${repaired} persisted vector index entr${
           repaired === 1 ? "y" : "ies"
@@ -551,53 +608,9 @@ async function main() {
       bootLog("Recovered a persisted index from its retained generation");
       scheduleIndexSave();
     }
-    // Backfill memories into BM25 for users upgrading from <0.9.5: prior
-    // versions of mem::remember never indexed memories, so the persisted
-    // BM25 covers observations only and `memory_smart_search` returns
-    // empty for everything saved via memory_save (#257). Walk KV.memories
-    // and add the ones missing from the restored index. Idempotent on
-    // re-runs because SearchIndex.has() short-circuits already-indexed
-    // ids.
-    try {
-      const memories = await kv.list<import("./types.js").Memory>(KV.memories);
-      let backfilled = 0;
-      for (const memory of memories) {
-        if (memory.isLatest === false) continue;
-        if (!memory.title || !memory.content) continue;
-        if (bm25Index.has(memory.id)) continue;
-        bm25Index.add({
-          id: memory.id,
-          sessionId: memory.sessionIds?.[0] ?? "memory",
-          timestamp: memory.createdAt,
-          type: "decision",
-          title: memory.title,
-          facts: [memory.content],
-          narrative: memory.content,
-          concepts: memory.concepts,
-          files: memory.files,
-          importance: memory.strength,
-        });
-        await vectorIndexAddGuarded(
-          memory.id,
-          memory.sessionIds?.[0] ?? "memory",
-          memory.title + " " + memory.content,
-          { kind: "memory", logId: memory.id },
-          { externalProcessing: false },
-        );
-        backfilled++;
-      }
-      if (backfilled > 0) {
-        bootLog(
-          `Backfilled ${backfilled} memories into BM25 (legacy index gap)`,
-        );
-        scheduleIndexSave();
-      }
-    } catch (err) {
-      console.warn(
-        `[agentmemory] Failed to backfill memories into BM25:`,
-        err,
-      );
-    }
+    // Canonical reconciliation above already backfills every current memory.
+    // Keeping a second unbounded KV walk here duplicated work and could hide
+    // a failed inventory read behind a warning after readiness was computed.
     const finalDrift = vectorExpected
       ? getSearchIndexDrift()
       : { missingVectorIds: [], orphanVectorIds: [] };
@@ -608,15 +621,36 @@ async function main() {
       finalDrift.missingVectorIds.length === 0 &&
         finalDrift.orphanVectorIds.length === 0,
     );
+    if (canonicalIndexChanged) scheduleIndexSave();
     void healthMonitor.collectNow().catch(() => undefined);
+  }
+
+  // Every registered local function waits on this gate. Opening it only
+  // after canonical reconciliation prevents startup writes from racing the
+  // snapshot used to repair persisted derived indexes.
+  startupGate.open();
+  try {
+    const recovery = await reconcileBackgroundPipelines(sdk, kv);
+    if (recovery.replayed > 0 || recovery.exhausted > 0) {
+      bootLog(
+        `Background pipeline recovery: ${recovery.replayed} replayed, ${recovery.exhausted} exhausted`,
+      );
+    }
+  } catch (error) {
+    logger.warn("Background pipeline recovery failed", {
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   // Ready / Endpoints lines are emitted via `bootLog` so they're
   // buffered in quiet mode and printed verbatim under --verbose. The
   // CLI surfaces a compact summary when it sees the worker reach
   // ready state.
+  const startupSearchStatus = getSearchIndexRuntimeStatus();
   bootLog(
-    `Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`,
+    startupSearchStatus.status === "ready"
+      ? `Ready. ${embeddingProvider ? "Triple-stream (BM25+Vector+Graph)" : "BM25+Graph"} search active.`
+      : `Operational with ${startupSearchStatus.status} search index; health remains degraded until repair completes.`,
   );
   bootLog(
     `REST API: 135 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
@@ -735,6 +769,7 @@ async function main() {
 }
 
 main().catch((err) => {
+  clearWorkerPidfile();
   console.error(`[agentmemory] Fatal:`, err);
   process.exit(1);
 });

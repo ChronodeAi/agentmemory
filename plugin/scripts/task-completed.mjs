@@ -415,5 +415,3 @@ async function main() {
 main().catch(reportObservationDeliveryFailure);
 //#endregion
 export {};
-
-//# sourceMappingURL=task-completed.mjs.map

@@ -86,6 +86,33 @@ function createSurfaces() {
 }
 
 describe("REST project scope regressions", () => {
+  it("limits summaries after selecting the most recent sessions", async () => {
+    const { functions, kv } = createSurfaces();
+    await kv.set("mem:sessions", "session-old", {
+      id: "session-old",
+      project: PROJECT_A,
+      updatedAt: "2026-07-25T00:00:00.000Z",
+    });
+    await kv.set("mem:sessions", "session-new", {
+      id: "session-new",
+      project: PROJECT_A,
+      updatedAt: "2026-07-25T02:00:00.000Z",
+    });
+    await kv.set("mem:summaries", "session-old", { sessionId: "session-old" });
+    await kv.set("mem:summaries", "session-new", { sessionId: "session-new" });
+
+    const response = await functions.get("api::sessions")!({
+      headers: projectHeaders(PROJECT_A),
+      query_params: { project: PROJECT_A, limit: "1" },
+    });
+
+    expect(response).toMatchObject({ status_code: 200 });
+    expect(response.body["total"]).toBe(2);
+    expect(
+      (response.body["sessions"] as Array<{ id: string }>).map(({ id }) => id),
+    ).toEqual(["session-new"]);
+  });
+
   it("filters commit listings and linked sessions by the exact project", async () => {
     const { functions, kv } = createSurfaces();
     await kv.set("mem:sessions", "session-a", {

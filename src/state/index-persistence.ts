@@ -4,8 +4,9 @@ import type { StateKV } from "./kv.js";
 import { KV, generateId } from "./schema.js";
 import { logger } from "../logger.js";
 import { safeAudit } from "../functions/audit.js";
+import type { HealthSnapshot } from "../types.js";
 
-const DEBOUNCE_MS = 5000;
+const CHECKPOINT_INTERVAL_MS = 30_000;
 const FAILURE_LOG_THROTTLE_MS = 60_000;
 const INDEX_PERSISTENCE_FUNCTION_ID = "mem::index-persistence";
 const BM25_KEY = "data";
@@ -31,7 +32,32 @@ type IndexShardManifest = IndexShardGeneration & {
 type IndexPersistenceOptions = {
   shardChars?: number;
   createGeneration?: () => string;
+  checkpointIntervalMs?: number;
 };
+
+export type IndexPersistenceHealth = NonNullable<
+  HealthSnapshot["indexPersistence"]
+>;
+
+function createPersistenceHealth(): IndexPersistenceHealth {
+  return {
+    status: "idle",
+    attempts: 0,
+    succeeded: 0,
+    failed: 0,
+    pending: 0,
+    consecutiveFailures: 0,
+  };
+}
+
+function persistenceErrorCode(error: unknown): string {
+  const code = (error as { code?: unknown })?.code;
+  if (typeof code === "string" && code.trim()) return code.trim().slice(0, 96);
+  const message = errorMessage(error);
+  return /timeout|timed out|invocation stopped/i.test(message)
+    ? "TIMEOUT"
+    : "INDEX_PERSISTENCE_FAILED";
+}
 
 function shardChars(options: IndexPersistenceOptions): number {
   const configured = options.shardChars;
@@ -40,6 +66,21 @@ function shardChars(options: IndexPersistenceOptions): number {
   }
   const wholeChars = Math.floor(configured);
   return wholeChars >= 1 ? wholeChars : DEFAULT_INDEX_SHARD_CHARS;
+}
+
+function checkpointIntervalMs(options: IndexPersistenceOptions): number {
+  const configured = options.checkpointIntervalMs;
+  if (configured === undefined) return CHECKPOINT_INTERVAL_MS;
+  if (
+    !Number.isInteger(configured) ||
+    configured < 1000 ||
+    configured > 3_600_000
+  ) {
+    throw new Error(
+      "index checkpoint interval must be an integer from 1000 to 3600000 ms",
+    );
+  }
+  return configured;
 }
 
 function createIndexGeneration(): string {
@@ -64,6 +105,7 @@ function isValidShardDescriptor(
     candidate.scope.length > 0 &&
     typeof candidate.key === "string" &&
     candidate.key.length > 0 &&
+    typeof candidate.chars === "number" &&
     Number.isInteger(candidate.chars) &&
     candidate.chars >= 0
   );
@@ -73,7 +115,9 @@ export class IndexPersistence {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastFailureLogAt = 0;
   private saveQueue: Promise<void> = Promise.resolve();
+  private pendingSaves = 0;
   private stopped = false;
+  private health = createPersistenceHealth();
   private retainedGenerationOverrides = new Map<
     string,
     IndexShardGeneration
@@ -88,20 +132,31 @@ export class IndexPersistence {
 
   scheduleSave(): void {
     if (this.stopped) return;
-    if (this.timer) clearTimeout(this.timer);
+    // Persisted indexes are rebuildable derivatives of canonical observations.
+    // Keep the first scheduled checkpoint instead of rewriting the complete
+    // corpus after every short pause in an active coding session.
+    if (this.timer) return;
+    const scheduledAt = new Date().toISOString();
+    this.health.status = "scheduled";
+    this.health.scheduledAt = scheduledAt;
+    this.health.pendingSince ??= scheduledAt;
     // setTimeout discards the returned promise, so any rejection inside
     // save() would surface as unhandledRejection and crash the process
     // under sustained iii-engine write timeouts (issue #204). Funnel
     // rejections through logFailure() instead.
     this.timer = setTimeout(() => {
       this.save().catch((err) => this.logFailure(err));
-    }, DEBOUNCE_MS);
+    }, checkpointIntervalMs(this.options));
   }
 
   cancelScheduledSave(): void {
     if (!this.timer) return;
     clearTimeout(this.timer);
     this.timer = null;
+    if (this.pendingSaves === 0 && this.health.status === "scheduled") {
+      this.health.status = "idle";
+      this.health.pendingSince = undefined;
+    }
   }
 
   async save(): Promise<void> {
@@ -109,12 +164,17 @@ export class IndexPersistence {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.pendingSaves += 1;
+    this.health.pendingSince ??= new Date().toISOString();
     const queued = this.saveQueue.then(() => this.persistSnapshot());
     this.saveQueue = queued;
     await queued;
   }
 
   private async persistSnapshot(): Promise<void> {
+    this.health.attempts += 1;
+    this.health.status = "saving";
+    this.health.lastAttemptAt = new Date().toISOString();
     try {
       // Capture both synchronous snapshots before the first write yields.
       // Otherwise live hook writes can appear only in the later vector snapshot.
@@ -124,8 +184,28 @@ export class IndexPersistence {
       if (vectorSnapshot !== undefined) {
         await this.saveVectorIndex(vectorSnapshot);
       }
+      this.health.succeeded += 1;
+      this.health.consecutiveFailures = 0;
+      this.health.status = "ready";
+      this.health.lastSuccessAt = new Date().toISOString();
+      this.health.lastErrorCode = undefined;
     } catch (err) {
+      this.health.failed += 1;
+      this.health.consecutiveFailures += 1;
+      this.health.status = "failed";
+      this.health.lastFailureAt = new Date().toISOString();
+      this.health.lastErrorCode = persistenceErrorCode(err);
       this.logFailure(err);
+    } finally {
+      this.pendingSaves = Math.max(0, this.pendingSaves - 1);
+      if (this.stopped) {
+        this.health.status = "stopped";
+      } else if (this.pendingSaves > 0) {
+        this.health.status = "scheduled";
+      }
+      if (this.pendingSaves === 0 && !this.timer) {
+        this.health.pendingSince = undefined;
+      }
     }
   }
 
@@ -152,6 +232,14 @@ export class IndexPersistence {
   stop(): void {
     this.stopped = true;
     this.cancelScheduledSave();
+    this.health.status = "stopped";
+  }
+
+  getHealthStatus(): IndexPersistenceHealth {
+    return {
+      ...this.health,
+      pending: this.pendingSaves + (this.timer ? 1 : 0),
+    };
   }
 
   needsRepair(): boolean {
@@ -294,13 +382,23 @@ export class IndexPersistence {
     targetIds: string[],
     details: Record<string, unknown>,
   ): Promise<void> {
-    await safeAudit(
-      this.kv,
-      "index_persist",
-      INDEX_PERSISTENCE_FUNCTION_ID,
-      targetIds,
-      { action, ...details },
-    );
+    try {
+      await safeAudit(
+        this.kv,
+        "index_persist",
+        INDEX_PERSISTENCE_FUNCTION_ID,
+        targetIds,
+        { action, ...details },
+      );
+    } catch (error) {
+      // Index snapshots are rebuildable derivatives. Preserve the primary
+      // storage error for health/retry classification when the audit sink is
+      // also unavailable; canonical memories are not mutated on this path.
+      logger.warn("index persistence: audit evidence unavailable", {
+        action,
+        error: errorMessage(error),
+      });
+    }
   }
 
   private async deleteKey(

@@ -412,5 +412,3 @@ main().catch((error) => {
 });
 //#endregion
 export {};
-
-//# sourceMappingURL=stop.mjs.map

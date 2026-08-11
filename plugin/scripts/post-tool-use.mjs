@@ -652,5 +652,3 @@ function extractImageData(output) {
 main().catch(reportObservationDeliveryFailure);
 //#endregion
 export {};
-
-//# sourceMappingURL=post-tool-use.mjs.map

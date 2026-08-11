@@ -41,6 +41,7 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
       tags?: string[];
       source?: "crystal" | "manual" | "consolidation";
       sourceIds?: string[];
+      idempotencyKey?: string;
     }) => {
       if (!data.content?.trim()) {
         return { success: false, error: "content is required" };
@@ -65,10 +66,33 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
             isSemanticDuplicate(lesson.content, data.content.trim()),
         );
 
+      const idempotencyKey = data.idempotencyKey?.trim().slice(0, 256);
+
       if (existing && !existing.deleted) {
+        if (
+          idempotencyKey &&
+          existing.appliedIdempotencyKeys?.includes(idempotencyKey)
+        ) {
+          return {
+            success: true,
+            action: "idempotent",
+            lesson: existing,
+          };
+        }
         reinforceLesson(existing);
         if (data.context && !existing.context) {
           existing.context = data.context;
+        }
+        existing.sourceIds = [
+          ...new Set([...existing.sourceIds, ...(data.sourceIds ?? [])]),
+        ];
+        if (idempotencyKey) {
+          existing.appliedIdempotencyKeys = [
+            ...new Set([
+              ...(existing.appliedIdempotencyKeys ?? []),
+              idempotencyKey,
+            ]),
+          ];
         }
         await kv.set(KV.lessons, existing.id, existing);
 
@@ -99,6 +123,9 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
         reinforcements: 0,
         source: data.source || "manual",
         sourceIds: data.sourceIds || [],
+        ...(idempotencyKey
+          ? { appliedIdempotencyKeys: [idempotencyKey] }
+          : {}),
         project,
         tags: data.tags || [],
         createdAt: now,

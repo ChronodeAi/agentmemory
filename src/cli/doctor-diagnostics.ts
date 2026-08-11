@@ -305,8 +305,8 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
       fix: async () => {
         const r = await effects.runIiiInstaller();
         if (!r.ok) return r;
-        // Best-effort restart: stop then start.
-        await effects.runStop();
+        const stopped = await effects.runStop();
+        if (!stopped.ok) return stopped;
         return effects.runStart();
       },
     },

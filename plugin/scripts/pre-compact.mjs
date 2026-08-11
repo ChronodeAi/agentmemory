@@ -452,5 +452,3 @@ main().catch(() => {
 });
 //#endregion
 export {};
-
-//# sourceMappingURL=pre-compact.mjs.map

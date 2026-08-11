@@ -407,7 +407,7 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     expect(out.results[0].content).toBe("local only");
   });
 
-  it("invalidates the handle on proxy failure, so the next call re-probes", async () => {
+  it("never replays an ambiguous proxy mutation into local fallback", async () => {
     let probeCount = 0;
     let serverUp = true;
     installFetch((url) => {
@@ -418,11 +418,15 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
       return new Response("boom", { status: 500, statusText: "Internal Server Error" });
     });
     const localKv = new InMemoryKV(undefined);
-    await handleToolCall("memory_save", { content: "first fallback" }, localKv);
+    await expect(
+      handleToolCall("memory_save", { content: "first fallback" }, localKv),
+    ).rejects.toThrow(/outcome is ambiguous/);
     expect(probeCount).toBe(1);
+    expect(await localKv.list("mem:memories")).toHaveLength(0);
     serverUp = false;
     await handleToolCall("memory_save", { content: "second fallback" }, localKv);
     expect(probeCount).toBe(2);
+    expect(await localKv.list("mem:memories")).toHaveLength(1);
   });
 
   it("forwards non-essential tools to /agentmemory/mcp/call (#234)", async () => {
@@ -569,6 +573,12 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
       if (url.endsWith("/agentmemory/livez")) {
         probeStarted++;
         return new Response("ok", { status: 200 });
+      }
+      if (url.endsWith("/agentmemory/remember")) {
+        return new Response(JSON.stringify({ id: "mem-timeout-knob" }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       }
       return new Response("not found", { status: 404 });
     });

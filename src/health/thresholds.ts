@@ -5,6 +5,12 @@ interface ThresholdConfig {
   eventLoopLagCriticalMs: number;
   cpuWarnPercent: number;
   cpuCriticalPercent: number;
+  engineCpuWarnPercent: number;
+  engineCpuCriticalPercent: number;
+  engineRssWarnBytes: number;
+  engineRssCriticalBytes: number;
+  engineStoreGrowthWarnBytesPerMinute: number;
+  engineStoreGrowthCriticalBytesPerMinute: number;
   memoryWarnPercent: number;
   memoryCriticalPercent: number;
   memoryHeapFloorBytes: number;
@@ -13,6 +19,9 @@ interface ThresholdConfig {
   memoryRssCriticalSystemPercent: number;
   memoryExternalWarnBytes: number;
   memoryExternalCriticalBytes: number;
+  backgroundStartWarnMs: number;
+  backgroundRunWarnMs: number;
+  persistencePendingWarnMs: number;
 }
 
 const DEFAULTS: ThresholdConfig = {
@@ -20,6 +29,12 @@ const DEFAULTS: ThresholdConfig = {
   eventLoopLagCriticalMs: 500,
   cpuWarnPercent: 80,
   cpuCriticalPercent: 90,
+  engineCpuWarnPercent: 60,
+  engineCpuCriticalPercent: 85,
+  engineRssWarnBytes: 1024 * 1024 * 1024,
+  engineRssCriticalBytes: 2 * 1024 * 1024 * 1024,
+  engineStoreGrowthWarnBytesPerMinute: 32 * 1024 * 1024,
+  engineStoreGrowthCriticalBytesPerMinute: 128 * 1024 * 1024,
   memoryWarnPercent: 80,
   memoryCriticalPercent: 95,
   memoryHeapFloorBytes: 512 * 1024 * 1024,
@@ -28,7 +43,16 @@ const DEFAULTS: ThresholdConfig = {
   memoryRssCriticalSystemPercent: 50,
   memoryExternalWarnBytes: 512 * 1024 * 1024,
   memoryExternalCriticalBytes: 1024 * 1024 * 1024,
+  backgroundStartWarnMs: 30_000,
+  backgroundRunWarnMs: 210_000,
+  persistencePendingWarnMs: 30_000,
 };
+
+function ageMs(timestamp: string | undefined): number {
+  if (!timestamp) return 0;
+  const parsed = Date.parse(timestamp);
+  return Number.isFinite(parsed) ? Math.max(0, Date.now() - parsed) : 0;
+}
 
 export function healthStatusExitCode(status: unknown): 0 | 1 {
   return status === "healthy" ? 0 : 1;
@@ -143,6 +167,51 @@ export function evaluateHealth(
     degraded = true;
   }
 
+  const engine = snapshot.engineResources;
+  if (engine) {
+    if (engine.status === "error") {
+      alerts.push("engine_resource_probe_failed");
+      degraded = true;
+    } else if (engine.status === "unavailable") {
+      alerts.push("engine_resource_probe_unavailable");
+      degraded = true;
+    } else if (engine.status === "partial") {
+      alerts.push("engine_store_inventory_partial");
+      degraded = true;
+    }
+    const engineCpu = engine.cpuPercent ?? 0;
+    if (engineCpu > cfg.engineCpuCriticalPercent) {
+      alerts.push(`engine_cpu_critical_${Math.round(engineCpu)}%`);
+      critical = true;
+    } else if (engineCpu > cfg.engineCpuWarnPercent) {
+      alerts.push(`engine_cpu_warn_${Math.round(engineCpu)}%`);
+      degraded = true;
+    }
+    const engineRss = engine.rssBytes ?? 0;
+    if (engineRss > cfg.engineRssCriticalBytes) {
+      alerts.push(
+        `engine_rss_critical_${Math.round(engineRss / (1024 * 1024))}mb`,
+      );
+      critical = true;
+    } else if (engineRss > cfg.engineRssWarnBytes) {
+      alerts.push(
+        `engine_rss_warn_${Math.round(engineRss / (1024 * 1024))}mb`,
+      );
+      degraded = true;
+    }
+    const growthPerMinute = Math.max(
+      engine.stateStore?.growthBytesPerMinute ?? 0,
+      engine.streamStore?.growthBytesPerMinute ?? 0,
+    );
+    if (growthPerMinute > cfg.engineStoreGrowthCriticalBytesPerMinute) {
+      alerts.push("engine_store_growth_critical");
+      critical = true;
+    } else if (growthPerMinute > cfg.engineStoreGrowthWarnBytesPerMinute) {
+      alerts.push("engine_store_growth_warn");
+      degraded = true;
+    }
+  }
+
   const memPercent =
     snapshot.memory.heapTotal > 0
       ? (snapshot.memory.heapUsed / snapshot.memory.heapTotal) * 100
@@ -205,6 +274,74 @@ export function evaluateHealth(
     if ((admission.failedSinceLastCollection ?? 0) > 0) {
       alerts.push(`capture_failed_${admission.failedSinceLastCollection}`);
       degraded = true;
+    }
+    if ((admission.scopeDeniedSinceLastCollection ?? 0) > 0) {
+      notes.push(
+        `capture_scope_denied_${admission.scopeDeniedSinceLastCollection}`,
+      );
+    }
+  }
+
+  const background = snapshot.backgroundPipeline;
+  if (background) {
+    if (background.unresolvedFailed > 0) {
+      alerts.push(
+        `background_pipeline_failed_${background.lastFailureStage ?? "unknown"}`,
+      );
+      degraded = true;
+    }
+    if (
+      background.activeAccepted > 0 &&
+      ageMs(background.oldestAcceptedAt) > cfg.backgroundStartWarnMs
+    ) {
+      alerts.push("background_pipeline_dispatch_stalled");
+      degraded = true;
+    }
+    if (
+      background.activeRunning > 0 &&
+      ageMs(background.oldestRunningAt) > cfg.backgroundRunWarnMs
+    ) {
+      alerts.push("background_pipeline_running_stalled");
+      degraded = true;
+    }
+    if (background.accepted === 0) {
+      notes.push("background_pipeline_unproven_this_boot");
+    }
+  }
+
+  const indexPersistence = snapshot.indexPersistence;
+  if (indexPersistence) {
+    if (indexPersistence.status === "failed") {
+      alerts.push(
+        `index_persistence_failed_${indexPersistence.lastErrorCode ?? "unknown"}`,
+      );
+      degraded = true;
+    }
+    if (
+      indexPersistence.pending > 0 &&
+      ageMs(indexPersistence.pendingSince) > cfg.persistencePendingWarnMs
+    ) {
+      alerts.push("index_persistence_stalled");
+      degraded = true;
+    }
+    if (indexPersistence.attempts === 0) {
+      notes.push("index_persistence_unproven_this_boot");
+    }
+  }
+
+  const auditPersistence = snapshot.auditPersistence;
+  if (auditPersistence) {
+    if (
+      auditPersistence.status === "failed" ||
+      auditPersistence.unresolvedFailures > 0
+    ) {
+      alerts.push(
+        `audit_persistence_failed_${auditPersistence.lastErrorCode ?? "unknown"}`,
+      );
+      degraded = true;
+    }
+    if (auditPersistence.attempts === 0) {
+      notes.push("audit_persistence_unproven_this_boot");
     }
   }
 

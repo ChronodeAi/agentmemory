@@ -421,5 +421,3 @@ main().catch((error) => {
 });
 //#endregion
 export {};
-
-//# sourceMappingURL=session-start.mjs.map

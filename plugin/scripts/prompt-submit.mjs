@@ -409,5 +409,3 @@ async function main() {
 main().catch(reportObservationDeliveryFailure);
 //#endregion
 export {};
-
-//# sourceMappingURL=prompt-submit.mjs.map

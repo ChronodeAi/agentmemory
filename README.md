@@ -712,6 +712,12 @@ This starts agentmemory with a local `iii-engine` if `iii` is already installed,
 
 Install `iii-engine` manually. **agentmemory currently pins `iii-engine` to `v0.11.2`** — `v0.11.6` introduces a new sandbox-everything-via-`iii worker add` model that agentmemory hasn't been refactored for yet. Pin lifts once the refactor lands. Override with `AGENTMEMORY_III_VERSION=<version>` if you've migrated to the sandbox model manually.
 
+The pinned file-backed KV engine retains its upstream persistence cadence by default. `AGENTMEMORY_III_SAVE_INTERVAL_MS` is an advanced override accepting an integer from `100` to `3600000`; increasing it expands the amount of recent capture that a sudden host failure could lose and should be justified with workload-specific evidence.
+
+Search indexes are rebuildable derivatives of canonical observations. Agentmemory coalesces index changes into at most one full checkpoint every 30 seconds and attempts a final checkpoint on graceful shutdown, avoiding repeated whole-corpus serialization during active coding sessions. Every restart reconciles a non-empty persisted index against canonical observations and memories before declaring search ready, so an interrupted or failed checkpoint cannot permanently hide committed memory.
+
+Startup maintenance is fail-closed and bounded by `AGENTMEMORY_STARTUP_AUDIT_GAP_MAX_ENTRIES`, `AGENTMEMORY_STARTUP_GOVERNANCE_MAX_AUDIT_ENTRIES`, and `AGENTMEMORY_STARTUP_RECONCILE_MAX_ENTRIES` (each defaults to 100,000 and is capped at 1,000,000), plus `REBUILD_EMBED_BATCH_SIZE` (default 32, maximum 64). Audit recovery, governance reconciliation, and search reconciliation share one `AGENTMEMORY_STARTUP_RECONCILE_TIMEOUT_MS` deadline (default 120 seconds, range 10 seconds to 10 minutes). The iii `state::list` API returns each scope as a complete array, so these controls bound Agentmemory after each read but cannot prevent the engine from allocating the response. Search reconciliation may hold one sessions array, one memories array, the growing canonical map, and up to ten session-observation arrays concurrently. Large installations should partition state or adopt a paginated iii state API before raising the caps.
+
 - **macOS arm64:** `mkdir -p ~/.local/bin && curl -fsSL https://github.com/iii-hq/iii/releases/download/iii/v0.11.2/iii-aarch64-apple-darwin.tar.gz | tar -xz -C ~/.local/bin && chmod +x ~/.local/bin/iii`
 - **macOS x64:** swap `aarch64-apple-darwin` for `x86_64-apple-darwin`
 - **Linux x64:** swap for `x86_64-unknown-linux-gnu`
@@ -1426,6 +1432,11 @@ Create `~/.agentmemory/.env`:
 # BM25_WEIGHT=0.4
 # VECTOR_WEIGHT=0.6
 # TOKEN_BUDGET=2000
+# REBUILD_EMBED_BATCH_SIZE=32
+# AGENTMEMORY_STARTUP_RECONCILE_MAX_ENTRIES=100000
+# AGENTMEMORY_STARTUP_AUDIT_GAP_MAX_ENTRIES=100000
+# AGENTMEMORY_STARTUP_GOVERNANCE_MAX_AUDIT_ENTRIES=100000
+# AGENTMEMORY_STARTUP_RECONCILE_TIMEOUT_MS=120000
 
 # Auth
 # AGENTMEMORY_SECRET=your-secret

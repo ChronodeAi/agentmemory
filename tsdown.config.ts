@@ -51,7 +51,7 @@ export default defineConfig([
     ...shared,
     dts: true,
     clean: true,
-    sourcemap: true,
+    sourcemap: false,
     banner: { js: "#!/usr/bin/env node" },
   },
   {
@@ -69,12 +69,26 @@ export default defineConfig([
     sourcemap: false,
   },
   {
+    entry: ["src/mcp/standalone.ts"],
+    outDir: "plugin/scripts",
+    ...shared,
+    clean: false,
+    sourcemap: false,
+  },
+  {
     entry: ["src/functions/migrate.ts"],
     outDir: "dist/functions",
     ...shared,
     clean: false,
     sourcemap: false,
     banner: { js: "#!/usr/bin/env node" },
+  },
+  {
+    entry: ["src/functions/diagnostics.ts"],
+    outDir: "plugin/scripts",
+    ...shared,
+    clean: false,
+    sourcemap: false,
   },
   // One entry per config block prevents tsdown from hoisting shared
   // helpers into hashed chunks across hooks.

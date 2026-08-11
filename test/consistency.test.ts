@@ -35,6 +35,13 @@ describe("Consistency checks", () => {
     expect(plugin.version).toBe(pkg.version);
   });
 
+  it("MCP shim is release-locked to the reviewed fork", () => {
+    const pkg = JSON.parse(readText("package.json"));
+    const shim = JSON.parse(readText("packages/mcp/package.json"));
+    expect(shim.version).toBe(pkg.version);
+    expect(shim.dependencies["@agentmemory/agentmemory"]).toBe(pkg.version);
+  });
+
   it("export-import.ts supports the stable export format version", () => {
     const src = readText("src/functions/export-import.ts");
     expect(EXPORT_FORMAT_VERSION).toBe("0.9.28");

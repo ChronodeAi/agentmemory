@@ -25,6 +25,10 @@ export interface IiiRuntimePorts {
   enginePort: number;
 }
 
+export interface IiiRuntimeOptions {
+  saveIntervalMs?: number;
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   return value as Record<string, unknown>;
@@ -54,6 +58,19 @@ function setWorkerFilePath(worker: IiiWorker, filePath: string): void {
   worker.config = config;
 }
 
+function setWorkerSaveInterval(worker: IiiWorker, intervalMs: number): void {
+  if (!Number.isInteger(intervalMs) || intervalMs < 100 || intervalMs > 3_600_000) {
+    throw new Error("iii save interval must be an integer from 100 to 3600000 ms");
+  }
+  const config = asRecord(worker.config);
+  const adapter = asRecord(config.adapter);
+  const adapterConfig = asRecord(adapter.config);
+  adapterConfig.save_interval_ms = intervalMs;
+  adapter.config = adapterConfig;
+  config.adapter = adapter;
+  worker.config = config;
+}
+
 function localOrigins(restPort: number, viewerPort: number): string[] {
   return [
     `http://localhost:${restPort}`,
@@ -68,6 +85,7 @@ export function materializeIiiRuntimeConfig(
   ports: IiiRuntimePorts,
   runtimeDir = join(homedir(), ".agentmemory", "runtime"),
   dataDir = join(homedir(), ".agentmemory", "data"),
+  options: IiiRuntimeOptions = {},
 ): string {
   const parsed = parseYaml(readFileSync(sourcePath, "utf8")) as IiiConfig;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
@@ -85,6 +103,10 @@ export function materializeIiiRuntimeConfig(
   setWorkerPort(stream, ports.streamPort);
   setWorkerFilePath(state, resolve(dataDir, "state_store.db"));
   setWorkerFilePath(stream, resolve(dataDir, "stream_store"));
+  if (options.saveIntervalMs !== undefined) {
+    setWorkerSaveInterval(state, options.saveIntervalMs);
+    setWorkerSaveInterval(stream, options.saveIntervalMs);
+  }
 
   const httpConfig = asRecord(http.config);
   const cors = asRecord(httpConfig.cors);

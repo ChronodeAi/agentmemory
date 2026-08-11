@@ -61,6 +61,48 @@ describe("evaluateHealth memory severity", () => {
     expect(healthStatusAllowsDoctor("unknown", [])).toBe(false);
   });
 
+  it("classifies iii engine CPU and RSS independently from Node", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          engineResources: {
+            status: "ok",
+            pid: 42,
+            cpuPercent: 90,
+            rssBytes: 3 * 1024 * 1024 * 1024,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: "critical",
+      alerts: expect.arrayContaining([
+        "engine_cpu_critical_90%",
+        "engine_rss_critical_3072mb",
+      ]),
+    });
+  });
+
+  it("degrades on unbounded iii store growth", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          engineResources: {
+            status: "ok",
+            stateStore: {
+              bytes: 100,
+              files: 1,
+              partial: false,
+              growthBytesPerMinute: 64 * 1024 * 1024,
+            },
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: "degraded",
+      alerts: ["engine_store_growth_warn"],
+    });
+  });
+
   it("fails health when KV or worker probing is unavailable", () => {
     expect(
       evaluateHealth(
@@ -339,6 +381,177 @@ describe("evaluateHealth memory severity", () => {
       ]),
     );
   });
+
+  it("reports cross-project capture denial without degrading service health", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          captureAdmission: {
+            active: 0,
+            limit: 256,
+            rejected: 0,
+            scopeDenied: 4,
+            scopeDeniedSinceLastCollection: 2,
+            scopeDenialReasons: { project_scope_mismatch: 4 },
+          },
+        }),
+      ),
+    ).toEqual({
+      status: "healthy",
+      alerts: [],
+      notes: ["capture_scope_denied_2"],
+    });
+  });
+});
+
+describe("boot-local background and persistence health", () => {
+  const idlePipeline: NonNullable<HealthSnapshot["backgroundPipeline"]> = {
+    status: "idle",
+    accepted: 0,
+    started: 0,
+    succeeded: 0,
+    failed: 0,
+    activeAccepted: 0,
+    activeRunning: 0,
+    candidates: 0,
+    promoted: 0,
+    unresolvedFailed: 0,
+    failedProjects: [],
+  };
+
+  it("keeps idle unproven paths healthy and explicit in notes", () => {
+    const result = evaluateHealth(
+      snap({
+        backgroundPipeline: idlePipeline,
+        indexPersistence: {
+          status: "idle",
+          attempts: 0,
+          succeeded: 0,
+          failed: 0,
+          pending: 0,
+          consecutiveFailures: 0,
+        },
+        auditPersistence: {
+          status: "idle",
+          attempts: 0,
+          succeeded: 0,
+          failed: 0,
+        },
+      }),
+    );
+    expect(result.status).toBe("healthy");
+    expect(result.notes).toEqual(
+      expect.arrayContaining([
+        "background_pipeline_unproven_this_boot",
+        "index_persistence_unproven_this_boot",
+        "audit_persistence_unproven_this_boot",
+      ]),
+    );
+  });
+
+  it("degrades for a current-boot pipeline failure", () => {
+    const result = evaluateHealth(
+      snap({
+        backgroundPipeline: {
+          ...idlePipeline,
+          status: "failed",
+          accepted: 1,
+          started: 1,
+          failed: 1,
+          unresolvedFailed: 1,
+          failedProjects: ["github.com/example/project"],
+          lastOutcome: "failed",
+          lastStage: "promotion",
+          lastFailureStage: "promotion",
+          lastErrorCode: "PROMOTION_PERSISTENCE_FAILED",
+        },
+      }),
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.alerts).toContain("background_pipeline_failed_promotion");
+  });
+
+  it("degrades accepted and running work only after bounded budgets", () => {
+    const accepted = evaluateHealth(
+      snap({
+        backgroundPipeline: {
+          ...idlePipeline,
+          status: "active",
+          accepted: 1,
+          activeAccepted: 1,
+          oldestAcceptedAt: new Date(Date.now() - 31_000).toISOString(),
+        },
+      }),
+    );
+    expect(accepted.alerts).toContain("background_pipeline_dispatch_stalled");
+
+    const running = evaluateHealth(
+      snap({
+        backgroundPipeline: {
+          ...idlePipeline,
+          status: "active",
+          accepted: 1,
+          started: 1,
+          activeRunning: 1,
+          oldestRunningAt: new Date(Date.now() - 211_000).toISOString(),
+        },
+      }),
+    );
+    expect(running.alerts).toContain("background_pipeline_running_stalled");
+  });
+
+  it("does not let an unrelated success hide an unresolved pipeline failure", () => {
+    const result = evaluateHealth(
+      snap({
+        backgroundPipeline: {
+          ...idlePipeline,
+          status: "succeeded",
+          accepted: 2,
+          started: 2,
+          succeeded: 1,
+          failed: 1,
+          unresolvedFailed: 1,
+          failedProjects: ["github.com/example/failed-project"],
+          lastOutcome: "succeeded",
+          lastStage: "promotion",
+          lastFailureStage: "summary",
+          lastSucceededAt: new Date().toISOString(),
+        },
+      }),
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.alerts).toContain("background_pipeline_failed_summary");
+  });
+
+  it("reports current index and audit persistence failures independently", () => {
+    const result = evaluateHealth(
+      snap({
+        indexPersistence: {
+          status: "failed",
+          attempts: 1,
+          succeeded: 0,
+          failed: 1,
+          pending: 0,
+          consecutiveFailures: 1,
+          lastErrorCode: "TIMEOUT",
+        },
+        auditPersistence: {
+          status: "failed",
+          attempts: 1,
+          succeeded: 0,
+          failed: 1,
+          lastErrorCode: "AUDIT_PERSISTENCE_FAILED",
+        },
+      }),
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.alerts).toEqual(
+      expect.arrayContaining([
+        "index_persistence_failed_TIMEOUT",
+        "audit_persistence_failed_AUDIT_PERSISTENCE_FAILED",
+      ]),
+    );
+  });
 });
 
 describe("health dependency probing", () => {
@@ -354,6 +567,21 @@ describe("health dependency probing", () => {
         keywordEntries: 12,
         vectorEntries: 8,
       }),
+      getIndexPersistenceStatus: () => ({
+        status: "ready",
+        attempts: 1,
+        succeeded: 1,
+        failed: 0,
+        pending: 0,
+        consecutiveFailures: 0,
+      }),
+      collectEngineResources: () => ({
+        status: "ok",
+        cpuPercent: 0,
+        rssBytes: 0,
+        stateStore: { bytes: 0, files: 0, partial: false },
+        streamStore: { bytes: 0, files: 0, partial: false },
+      }),
     });
     try {
       const snapshot = await monitor.collectNow();
@@ -362,6 +590,17 @@ describe("health dependency probing", () => {
         keywordEntries: 12,
         vectorEntries: 8,
       });
+      expect(snapshot.boot).toMatchObject({
+        id: expect.any(String),
+        startedAt: expect.any(String),
+        pid: process.pid,
+      });
+      expect(snapshot.backgroundPipeline).toBeDefined();
+      expect(snapshot.indexPersistence).toMatchObject({
+        status: "ready",
+        attempts: 1,
+      });
+      expect(snapshot.auditPersistence).toBeDefined();
       expect(snapshot.status).toBe("degraded");
       expect(snapshot.alerts).toContain("search_index_rebuilding");
     } finally {

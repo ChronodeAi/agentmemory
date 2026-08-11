@@ -78,12 +78,15 @@ describe("iii runtime config", () => {
       { restPort: 3111, streamPort: 3112, enginePort: 49134 },
       runtime,
       data,
+      { saveIntervalMs: 15_000 },
     );
     const config = parseYaml(readFileSync(target, "utf8")) as {
       workers: Array<{
         name: string;
         config: {
-          adapter?: { config?: { file_path?: string } };
+          adapter?: {
+            config?: { file_path?: string; save_interval_ms?: number };
+          };
         };
       }>;
     };
@@ -97,6 +100,12 @@ describe("iii runtime config", () => {
     expect(worker("iii-stream")?.config.adapter?.config?.file_path).toBe(
       join(data, "stream_store"),
     );
+    expect(
+      worker("iii-state")?.config.adapter?.config?.save_interval_ms,
+    ).toBe(15_000);
+    expect(
+      worker("iii-stream")?.config.adapter?.config?.save_interval_ms,
+    ).toBe(15_000);
   });
 
   it("materializes all alternate instance ports without modifying the source", () => {
@@ -140,6 +149,31 @@ describe("iii runtime config", () => {
       "http://127.0.0.1:7311",
       "http://127.0.0.1:7313",
     ]);
+  });
+
+  it("preserves the engine save cadence unless explicitly overridden", () => {
+    const { source, runtime, data } = fixture();
+    const target = materializeIiiRuntimeConfig(
+      source,
+      { restPort: 3111, streamPort: 3112, enginePort: 49134 },
+      runtime,
+      data,
+    );
+    const config = parseYaml(readFileSync(target, "utf8")) as {
+      workers: Array<{
+        name: string;
+        config: { adapter?: { config?: { save_interval_ms?: number } } };
+      }>;
+    };
+    const worker = (name: string) =>
+      config.workers.find((item) => item.name === name);
+
+    expect(
+      worker("iii-state")?.config.adapter?.config?.save_interval_ms,
+    ).toBeUndefined();
+    expect(
+      worker("iii-stream")?.config.adapter?.config?.save_interval_ms,
+    ).toBeUndefined();
   });
 
   it("fails closed when required port-bearing workers are absent", () => {

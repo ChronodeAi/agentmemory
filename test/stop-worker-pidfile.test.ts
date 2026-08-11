@@ -26,6 +26,13 @@ describe("stop reaps the worker process (#640, #474)", () => {
     expect(source).toMatch(/Stopping agentmemory worker/);
   });
 
+  it("doctor refuses to stop a launchd-managed worker without supervision handoff", () => {
+    const source = readFileSync("src/cli.ts", "utf-8");
+    expect(source).toMatch(
+      /runStop: async \(\) => \{[\s\S]*?probeManagedLaunchAgents\(\)[\s\S]*?Refusing doctor shutdown/,
+    );
+  });
+
   it("both files agree on the pidfile path: ~/.agentmemory/worker.pid", () => {
     const indexSrc = readFileSync("src/index.ts", "utf-8");
     const cliSrc = readFileSync("src/cli.ts", "utf-8");

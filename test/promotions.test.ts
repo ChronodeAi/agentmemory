@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { registerPromotionFunctions } from "../src/functions/promotions.js";
+import { registerLessonsFunctions } from "../src/functions/lessons.js";
 import { KV } from "../src/state/schema.js";
 import type {
   CompressedObservation,
+  Lesson,
   PromotionCandidate,
   Session,
 } from "../src/types.js";
@@ -578,6 +580,78 @@ describe("evidence-gated promotions", () => {
       ).toBe("pending");
     },
   );
+
+  it("replays a post-lesson-save crash without reinforcing the lesson twice", async () => {
+    registerLessonsFunctions(sdk as never, kv as never);
+    await kv.set(
+      KV.observations("session-1"),
+      "verified-crash-window",
+      evidenceObservation(
+        "verified-crash-window",
+        "test",
+        "verified",
+        "2026-01-01T00:02:00.000Z",
+        { sourceIds: ["test:crash-window:42"] },
+      ),
+    );
+
+    const originalSet = kv.set.bind(kv);
+    let candidateStatusWriteFailed = false;
+    kv.set = async <T>(scope: string, key: string, data: T): Promise<T> => {
+      if (
+        !candidateStatusWriteFailed &&
+        scope === KV.promotionCandidates(PROJECT) &&
+        (data as { status?: unknown }).status === "auto_promoted"
+      ) {
+        candidateStatusWriteFailed = true;
+        const persistedBeforeCrash = structuredClone(
+          data as PromotionCandidate,
+        );
+        persistedBeforeCrash.status = "pending";
+        delete persistedBeforeCrash.promotedRecordId;
+        delete persistedBeforeCrash.decidedAt;
+        await originalSet(scope, key, persistedBeforeCrash as T);
+        throw new Error("simulated crash after lesson persistence");
+      }
+      return originalSet(scope, key, data);
+    };
+
+    await expect(
+      sdk.trigger("mem::promotion-generate", {
+        sessionId: "session-1",
+        project: PROJECT,
+      }),
+    ).rejects.toThrow("simulated crash after lesson persistence");
+
+    const afterCrash = await kv.list<Lesson>(KV.lessons);
+    expect(afterCrash).toHaveLength(1);
+    expect(afterCrash[0]).toMatchObject({
+      reinforcements: 0,
+      appliedIdempotencyKeys: [expect.stringMatching(/^promo_/)],
+    });
+
+    const replay = (await sdk.trigger("mem::promotion-generate", {
+      sessionId: "session-1",
+      project: PROJECT,
+    })) as { success: boolean; promoted: number };
+    expect(replay).toMatchObject({ success: true, promoted: 1 });
+
+    const afterReplay = await kv.list<Lesson>(KV.lessons);
+    expect(afterReplay).toHaveLength(1);
+    expect(afterReplay[0]).toMatchObject({
+      reinforcements: 0,
+      appliedIdempotencyKeys: afterCrash[0].appliedIdempotencyKeys,
+    });
+    const candidates = await kv.list<PromotionCandidate>(
+      KV.promotionCandidates(PROJECT),
+    );
+    expect(candidates).toContainEqual(
+      expect.objectContaining({
+        id: afterCrash[0].appliedIdempotencyKeys?.[0],
+        status: "auto_promoted",
+      }),
+    );
+  });
 
   it("keeps an explicitly accepted lesson candidate pending when lesson persistence fails", async () => {
     await kv.set(

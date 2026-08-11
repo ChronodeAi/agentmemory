@@ -417,5 +417,3 @@ async function main() {
 main().catch(reportObservationDeliveryFailure);
 //#endregion
 export {};
-
-//# sourceMappingURL=subagent-stop.mjs.map

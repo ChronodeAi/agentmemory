@@ -12,6 +12,7 @@ import {
   readdirSync,
   readFileSync,
   readlinkSync,
+  realpathSync,
   rmSync,
   statSync,
   unlinkSync,
@@ -74,6 +75,15 @@ import {
   resolveClientRequestScope,
 } from "./client-auth.js";
 import { isStrictCapabilityMode } from "./auth.js";
+import {
+  agentmemoryProcessIdentityMatches,
+  runtimeProcessExecutable,
+  type AgentmemoryProcessKind,
+} from "./runtime-process-identity.js";
+import {
+  probeManagedLaunchAgents,
+  unloadManagedLaunchAgents,
+} from "./managed-launch-agent.js";
 
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
@@ -777,7 +787,13 @@ function adoptRunningEngine(): void {
   try {
     const existingState = readEngineState();
     const existingPid = readEnginePidfile();
-    if (existingState && existingPid) return;
+    if (existingState && existingPid) {
+      if (existingState.kind === "native" && !existingState.binPath) {
+        const binPath = runtimeProcessExecutable(existingPid);
+        if (binPath) writeEngineState({ ...existingState, binPath });
+      }
+      return;
+    }
 
     const pids = findEnginePidsByPort(getRestPort());
     const enginePid = pids[0];
@@ -789,6 +805,9 @@ function adoptRunningEngine(): void {
         kind: "native",
         configPath: findIiiConfig() || "",
         attached: true,
+        ...(enginePid
+          ? { binPath: runtimeProcessExecutable(enginePid) }
+          : {}),
       });
     }
     if (enginePid && !existingPid) {
@@ -938,11 +957,23 @@ async function startEngine(): Promise<boolean> {
   let configPath = sourceConfigPath;
   if (sourceConfigPath) {
     try {
-      configPath = materializeIiiRuntimeConfig(sourceConfigPath, {
-        restPort: getRestPort(),
-        streamPort: getStreamPort(),
-        enginePort: getEnginePort(),
-      });
+      configPath = materializeIiiRuntimeConfig(
+        sourceConfigPath,
+        {
+          restPort: getRestPort(),
+          streamPort: getStreamPort(),
+          enginePort: getEnginePort(),
+        },
+        undefined,
+        undefined,
+        getEnvVar("AGENTMEMORY_III_SAVE_INTERVAL_MS") === undefined
+          ? undefined
+          : {
+              saveIntervalMs: Number(
+                getEnvVar("AGENTMEMORY_III_SAVE_INTERVAL_MS"),
+              ),
+            },
+      );
     } catch (error) {
       startupFailure = {
         kind: "engine-crashed",
@@ -1742,29 +1773,95 @@ function buildDoctorEffects(): DoctorEffects {
     },
     runStop: async () => {
       try {
-        // runStop calls process.exit on its own — guard against that here
-        // by short-circuiting when there's nothing to stop.
+        const managed = probeManagedLaunchAgents();
+        if (managed.status !== "absent") {
+          return {
+            ok: false,
+            message:
+              managed.status === "loaded"
+                ? `Managed launchd service is loaded (${managed.services.join(", ")}). ` +
+                  "Run `agentmemory stop` first so launchd cannot respawn the worker."
+                : `Cannot establish launchd ownership: ${managed.detail}. ` +
+                  "Refusing doctor shutdown.",
+          };
+        }
         const port = getRestPort();
         const portPids = findEnginePidsByPort(port);
         const pidfilePid = readEnginePidfile();
-        if (portPids.length === 0 && pidfilePid === null) {
+        const workerPid = readWorkerPidfile();
+        const state = readEngineState();
+        if (portPids.length === 0 && pidfilePid === null && workerPid === null) {
           clearEnginePidfile();
           clearEngineState();
+          clearWorkerPidfile();
           return { ok: true, message: "Nothing to stop." };
+        }
+        if (state?.kind === "docker") {
+          return {
+            ok: false,
+            message: "Doctor will not signal host PIDs for a Docker-managed engine.",
+          };
         }
         const candidates = new Set<number>();
         if (pidfilePid) candidates.add(pidfilePid);
         for (const pid of portPids) candidates.add(pid);
+        const workers = new Set<number>();
+        if (workerPid) workers.add(workerPid);
+        const expectedEngine = expectedNativeEngineIdentity(state);
+        const invalidWorkers = [...workers].filter(
+          (pid) => !stopProcessIdentityMatches(pid, "worker"),
+        );
+        const invalidEngines = [...candidates].filter(
+          (pid) =>
+            !workers.has(pid) &&
+            !stopProcessIdentityMatches(pid, "engine", expectedEngine),
+        );
+        if (invalidWorkers.length > 0 || invalidEngines.length > 0) {
+          return {
+            ok: false,
+            message:
+              `Refusing to signal unverifiable runtime PID(s): workers ` +
+              `${invalidWorkers.join(", ") || "none"}; engines ` +
+              `${invalidEngines.join(", ") || "none"}`,
+          };
+        }
+        for (const pid of workers) {
+          const ok = await signalAndWait(
+            pid,
+            "SIGTERM",
+            22_000,
+            false,
+            () => stopProcessIdentityMatches(pid, "worker"),
+          );
+          if (!ok) {
+            return {
+              ok: false,
+              message: `Worker PID ${pid} did not stop; engine state was preserved.`,
+            };
+          }
+        }
         let allStopped = true;
         for (const pid of candidates) {
-          const ok = await signalAndWait(pid, "SIGTERM", 3000);
+          if (workers.has(pid)) continue;
+          const ok = await signalAndWait(
+            pid,
+            "SIGTERM",
+            3000,
+            true,
+            () => stopProcessIdentityMatches(pid, "engine", expectedEngine),
+          );
           if (!ok) allStopped = false;
         }
-        clearEnginePidfile();
-        clearEngineState();
+        if (allStopped) {
+          clearEnginePidfile();
+          clearEngineState();
+          clearWorkerPidfile();
+        }
         return {
           ok: allStopped,
-          message: allStopped ? "Engine stopped." : "Some engine pids survived.",
+          message: allStopped
+            ? "Engine stopped."
+            : "Some engine PIDs survived; state and pidfile were preserved.",
         };
       } catch (err) {
         return {
@@ -2575,11 +2672,83 @@ function pidAlive(pid: number): boolean {
   }
 }
 
+type ExpectedNativeEngineIdentity = {
+  executable: string;
+  configPath: string;
+};
+
+function stopProcessIdentityMatches(
+  pid: number,
+  kind: AgentmemoryProcessKind,
+  expectedEngine?: ExpectedNativeEngineIdentity,
+): boolean {
+  if (!pidAlive(pid)) return true;
+  const pidfile = kind === "worker" ? workerPidfilePath() : enginePidfilePath();
+  let pidfileMtimeMs: number;
+  try {
+    pidfileMtimeMs = statSync(pidfile).mtimeMs;
+  } catch {
+    return false;
+  }
+  const expectedWorkerScripts = new Set<string>();
+  if (kind === "worker") {
+    for (const candidate of [
+      process.argv[1],
+      join(__dirname, "cli.mjs"),
+      join(__dirname, "cli.js"),
+      join(__dirname, "index.mjs"),
+      join(__dirname, "index.js"),
+    ]) {
+      if (!candidate) continue;
+      expectedWorkerScripts.add(candidate);
+      try {
+        expectedWorkerScripts.add(realpathSync.native(candidate));
+      } catch {}
+    }
+  }
+  return agentmemoryProcessIdentityMatches(pid, {
+    kind,
+    pidfileMtimeMs,
+    ...(kind === "engine"
+      ? {
+          expectedExecutable: expectedEngine?.executable,
+          expectedEngineConfigPath: expectedEngine?.configPath,
+        }
+      : {}),
+    ...(kind === "worker"
+      ? { expectedWorkerScripts: [...expectedWorkerScripts] }
+      : {}),
+  });
+}
+
+function expectedNativeEngineIdentity(
+  state: EngineState | null,
+): ExpectedNativeEngineIdentity | undefined {
+  if (state?.kind !== "native" || !state.configPath.trim()) return undefined;
+  if (state.binPath) {
+    return { executable: state.binPath, configPath: state.configPath };
+  }
+  for (const candidate of [privateIiiPath(), whichBinary("iii")]) {
+    if (!candidate || !existsSync(candidate)) continue;
+    const compatible = resolveCompatibleIii(candidate);
+    if (compatible) {
+      return { executable: compatible, configPath: state.configPath };
+    }
+  }
+  return undefined;
+}
+
 async function signalAndWait(
   pid: number,
   initialSignal: NodeJS.Signals,
   timeoutMs: number,
+  forceAfterTimeout = true,
+  identityCheck?: () => boolean,
 ): Promise<boolean> {
+  if (identityCheck && !identityCheck()) {
+    vlog(`refusing ${initialSignal} for pid ${pid}: process identity changed`);
+    return false;
+  }
   try {
     process.kill(pid, initialSignal);
   } catch (err) {
@@ -2598,6 +2767,11 @@ async function signalAndWait(
     await new Promise((r) => setTimeout(r, 200));
   }
   if (!pidAlive(pid)) return true;
+  if (!forceAfterTimeout) return false;
+  if (identityCheck && !identityCheck()) {
+    vlog(`refusing SIGKILL for pid ${pid}: process identity changed`);
+    return false;
+  }
   try {
     process.kill(pid, "SIGKILL");
   } catch (err) {
@@ -2607,43 +2781,6 @@ async function signalAndWait(
   }
   await new Promise((r) => setTimeout(r, 200));
   return !pidAlive(pid);
-}
-
-function unloadManagedLaunchAgent(): {
-  loaded: boolean;
-  unloaded: boolean;
-  detail?: string;
-} {
-  if (platform() !== "darwin" || typeof process.getuid !== "function") {
-    return { loaded: false, unloaded: false };
-  }
-  const launchctl = whichBinary("launchctl");
-  if (!launchctl) return { loaded: false, unloaded: false };
-  const service = `gui/${process.getuid()}/com.agentmemory.server`;
-  try {
-    execFileSync(launchctl, ["print", service], {
-      stdio: ["ignore", "ignore", "ignore"],
-      timeout: 3000,
-    });
-  } catch {
-    return { loaded: false, unloaded: false };
-  }
-  const result = spawnSync(launchctl, ["bootout", service], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-    timeout: 10000,
-  });
-  if ((result.status ?? 1) === 0) {
-    return { loaded: true, unloaded: true };
-  }
-  return {
-    loaded: true,
-    unloaded: false,
-    detail:
-      result.stderr?.trim() ||
-      result.error?.message ||
-      `launchctl exited ${result.status ?? "without status"}`,
-  };
 }
 
 function findEnginePidsByPort(port: number): number[] {
@@ -2688,35 +2825,38 @@ async function stopDockerEngine(composeFile: string, port: number): Promise<void
   const ok = runCommand(dockerBin, ["compose", "-f", composeFile, "down"], {
     label: `docker compose -f ${composeFile} down`,
   });
-  clearEnginePidfile();
-  clearEngineState();
-  clearWorkerPidfile();
   if (!ok) {
     p.log.error(
       `docker compose down failed. The engine may still be running on :${port}. Inspect with:\n  docker compose -f ${composeFile} ps`,
     );
     process.exit(1);
   }
-  p.outro("Stopped. Memories persisted to disk; restart anytime with: npx @agentmemory/agentmemory");
+  clearEnginePidfile();
+  clearEngineState();
+  clearWorkerPidfile();
+  p.outro(
+    "Stopped. Canonical memories remain on disk; derived indexes are reconciled on restart: npx @agentmemory/agentmemory",
+  );
 }
 
 async function runStop(): Promise<void> {
   p.intro("agentmemory stop");
-  const launchAgent = unloadManagedLaunchAgent();
-  if (launchAgent.loaded && !launchAgent.unloaded) {
+  const launchAgents = unloadManagedLaunchAgents();
+  if (launchAgents.status === "indeterminate") {
     p.log.error(
-      `Could not unload com.agentmemory.server: ${launchAgent.detail ?? "unknown error"}`,
+      `Could not establish or release launchd ownership: ${launchAgents.detail}`,
     );
     process.exit(1);
   }
-  if (launchAgent.unloaded) {
+  if (launchAgents.status === "unloaded") {
     p.log.info(
-      "Unloaded com.agentmemory.server so launchd cannot restart the worker during shutdown.",
+      `Unloaded ${launchAgents.services.join(", ")} so launchd cannot restart the worker during shutdown.`,
     );
     await new Promise((resolve) => setTimeout(resolve, 250));
   }
   const port = getRestPort();
   const state = readEngineState();
+  const expectedEngine = expectedNativeEngineIdentity(state);
   const running = await isEngineRunning();
   const force = args.includes("--force");
 
@@ -2751,18 +2891,34 @@ async function runStop(): Promise<void> {
     if (workerPid !== null && portPids.length === 0 && pidfilePid === null) {
       // Engine already gone but worker is lingering — reap it directly
       // instead of preserving for manual cleanup.
+      if (!stopProcessIdentityMatches(workerPid, "worker")) {
+        p.log.error(
+          `Worker pidfile points to pid ${workerPid}, but its command is not an Agentmemory worker. Refusing to signal it and preserving pidfiles.`,
+        );
+        process.exit(1);
+      }
       const s = p.spinner();
       s.start(`Stopping orphaned agentmemory worker (pid ${workerPid})...`);
-      const ok = await signalAndWait(workerPid, "SIGTERM", 3000);
+      const ok = await signalAndWait(
+        workerPid,
+        "SIGTERM",
+        22_000,
+        false,
+        () => stopProcessIdentityMatches(workerPid, "worker"),
+      );
       s.stop(ok ? `Stopped worker pid ${workerPid}` : `Failed to stop worker pid ${workerPid}`);
+      if (!ok) {
+        p.log.error(
+          `Worker pid ${workerPid} did not complete graceful shutdown. Preserving pidfiles; investigate with \`ps\`.`,
+        );
+        process.exit(1);
+      }
       clearEnginePidfile();
       clearEngineState();
       clearWorkerPidfile();
-      if (!ok) {
-        p.log.error(`Worker pid ${workerPid} survived SIGKILL. Investigate with \`ps\`.`);
-        process.exit(1);
-      }
-      p.outro("Stopped orphaned worker. Memories persisted to disk.");
+      p.outro(
+        "Stopped orphaned worker. Canonical memories remain on disk; derived indexes are reconciled on restart.",
+      );
       return;
     }
     const survivors = new Set<number>(portPids);
@@ -2810,38 +2966,78 @@ async function runStop(): Promise<void> {
     process.exit(1);
   }
 
+  const invalidWorkers = [...workerCandidates].filter(
+    (pid) => !stopProcessIdentityMatches(pid, "worker"),
+  );
+  const invalidEngines = [...candidates].filter(
+    (pid) =>
+      !workerCandidates.has(pid) &&
+      !stopProcessIdentityMatches(pid, "engine", expectedEngine),
+  );
+  if (invalidWorkers.length > 0 || invalidEngines.length > 0) {
+    p.log.error(
+      `Refusing shutdown because pidfile/port identity verification failed. ` +
+        `worker pids: ${invalidWorkers.join(", ") || "none"}; ` +
+        `engine pids: ${invalidEngines.join(", ") || "none"}. ` +
+        `Pidfiles are preserved for investigation.`,
+    );
+    process.exit(1);
+  }
+
   let allStopped = true;
   // stop worker first, then engine. The worker's shutdown
-  // handler calls indexPersistence.save() -> kv.set() -> iii state::set
-  // to flush BM25/vector snapshots + audit rows. Killing iii first
-  // leaves those writes with no engine to land on, and the index +
-  // observations end up as in-memory state the iii process never
-  // persists. Worker SIGTERM grace bumped 3s -> 5s to give a large
-  // index a real chance to commit before the engine goes away.
+  // handler attempts a final derived-index checkpoint through iii. Do not
+  // force-kill the worker: its own bounded shutdown path gets the full grace
+  // period, and startup reconciliation repairs any interrupted checkpoint.
+  // The engine must remain available until the worker exits.
+  let workersStopped = true;
   for (const pid of workerCandidates) {
     const s = p.spinner();
     s.start(`Stopping agentmemory worker (pid ${pid})... [flushing state]`);
-    const ok = await signalAndWait(pid, "SIGTERM", 5000);
+    const ok = await signalAndWait(
+      pid,
+      "SIGTERM",
+      22_000,
+      false,
+      () => stopProcessIdentityMatches(pid, "worker"),
+    );
     s.stop(ok ? `Stopped worker pid ${pid}` : `Failed to stop worker pid ${pid}`);
-    if (!ok) allStopped = false;
+    if (!ok) {
+      allStopped = false;
+      workersStopped = false;
+    }
+  }
+  if (!workersStopped) {
+    p.log.error(
+      "Worker did not complete bounded graceful shutdown. Preserving iii-engine and pidfiles so canonical state remains available for investigation.",
+    );
+    process.exit(1);
   }
   for (const pid of candidates) {
     if (workerCandidates.has(pid)) continue;
     const s = p.spinner();
     s.start(`Stopping iii-engine (pid ${pid})...`);
-    const ok = await signalAndWait(pid, "SIGTERM", 3000);
+    const ok = await signalAndWait(
+      pid,
+      "SIGTERM",
+      3000,
+      true,
+      () => stopProcessIdentityMatches(pid, "engine", expectedEngine),
+    );
     s.stop(ok ? `Stopped pid ${pid}` : `Failed to stop pid ${pid}`);
     if (!ok) allStopped = false;
   }
 
-  clearEnginePidfile();
-  clearEngineState();
-  clearWorkerPidfile();
   if (!allStopped) {
     p.log.error("One or more processes survived SIGKILL. Investigate with `ps`.");
     process.exit(1);
   }
-  p.outro("Stopped. Memories persisted to disk; restart anytime with: npx @agentmemory/agentmemory");
+  clearEnginePidfile();
+  clearEngineState();
+  clearWorkerPidfile();
+  p.outro(
+    "Stopped. Canonical memories remain on disk; derived indexes are reconciled on restart: npx @agentmemory/agentmemory",
+  );
 }
 
 async function runMcp(): Promise<void> {

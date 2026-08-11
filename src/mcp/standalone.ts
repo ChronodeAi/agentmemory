@@ -3,9 +3,10 @@
 import { InMemoryKV } from "./in-memory-kv.js";
 import { createStdioTransport } from "./transport.js";
 import { getAllTools } from "./tools-registry.js";
-import { getStandalonePersistPath } from "../config.js";
 import { VERSION } from "../version.js";
 import { generateId } from "../state/schema.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   resolveHandle,
   invalidateHandle,
@@ -23,11 +24,26 @@ const IMPLEMENTED_TOOLS = new Set([
   "memory_governance_delete",
 ]);
 
+const READ_ONLY_LOCAL_FALLBACK_TOOLS = new Set([
+  "memory_recall",
+  "memory_smart_search",
+  "memory_sessions",
+  "memory_export",
+  "memory_audit",
+]);
+
 const SERVER_INFO = {
   name: "agentmemory",
   version: VERSION,
   protocolVersion: "2024-11-05",
 };
+
+function getStandalonePersistPath(): string {
+  return (
+    process.env["STANDALONE_PERSIST_PATH"]?.trim() ||
+    join(homedir(), ".agentmemory", "standalone.json")
+  );
+}
 
 const kv = new InMemoryKV(getStandalonePersistPath());
 let modeAnnounced = false;
@@ -429,10 +445,17 @@ export async function handleToolCall(
     try {
       return await handleProxy(validated, handle);
     } catch (err) {
+      const mayFallback = READ_ONLY_LOCAL_FALLBACK_TOOLS.has(toolName);
       process.stderr.write(
-        `[@agentmemory/mcp] proxy call failed for ${toolName}: ${err instanceof Error ? err.message : String(err)}; invalidating handle and falling back to local KV\n`,
+        `[@agentmemory/mcp] proxy call failed for ${toolName}: ${err instanceof Error ? err.message : String(err)}; invalidating handle${mayFallback ? " and falling back to local read-only data" : " without replaying the mutation locally"}\n`,
       );
       invalidateHandle();
+      if (!mayFallback) {
+        throw new Error(
+          `proxy mutation outcome is ambiguous for ${toolName}; local fallback was not attempted`,
+          { cause: err },
+        );
+      }
     }
   }
   return handleLocal(validated, kvInstance);

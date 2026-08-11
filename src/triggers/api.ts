@@ -1,7 +1,7 @@
-import { TriggerAction, type ISdk, type ApiRequest } from "iii-sdk";
+import { type ISdk, type ApiRequest } from "iii-sdk";
 import type { Session, CompressedObservation, HookPayload, CommitLink, SessionSummary } from "../types.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
-import { KV } from "../state/schema.js";
+import { KV, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
@@ -46,6 +46,10 @@ import {
   getVectorIndex,
   rebuildIndex,
 } from "../functions/search.js";
+import {
+  recordBackgroundPipelineAccepted,
+} from "../health/background-pipeline.js";
+import { dispatchSessionStopped } from "./events.js";
 
 type Response = {
   status_code: number;
@@ -1241,6 +1245,7 @@ export function registerApiTriggers(
           body: { error: "sessionId is required and must be a non-empty string" },
         };
       }
+      return withKeyedLock(`session-end:${sessionId}`, async () => {
       const session = await kv.get<Session>(KV.sessions, sessionId);
       if (!session) {
         return { status_code: 404, body: { error: "session not found" } };
@@ -1252,26 +1257,114 @@ export function registerApiTriggers(
         };
       }
       if (session.status === "completed") {
-        return { status_code: 200, body: { success: true, alreadyClosed: true } };
+        if (
+          session.backgroundPipelineStatus === "failed" &&
+          (session.backgroundPipelineAttempts ?? 0) < 3 &&
+          session.backgroundPipelineRunId
+        ) {
+          const acceptedAt = new Date().toISOString();
+          await kv.update(KV.sessions, sessionId, [
+            {
+              type: "set",
+              path: "backgroundPipelineStatus",
+              value: "accepted",
+            },
+            {
+              type: "set",
+              path: "backgroundPipelineStage",
+              value: "dispatch",
+            },
+            {
+              type: "set",
+              path: "backgroundPipelineAcceptedAt",
+              value: acceptedAt,
+            },
+            {
+              type: "set",
+              path: "backgroundPipelineErrorCode",
+              value: null,
+            },
+          ]);
+          recordBackgroundPipelineAccepted({
+            runId: session.backgroundPipelineRunId,
+            sessionId,
+            project,
+            acceptedAt,
+          });
+          const pipelineAccepted = await dispatchSessionStopped(sdk, kv, {
+            sessionId,
+            project,
+            pipelineRunId: session.backgroundPipelineRunId,
+          });
+          return {
+            status_code: 200,
+            body: {
+              success: true,
+              alreadyClosed: true,
+              retryingPipeline: true,
+              pipelineRunId: session.backgroundPipelineRunId,
+              pipelineAccepted,
+            },
+          };
+        }
+        return {
+          status_code: 200,
+          body: {
+            success: true,
+            alreadyClosed: true,
+            ...(session.backgroundPipelineStatus
+              ? { pipelineStatus: session.backgroundPipelineStatus }
+              : {}),
+            ...(session.backgroundPipelineRunId
+              ? { pipelineRunId: session.backgroundPipelineRunId }
+              : {}),
+          },
+        };
       }
+      const pipelineRunId = generateId("pipeline");
+      const acceptedAt = new Date().toISOString();
       await kv.update(KV.sessions, sessionId, [
-        { type: "set", path: "endedAt", value: new Date().toISOString() },
+        { type: "set", path: "endedAt", value: acceptedAt },
         { type: "set", path: "status", value: "completed" },
+        { type: "set", path: "backgroundPipelineRunId", value: pipelineRunId },
+        {
+          type: "set",
+          path: "backgroundPipelineStatus",
+          value: "accepted",
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineStage",
+          value: "dispatch",
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineAttempts",
+          value: 0,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineAcceptedAt",
+          value: acceptedAt,
+        },
       ]);
       // Fan out session-stopped lifecycle (non-blocking).
-      try {
-        sdk.trigger({
-          function_id: "event::session::stopped",
-          payload: { sessionId, project },
-          action: TriggerAction.Void(),
-        });
-      } catch (err) {
-        logger.warn("event::session::stopped trigger failed", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-      return { status_code: 200, body: { success: true } };
+      recordBackgroundPipelineAccepted({
+        runId: pipelineRunId,
+        sessionId,
+        project,
+        acceptedAt,
+      });
+      const pipelineAccepted = await dispatchSessionStopped(sdk, kv, {
+        sessionId,
+        project,
+        pipelineRunId,
+      });
+      return {
+        status_code: 200,
+        body: { success: true, pipelineRunId, pipelineAccepted },
+      };
+      });
     },
   );
   registerApiTrigger({
@@ -1544,15 +1637,31 @@ export function registerApiTriggers(
       const filtered = filterAgentId
         ? sessions.filter((s) => s.agentId === filterAgentId)
         : sessions;
+      const requestedLimit = Number(req.query_params?.["limit"]);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.max(1, Math.min(1000, Math.floor(requestedLimit)))
+        : undefined;
+      const selected = limit
+        ? [...filtered]
+            .sort((a, b) =>
+              (b.updatedAt ?? b.startedAt ?? "").localeCompare(
+                a.updatedAt ?? a.startedAt ?? "",
+              ),
+            )
+            .slice(0, limit)
+        : filtered;
       const summaries = await Promise.all(
-        filtered.map((s) =>
+        selected.map((s) =>
           kv.get<SessionSummary>(KV.summaries, s.id).catch(() => null),
         ),
       );
-      const withSummary = filtered.map((s, i) =>
+      const withSummary = selected.map((s, i) =>
         summaries[i] ? { ...s, summary: summaries[i] } : s,
       );
-      return { status_code: 200, body: { sessions: withSummary } };
+      return {
+        status_code: 200,
+        body: { sessions: withSummary, total: filtered.length },
+      };
     },
   );
   registerApiTrigger({

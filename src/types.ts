@@ -22,6 +22,24 @@ export interface Session {
   privacy?: "standard" | "private" | "strict";
   captureProfile?: "minimal" | "balanced" | "full";
   externalProcessing?: boolean;
+  backgroundPipelineRunId?: string;
+  backgroundPipelineStatus?:
+    | "accepted"
+    | "running"
+    | "succeeded"
+    | "failed";
+  backgroundPipelineStage?:
+    | "dispatch"
+    | "session_validation"
+    | "summary"
+    | "promotion";
+  backgroundPipelineAttempts?: number;
+  backgroundPipelineAcceptedAt?: string;
+  backgroundPipelineStartedAt?: string;
+  backgroundPipelineFinishedAt?: string;
+  backgroundPipelineErrorCode?: string | null;
+  backgroundPipelineSummaryStatus?: "succeeded" | "skipped" | "failed";
+  backgroundPipelinePromotionStatus?: "succeeded" | "failed";
 }
 
 export interface CommitLink {
@@ -228,6 +246,11 @@ export interface FunctionMetrics {
 export interface HealthSnapshot {
   collectedAt?: string;
   expiresAt?: string;
+  boot?: {
+    id: string;
+    startedAt: string;
+    pid: number;
+  };
   connectionState: string;
   workers: Array<{ id: string; name: string; status: string }>;
   workerProbeStatus?: "ok" | "error" | "empty" | "invalid";
@@ -240,6 +263,27 @@ export interface HealthSnapshot {
     systemTotal?: number;
   };
   cpu: { userMicros: number; systemMicros: number; percent: number };
+  engineResources?: {
+    status: "ok" | "partial" | "unavailable" | "error";
+    pid?: number;
+    cpuPercent?: number;
+    rssBytes?: number;
+    error?: string;
+    stateStore?: {
+      bytes: number;
+      files: number;
+      partial: boolean;
+      growthBytes?: number;
+      growthBytesPerMinute?: number;
+    };
+    streamStore?: {
+      bytes: number;
+      files: number;
+      partial: boolean;
+      growthBytes?: number;
+      growthBytesPerMinute?: number;
+    };
+  };
   eventLoopLagMs: number;
   uptimeSeconds: number;
   kvConnectivity?: { status: string; latencyMs?: number; error?: string };
@@ -250,12 +294,49 @@ export interface HealthSnapshot {
     completed?: number;
     failed?: number;
     rejected: number;
+    scopeDenied?: number;
     failedSinceLastCollection?: number;
     rejectedSinceLastCollection?: number;
+    scopeDeniedSinceLastCollection?: number;
     failureReasons?: Record<string, number>;
     rejectionReasons?: Record<string, number>;
+    scopeDenialReasons?: Record<string, number>;
     failureReasonsSinceLastCollection?: Record<string, number>;
     rejectionReasonsSinceLastCollection?: Record<string, number>;
+    scopeDenialReasonsSinceLastCollection?: Record<string, number>;
+    lastCompletionAt?: string;
+    lastFailureAt?: string;
+    lastRejectionAt?: string;
+    lastScopeDenialAt?: string;
+  };
+  backgroundPipeline?: import("./health/background-pipeline.js").BackgroundPipelineHealth;
+  indexPersistence?: {
+    status: "idle" | "scheduled" | "saving" | "ready" | "failed" | "stopped";
+    attempts: number;
+    succeeded: number;
+    failed: number;
+    pending: number;
+    consecutiveFailures: number;
+    scheduledAt?: string;
+    pendingSince?: string;
+    lastAttemptAt?: string;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    lastErrorCode?: string;
+  };
+  auditPersistence?: {
+    status: "idle" | "ready" | "recovering" | "failed";
+    attempts: number;
+    succeeded: number;
+    failed: number;
+    pending: number;
+    recovered: number;
+    unresolvedFailures: number;
+    lastAttemptAt?: string;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    lastRecoveredAt?: string;
+    lastErrorCode?: string;
   };
   searchIndex?: {
     status: "initializing" | "rebuilding" | "ready" | "partial" | "failed";
@@ -638,6 +719,7 @@ export interface AuditEntry {
     | "action_create"
     | "action_update"
     | "lease_acquire"
+    | "lease_renew"
     | "lease_release"
     | "routine_run"
     | "signal_send"
@@ -654,6 +736,7 @@ export interface AuditEntry {
     | "crystallize"
     | "diagnose"
     | "heal"
+    | "audit_gap"
     | "index_persist"
     | "facet_tag"
     | "lesson_save"
@@ -870,6 +953,7 @@ export interface Lesson {
   reinforcements: number;
   source: "crystal" | "manual" | "consolidation";
   sourceIds: string[];
+  appliedIdempotencyKeys?: string[];
   project?: string;
   tags: string[];
   createdAt: string;

@@ -5,7 +5,7 @@
 // formatting. The full interactive prompt loop lives in src/cli.ts and is
 // driven by clack — exercising it would require a TTY and is out of scope.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   buildDiagnostics,
   DIAGNOSTIC_IDS,
@@ -222,6 +222,24 @@ describe("doctor v2 diagnostic catalog", () => {
     const check = diagnostics.find((d) => d.id === "engine-version-mismatch")!;
     const status = await check.check(stubCtx());
     expect(status.ok).toBe(true);
+  });
+
+  it("engine-version repair does not restart after a failed stop", async () => {
+    const runStart = vi.fn(async () => ({ ok: true, message: "started" }));
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        runStop: async () => ({ ok: false, message: "worker survived" }),
+        runStart,
+      }),
+    );
+    const diagnostic = diagnostics.find(
+      (entry) => entry.id === "engine-version-mismatch",
+    )!;
+    await expect(diagnostic.fix(stubCtx())).resolves.toEqual({
+      ok: false,
+      message: "worker survived",
+    });
+    expect(runStart).not.toHaveBeenCalled();
   });
 
   it("viewer-unreachable fails when viewer probe returns false", async () => {

@@ -16,6 +16,7 @@ import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
 let index: SearchIndex | null = null
 let vectorIndex: VectorIndex | null = null
 let currentEmbeddingProvider: EmbeddingProvider | null = null
+const vectorExcludedIds = new Set<string>()
 let rebuildInFlight: Promise<number> | null = null
 let suppressIndexPersistence = false
 
@@ -50,8 +51,12 @@ export function markSearchIndexReady(
   vectorExpected: boolean,
   aligned = true,
 ): void {
+  const requiredVectorEntries = Math.max(
+    0,
+    keywordEntries - vectorExcludedIds.size,
+  )
   const status =
-    vectorExpected && (!aligned || vectorEntries !== keywordEntries)
+    vectorExpected && (!aligned || vectorEntries !== requiredVectorEntries)
       ? "partial"
       : "ready"
   searchIndexRuntimeStatus = {
@@ -69,6 +74,7 @@ export function getSearchIndex(): SearchIndex {
 
 export function setVectorIndex(idx: VectorIndex | null): void {
   vectorIndex = idx
+  vectorExcludedIds.clear()
 }
 
 export function getVectorIndex(): VectorIndex | null {
@@ -87,14 +93,23 @@ export function getSearchIndexDrift(): {
   const keywordIds = new Set(keywordEntries.map((entry) => entry.obsId))
   return {
     missingVectorIds: keywordEntries
-      .filter((entry) => !vi.has(entry.obsId))
+      .filter(
+        (entry) =>
+          !vectorExcludedIds.has(entry.obsId) && !vi.has(entry.obsId),
+      )
       .map((entry) => entry.obsId),
-    orphanVectorIds: vi.ids().filter((obsId) => !keywordIds.has(obsId)),
+    orphanVectorIds: vi
+      .ids()
+      .filter(
+        (obsId) =>
+          !keywordIds.has(obsId) || vectorExcludedIds.has(obsId),
+      ),
   }
 }
 
 export function setEmbeddingProvider(provider: EmbeddingProvider | null): void {
   currentEmbeddingProvider = provider
+  vectorExcludedIds.clear()
 }
 
 export function getEmbeddingProvider(): EmbeddingProvider | null {
@@ -103,6 +118,7 @@ export function getEmbeddingProvider(): EmbeddingProvider | null {
 
 export function vectorIndexRemove(id: string): void {
   vectorIndex?.remove(id);
+  vectorExcludedIds.delete(id);
 }
 
 // Persistence sync hook. Without this, index removals only live in
@@ -210,6 +226,26 @@ export function clipEmbedInput(text: string): string {
   return text.slice(0, EMBED_MAX_CHARS)
 }
 
+function vectorItemIsEligible(externalProcessing?: boolean): boolean {
+  const provider = currentEmbeddingProvider
+  return (
+    provider === null ||
+    externalProcessing !== false ||
+    providerProcessingLocation(provider) === "local"
+  )
+}
+
+function setVectorEligibility(id: string, externalProcessing?: boolean): boolean {
+  const eligible = vectorItemIsEligible(externalProcessing)
+  if (eligible) {
+    vectorExcludedIds.delete(id)
+  } else {
+    vectorExcludedIds.add(id)
+    vectorIndex?.remove(id)
+  }
+  return eligible
+}
+
 // Single guarded vector-index write. Returns true on success. Logs and
 // no-ops on:
 //   - dimension mismatch (mis-configured provider would silently corrupt
@@ -227,12 +263,7 @@ export async function vectorIndexAddGuarded(
   const vi = vectorIndex
   const ep = currentEmbeddingProvider
   if (!vi || !ep) return false
-  if (
-    options?.externalProcessing === false &&
-    providerProcessingLocation(ep) !== "local"
-  ) {
-    return false
-  }
+  if (!setVectorEligibility(id, options?.externalProcessing)) return false
   try {
     const embedding = await ep.embed(clipEmbedInput(text))
     if (embedding.length !== ep.dimensions) {
@@ -280,10 +311,8 @@ export async function vectorIndexAddBatchGuarded(
   const vi = vectorIndex
   const ep = currentEmbeddingProvider
   if (!vi || !ep || items.length === 0) return { ok: 0, fail: 0 }
-  const eligibleItems = items.filter(
-    (item) =>
-      item.externalProcessing !== false ||
-      providerProcessingLocation(ep) === "local",
+  const eligibleItems = items.filter((item) =>
+    setVectorEligibility(item.id, item.externalProcessing),
   )
   const privacySkipped = items.length - eligibleItems.length
   if (eligibleItems.length === 0) {
@@ -355,12 +384,34 @@ export async function vectorIndexAddBatchGuarded(
 // REBUILD_EMBED_BATCH_SIZE for endpoints that prefer smaller/larger
 // batches. Set to 1 to fall back to the legacy per-item path.
 const DEFAULT_REBUILD_EMBED_BATCH = 32
+const DEFAULT_STARTUP_RECONCILE_MAX_ENTRIES = 100_000
+const MAX_STARTUP_RECONCILE_ENTRIES = 1_000_000
 
 function getRebuildEmbedBatchSize(): number {
   const raw = process.env.REBUILD_EMBED_BATCH_SIZE
   if (!raw) return DEFAULT_REBUILD_EMBED_BATCH
   const n = parseInt(raw, 10)
-  return Number.isFinite(n) && n > 0 ? n : DEFAULT_REBUILD_EMBED_BATCH
+  return Number.isFinite(n) && n > 0
+    ? Math.min(n, 64)
+    : DEFAULT_REBUILD_EMBED_BATCH
+}
+
+function getStartupReconcileMaxEntries(): number {
+  const raw = process.env.AGENTMEMORY_STARTUP_RECONCILE_MAX_ENTRIES
+  if (!raw) return DEFAULT_STARTUP_RECONCILE_MAX_ENTRIES
+  const n = parseInt(raw, 10)
+  return Number.isFinite(n) && n > 0
+    ? Math.min(n, MAX_STARTUP_RECONCILE_ENTRIES)
+    : DEFAULT_STARTUP_RECONCILE_MAX_ENTRIES
+}
+
+function assertStartupReconcileBudget(entries: number): void {
+  const limit = getStartupReconcileMaxEntries()
+  if (entries > limit) {
+    throw new Error(
+      `canonical search inventory exceeds startup limit (${entries}/${limit})`,
+    )
+  }
 }
 
 export function rebuildIndex(kv: StateKV): Promise<number> {
@@ -385,6 +436,113 @@ export function repairVectorIndexFromKeyword(kv: StateKV): Promise<number> {
     if (indexSnapshotIsComplete(false)) indexPersistence?.scheduleSave()
   })
   return repair
+}
+
+export async function reconcileCanonicalSearchIndex(kv: StateKV): Promise<{
+  canonicalEntries: number
+  addedKeywordEntries: number
+  removedKeywordEntries: number
+}> {
+  const idx = getSearchIndex()
+  const vi = getVectorIndex()
+  const sessions = await kv.list<Session>(KV.sessions)
+  assertStartupReconcileBudget(sessions.length)
+  const canonical = new Map<
+    string,
+    {
+      observation: CompressedObservation
+      externalProcessing: boolean
+      kind: "memory" | "observation"
+    }
+  >()
+
+  const memories = await kv.list<Memory>(KV.memories)
+  assertStartupReconcileBudget(memories.length)
+  for (const memory of memories) {
+    if (memory.isLatest === false || !memory.title || !memory.content) continue
+    assertStartupReconcileBudget(canonical.size + 1)
+    canonical.set(memory.id, {
+      observation: memoryToObservation(memory),
+      kind: "memory",
+      // Live mem::remember forbids external embedding for every project-scoped
+      // memory. Restart reconciliation must preserve that exact boundary.
+      externalProcessing: memory.project === undefined,
+    })
+  }
+
+  for (let offset = 0; offset < sessions.length; offset += 10) {
+    const batch = sessions.slice(offset, offset + 10)
+    const observationsBySession = await Promise.all(
+      batch.map(async (session) => ({
+        session,
+        observations: await kv.list<CompressedObservation>(
+          KV.observations(session.id),
+        ),
+      })),
+    )
+    for (const { session, observations } of observationsBySession) {
+      assertStartupReconcileBudget(canonical.size + observations.length)
+      for (const observation of observations) {
+        if (
+          !observation.title ||
+          !observation.narrative ||
+          isRetrievalGeneratedObservation(observation)
+        ) {
+          continue
+        }
+        assertStartupReconcileBudget(canonical.size + 1)
+        canonical.set(observation.id, {
+          observation,
+          kind: "observation",
+          externalProcessing:
+            session.privacy !== "strict" &&
+            session.externalProcessing !== false,
+        })
+      }
+    }
+  }
+
+  let removedKeywordEntries = 0
+  for (const entry of idx.entriesSnapshot()) {
+    if (canonical.has(entry.obsId)) continue
+    idx.remove(entry.obsId)
+    vectorIndexRemove(entry.obsId)
+    removedKeywordEntries++
+  }
+
+  const jobs: Parameters<typeof vectorIndexAddBatchGuarded>[0] = []
+  const flush = async (): Promise<void> => {
+    if (jobs.length === 0) return
+    await vectorIndexAddBatchGuarded(jobs)
+    jobs.length = 0
+  }
+  let addedKeywordEntries = 0
+  for (const [id, item] of canonical) {
+    if (!idx.has(id)) {
+      idx.add(item.observation)
+      addedKeywordEntries++
+    }
+    const eligible = setVectorEligibility(id, item.externalProcessing)
+    if (!eligible || !vi || vi.has(id)) continue
+    jobs.push({
+      id,
+      sessionId: item.observation.sessionId,
+      text: item.observation.title + " " + item.observation.narrative,
+      context: {
+        kind: item.kind,
+        logId: id,
+      },
+      externalProcessing: item.externalProcessing,
+    })
+    if (jobs.length >= getRebuildEmbedBatchSize()) await flush()
+  }
+  await flush()
+
+  return {
+    canonicalEntries: canonical.size,
+    addedKeywordEntries,
+    removedKeywordEntries,
+  }
 }
 
 export function incrementalVectorRepairLimit(keywordEntries: number): number {
@@ -436,30 +594,36 @@ async function performVectorIndexRepair(kv: StateKV): Promise<number> {
   if (!vi || !ep) return 0
 
   const drift = getSearchIndexDrift()
+  assertStartupReconcileBudget(
+    drift.missingVectorIds.length + drift.orphanVectorIds.length,
+  )
   for (const obsId of drift.orphanVectorIds) vi.remove(obsId)
 
   const entries = new Map(
     idx.entriesSnapshot().map((entry) => [entry.obsId, entry]),
   )
   const sessions = await kv.list<Session>(KV.sessions)
+  assertStartupReconcileBudget(sessions.length)
   const sessionsById = new Map(sessions.map((session) => [session.id, session]))
-  const projectPrivacy = new Map<string, boolean>()
-  for (const session of sessions) {
-    const permitsExternal =
-      session.privacy !== "strict" && session.externalProcessing !== false
-    projectPrivacy.set(
-      session.project,
-      (projectPrivacy.get(session.project) ?? true) && permitsExternal,
-    )
-  }
-
   const jobs: Parameters<typeof vectorIndexAddBatchGuarded>[0] = []
+  let repaired = 0
+  let failed = 0
+  let attempted = 0
+  const flush = async (): Promise<void> => {
+    if (jobs.length === 0) return
+    const result = await vectorIndexAddBatchGuarded(jobs)
+    repaired += result.ok
+    failed += result.fail
+    attempted += jobs.length
+    jobs.length = 0
+  }
   for (const obsId of drift.missingVectorIds) {
     const entry = entries.get(obsId)
     if (!entry) continue
-    const observation = await kv
-      .get<CompressedObservation>(KV.observations(entry.sessionId), obsId)
-      .catch(() => null)
+    const observation = await kv.get<CompressedObservation>(
+      KV.observations(entry.sessionId),
+      obsId,
+    )
     if (observation && !isRetrievalGeneratedObservation(observation)) {
       const session = sessionsById.get(entry.sessionId)
       jobs.push({
@@ -472,21 +636,20 @@ async function performVectorIndexRepair(kv: StateKV): Promise<number> {
             session.externalProcessing !== false
           : false,
       })
+      if (jobs.length >= getRebuildEmbedBatchSize()) await flush()
       continue
     }
 
-    const memory = await kv.get<Memory>(KV.memories, obsId).catch(() => null)
+    const memory = await kv.get<Memory>(KV.memories, obsId)
     if (memory?.isLatest !== false && memory?.title && memory?.content) {
       jobs.push({
         id: memory.id,
         sessionId: memory.sessionIds?.[0] ?? "memory",
         text: memory.title + " " + memory.content,
         context: { kind: "memory", logId: memory.id },
-        externalProcessing:
-          memory.project === undefined
-            ? true
-            : (projectPrivacy.get(memory.project) ?? false),
+        externalProcessing: memory.project === undefined,
       })
+      if (jobs.length >= getRebuildEmbedBatchSize()) await flush()
       continue
     }
 
@@ -495,15 +658,15 @@ async function performVectorIndexRepair(kv: StateKV): Promise<number> {
     idx.remove(obsId)
   }
 
-  const result = await vectorIndexAddBatchGuarded(jobs)
-  if (result.fail > 0) {
+  await flush()
+  if (failed > 0) {
     logger.warn("vector-index repair: some missing vectors remain", {
-      attempted: jobs.length,
-      repaired: result.ok,
-      failed: result.fail,
+      attempted,
+      repaired,
+      failed,
     })
   }
-  return result.ok + drift.orphanVectorIds.length
+  return repaired + drift.orphanVectorIds.length
 }
 
 async function performRebuildIndex(kv: StateKV): Promise<number> {
@@ -515,6 +678,7 @@ async function performRebuildIndex(kv: StateKV): Promise<number> {
   // would leave orphan embeddings here forever. Clear both before the
   // repopulation loops run, so BM25 and vector stay in sync.
   vectorIndex?.clear()
+  vectorExcludedIds.clear()
 
   const batchSize = getRebuildEmbedBatchSize()
   // Accumulator for the batched embed flush. BM25 add is synchronous and
@@ -540,42 +704,26 @@ async function performRebuildIndex(kv: StateKV): Promise<number> {
   }
 
   const sessions = await kv.list<Session>(KV.sessions)
-  const projectPrivacy = new Map<string, boolean>()
-  for (const session of sessions) {
-    const permitsExternal =
-      session.privacy !== "strict" && session.externalProcessing !== false
-    projectPrivacy.set(
-      session.project,
-      (projectPrivacy.get(session.project) ?? true) && permitsExternal,
-    )
-  }
-
+  assertStartupReconcileBudget(sessions.length)
   // Memories live in their own KV scope outside per-session observation
   // scopes, so they need a separate walk. Without this, mem::remember
   // entries vanish from BM25 on every restart even after the live-write
   // fix in remember.ts (#257).
-  try {
-    const memories = await kv.list<Memory>(KV.memories)
-    for (const memory of memories) {
-      if (memory.isLatest === false) continue
-      if (!memory.title || !memory.content) continue
-      idx.add(memoryToObservation(memory))
-      await enqueue({
-        id: memory.id,
-        sessionId: memory.sessionIds?.[0] ?? 'memory',
-        text: memory.title + ' ' + memory.content,
-        context: { kind: "memory", logId: memory.id },
-        externalProcessing:
-          memory.project === undefined
-            ? true
-            : (projectPrivacy.get(memory.project) ?? false),
-      })
-      count++
-    }
-  } catch (err) {
-    logger.warn('rebuildIndex: failed to load memories', {
-      error: err instanceof Error ? err.message : String(err),
+  const memories = await kv.list<Memory>(KV.memories)
+  assertStartupReconcileBudget(memories.length)
+  for (const memory of memories) {
+    if (memory.isLatest === false) continue
+    if (!memory.title || !memory.content) continue
+    assertStartupReconcileBudget(count + 1)
+    idx.add(memoryToObservation(memory))
+    await enqueue({
+      id: memory.id,
+      sessionId: memory.sessionIds?.[0] ?? 'memory',
+      text: memory.title + ' ' + memory.content,
+      context: { kind: "memory", logId: memory.id },
+      externalProcessing: memory.project === undefined,
     })
+    count++
   }
 
   if (!sessions.length) {
@@ -583,48 +731,34 @@ async function performRebuildIndex(kv: StateKV): Promise<number> {
     return count
   }
 
-  const obsPerSession: Array<{
-    session: Session
-    observations: CompressedObservation[]
-  }> = []
-  const failedSessions: string[] = []
   for (let batch = 0; batch < sessions.length; batch += 10) {
     const chunk = sessions.slice(batch, batch + 10)
-    const results = await Promise.all(
-      chunk.map(async (s) => {
-        try {
-          return {
-            session: s,
-            observations: await kv.list<CompressedObservation>(
-              KV.observations(s.id),
-            ),
-          }
-        } catch {
-          failedSessions.push(s.id)
-          return { session: s, observations: [] as CompressedObservation[] }
-        }
-      })
+    const observationsBySession = await Promise.all(
+      chunk.map(async (session) => ({
+        session,
+        observations: await kv.list<CompressedObservation>(
+          KV.observations(session.id),
+        ),
+      })),
     )
-    obsPerSession.push(...results)
-  }
-  if (failedSessions.length > 0) {
-    logger.warn('rebuildIndex: failed to load observations for sessions', { failedSessions })
-  }
-  for (const { session, observations } of obsPerSession) {
-    for (const obs of observations) {
-      if (isRetrievalGeneratedObservation(obs)) continue
-      if (obs.title && obs.narrative) {
-        idx.add(obs)
-        await enqueue({
-          id: obs.id,
-          sessionId: obs.sessionId,
-          text: obs.title + ' ' + obs.narrative,
-          context: { kind: "observation", logId: obs.id },
-          externalProcessing:
-            session.privacy !== "strict" &&
-            session.externalProcessing !== false,
-        })
-        count++
+    for (const { session, observations } of observationsBySession) {
+      assertStartupReconcileBudget(count + observations.length)
+      for (const obs of observations) {
+        if (isRetrievalGeneratedObservation(obs)) continue
+        if (obs.title && obs.narrative) {
+          assertStartupReconcileBudget(count + 1)
+          idx.add(obs)
+          await enqueue({
+            id: obs.id,
+            sessionId: obs.sessionId,
+            text: obs.title + ' ' + obs.narrative,
+            context: { kind: "observation", logId: obs.id },
+            externalProcessing:
+              session.privacy !== "strict" &&
+              session.externalProcessing !== false,
+          })
+          count++
+        }
       }
     }
   }

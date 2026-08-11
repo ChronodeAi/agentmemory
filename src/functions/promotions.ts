@@ -612,6 +612,7 @@ export function registerPromotionFunctions(
                   project,
                   tags: [candidate.category, "verified"],
                   source: "consolidation",
+                  idempotencyKey: candidate.id,
                   sourceIds: [
                     ...draft.sourceObservationIds,
                     ...draft.sourceObservationIds.flatMap((sourceId) => {

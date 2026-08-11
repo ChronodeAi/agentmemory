@@ -1369,8 +1369,6 @@
     }
 
     var dashboardLoadPromise = null;
-    var dashboardLiveRefreshTimer = null;
-    var DASHBOARD_LIVE_REFRESH_DELAY_MS = 3000;
 
     async function loadDashboard() {
       if (dashboardLoadPromise) return dashboardLoadPromise;
@@ -1383,7 +1381,7 @@
         try {
           var results = await Promise.all([
             apiGet('health'),
-            apiGet('sessions?scope=global'),
+            apiGet('sessions?scope=global&limit=200'),
             apiGet('memories?latest=true&limit=500&scope=global'),
             apiGet('graph/stats?scope=global'),
             apiGet('semantic?scope=global'),
@@ -1394,7 +1392,9 @@
           ]);
           state.dashboard.health = results[0];
           state.dashboard.sessions = (results[1] && results[1].sessions) || [];
+          state.dashboard.sessionTotal = (results[1] && Number.isFinite(results[1].total)) ? results[1].total : state.dashboard.sessions.length;
           state.dashboard.memories = (results[2] && results[2].memories) || [];
+          state.dashboard.memoryTotal = (results[2] && Number.isFinite(results[2].total)) ? results[2].total : state.dashboard.memories.length;
           state.dashboard.graphStats = results[3];
           state.dashboard.semantic = (results[4] && results[4].facts) || (results[4] && results[4].semantic) || [];
           state.dashboard.procedural = (results[5] && results[5].procedures) || (results[5] && results[5].procedural) || [];
@@ -1449,10 +1449,12 @@
       var cb = h.circuitBreaker || null;
       var workers = snap.workers || [];
       var healthAlerts = snap.alerts || h.alerts || [];
+      var sessionTotal = Number.isFinite(d.sessionTotal) ? d.sessionTotal : d.sessions.length;
+      var memoryTotal = Number.isFinite(d.memoryTotal) ? d.memoryTotal : d.memories.length;
 
       var html = '';
       // First-run hero: empty dashboard = guided next step
-      if (d.sessions.length === 0) {
+      if (sessionTotal === 0) {
         html += '<div class="card" style="margin-bottom:14px;padding:24px 28px;background:var(--bg-subtle);border-left:3px solid var(--accent);">' +
           '<div style="font-family:var(--font-ui);font-size:11px;letter-spacing:0.15em;text-transform:uppercase;color:var(--accent);font-weight:700;margin-bottom:8px;">First run &rarr; magical moment in 10 seconds</div>' +
           '<div style="font-family:var(--font-display,Lora,Georgia,serif);font-size:22px;font-weight:700;color:var(--ink);margin-bottom:8px;">Seed sample data + prove semantic recall works</div>' +
@@ -1462,8 +1464,9 @@
           '</div>';
       }
       html += '<div class="stats-grid">';
-      html += '<div class="stat-card"><div class="label">Sessions</div><div class="value">' + d.sessions.length + '</div><div class="sub">' + activeSessions + ' active</div></div>';
-      html += '<div class="stat-card"><div class="label">Memories</div><div class="value">' + d.memories.length + '</div><div class="sub">latest versions</div></div>';
+      var activeSessionLabel = activeSessions + ' active' + (sessionTotal > d.sessions.length ? ' in recent ' + d.sessions.length : '');
+      html += '<div class="stat-card"><div class="label">Sessions</div><div class="value">' + sessionTotal + '</div><div class="sub">' + activeSessionLabel + '</div></div>';
+      html += '<div class="stat-card"><div class="label">Memories</div><div class="value">' + memoryTotal + '</div><div class="sub">latest versions</div></div>';
       var lessonCount = (d.lessons || []).length;
       var crystalCount = (d.crystals || []).length;
       html += '<div class="stat-card"><div class="label">Lessons</div><div class="value">' + lessonCount + '</div><div class="sub">confidence-scored</div></div>';
@@ -1491,7 +1494,8 @@
       var costDollars = tokensSaved / 1000 * 0.3;
       var costCents = Math.round(costDollars * 100);
       var costStr = costCents >= 100 ? '$' + (costCents / 100).toFixed(2) : costCents + 'ct';
-      html += '<div class="stat-card"><div class="label">Token Savings</div><div class="value">' + savings + '%</div><div class="sub">~' + tokensSaved.toLocaleString() + ' tokens · ' + costStr + ' saved</div></div>';
+      var savingsScope = sessionTotal > d.sessions.length ? ' · recent ' + d.sessions.length + '-session sample' : '';
+      html += '<div class="stat-card"><div class="label">Token Savings</div><div class="value">' + savings + '%</div><div class="sub">~' + tokensSaved.toLocaleString() + ' tokens · ' + costStr + ' saved' + savingsScope + '</div></div>';
       html += '</div>';
 
       if (snap.memory || snap.cpu) {
@@ -1514,6 +1518,17 @@
           var cpuPct = snap.cpu.percent || 0;
           var cpuColor = cpuPct > 80 ? 'var(--red)' : cpuPct > 50 ? 'var(--yellow)' : 'var(--green)';
           html += '<div class="gauge"><span class="gauge-label">CPU</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, cpuPct) + '%;background:' + cpuColor + '"></div></div><span class="gauge-value">' + cpuPct.toFixed(1) + '%</span></div>';
+        }
+        if (snap.engineResources) {
+          var engine = snap.engineResources;
+          var engineCpu = engine.cpuPercent || 0;
+          var engineRss = Math.round((engine.rssBytes || 0) / 1024 / 1024);
+          var engineCpuColor = engineCpu > 85 ? 'var(--red)' : engineCpu > 60 ? 'var(--yellow)' : 'var(--green)';
+          html += '<div class="gauge"><span class="gauge-label">iii CPU</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, engineCpu) + '%;background:' + engineCpuColor + '"></div></div><span class="gauge-value">' + engineCpu.toFixed(1) + '%</span></div>';
+          html += '<div class="gauge"><span class="gauge-label">iii RSS</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, Math.round(engineRss / 2048 * 100)) + '%;background:var(--blue)"></div></div><span class="gauge-value">' + engineRss + ' MB</span></div>';
+          var stateMb = Math.round(((engine.stateStore || {}).bytes || 0) / 1024 / 1024);
+          var streamMb = Math.round(((engine.streamStore || {}).bytes || 0) / 1024 / 1024);
+          html += '<div class="sub" style="margin-top:6px;">iii stores: ' + stateMb + ' MB state &middot; ' + streamMb + ' MB stream &middot; probe ' + esc(engine.status || 'unknown') + '</div>';
         }
         if (snap.captureAdmission) {
           var admission = snap.captureAdmission;
@@ -1693,13 +1708,6 @@
     var dashboardTimer = null;
     function refreshDashboard() {
       return loadDashboard();
-    }
-    function scheduleDashboardLiveRefresh() {
-      if (dashboardLiveRefreshTimer) clearTimeout(dashboardLiveRefreshTimer);
-      dashboardLiveRefreshTimer = setTimeout(function() {
-        dashboardLiveRefreshTimer = null;
-        if (state.activeTab === 'dashboard') refreshDashboard();
-      }, DASHBOARD_LIVE_REFRESH_DELAY_MS);
     }
     function startDashboardAutoRefresh() {
       if (dashboardTimer) clearInterval(dashboardTimer);
@@ -3743,9 +3751,6 @@
           }
           renderObservations();
         }
-      }
-      if (state.activeTab === 'dashboard') {
-        scheduleDashboardLiveRefresh();
       }
       if (state.activeTab === 'activity' && msg.observation) {
         state.activity.observations.unshift(msg.observation);

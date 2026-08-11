@@ -23,6 +23,7 @@ import {
 import { getAgentId } from "../config.js";
 import { logger } from "../logger.js";
 import { saveImageToDisk } from "../utils/image-store.js";
+import { withProcessLock } from "../state/process-lock.js";
 
 const CAPTURE_CONCURRENCY_LIMIT = 256;
 const captureAdmission = {
@@ -31,8 +32,14 @@ const captureAdmission = {
   completed: 0,
   failed: 0,
   rejected: 0,
+  scopeDenied: 0,
   failureReasons: {} as Record<string, number>,
   rejectionReasons: {} as Record<string, number>,
+  scopeDenialReasons: {} as Record<string, number>,
+  lastCompletionAt: undefined as string | undefined,
+  lastFailureAt: undefined as string | undefined,
+  lastRejectionAt: undefined as string | undefined,
+  lastScopeDenialAt: undefined as string | undefined,
 };
 
 function incrementCaptureReason(
@@ -48,9 +55,18 @@ function resultFailureReason(result: unknown): string {
       ? String((result as { error?: unknown }).error ?? "")
       : "";
   if (error === "compaction_summary_failed") return "compaction_summary_failed";
-  if (error.includes("session project or cwd")) return "session_scope_mismatch";
   if (error.includes("observation limit reached")) return "session_observation_limit";
   return "operation_failed";
+}
+
+function resultScopeDenialReason(result: unknown): string | undefined {
+  const error =
+    result && typeof result === "object" && "error" in result
+      ? String((result as { error?: unknown }).error ?? "")
+      : "";
+  if (error === "project_scope_required") return "project_scope_missing";
+  if (error === "session_context_requires_cwd") return "session_context_missing";
+  return error.includes("session project") ? "project_scope_mismatch" : undefined;
 }
 
 function exceptionFailureReason(error: unknown): string {
@@ -71,8 +87,14 @@ export function getCaptureAdmissionMetrics(): {
   completed: number;
   failed: number;
   rejected: number;
+  scopeDenied: number;
   failureReasons: Record<string, number>;
   rejectionReasons: Record<string, number>;
+  scopeDenialReasons: Record<string, number>;
+  lastCompletionAt?: string;
+  lastFailureAt?: string;
+  lastRejectionAt?: string;
+  lastScopeDenialAt?: string;
 } {
   return {
     active: captureAdmission.active,
@@ -81,8 +103,22 @@ export function getCaptureAdmissionMetrics(): {
     completed: captureAdmission.completed,
     failed: captureAdmission.failed,
     rejected: captureAdmission.rejected,
+    scopeDenied: captureAdmission.scopeDenied,
     failureReasons: { ...captureAdmission.failureReasons },
     rejectionReasons: { ...captureAdmission.rejectionReasons },
+    scopeDenialReasons: { ...captureAdmission.scopeDenialReasons },
+    ...(captureAdmission.lastCompletionAt
+      ? { lastCompletionAt: captureAdmission.lastCompletionAt }
+      : {}),
+    ...(captureAdmission.lastFailureAt
+      ? { lastFailureAt: captureAdmission.lastFailureAt }
+      : {}),
+    ...(captureAdmission.lastRejectionAt
+      ? { lastRejectionAt: captureAdmission.lastRejectionAt }
+      : {}),
+    ...(captureAdmission.lastScopeDenialAt
+      ? { lastScopeDenialAt: captureAdmission.lastScopeDenialAt }
+      : {}),
   };
 }
 
@@ -109,6 +145,64 @@ export function extractImage(d: unknown): string | undefined {
   return undefined;
 }
 
+export async function ensureObservationSession(
+  kv: StateKV,
+  input: {
+    sessionId: string;
+    project: string;
+    cwd: string;
+    timestamp: string;
+    agentId?: string;
+    privacy?: "standard" | "private" | "strict";
+    captureProfile?: "minimal" | "balanced" | "full";
+    externalProcessing?: boolean;
+    firstPrompt?: string;
+  },
+): Promise<
+  | { success: true; session: Session; created: boolean }
+  | { success: false; error: string }
+> {
+  return withProcessLock(`observation-session:${input.sessionId}`, async () => {
+    const existing = await kv.get<Session>(KV.sessions, input.sessionId);
+    if (existing) {
+      return existing.project === input.project
+        ? { success: true, session: existing, created: false }
+        : {
+            success: false,
+            error: "session project does not match observation",
+          };
+    }
+    const now = new Date().toISOString();
+    const session: Session = {
+      id: input.sessionId,
+      project: input.project,
+      cwd: input.cwd,
+      startedAt: input.timestamp || now,
+      updatedAt: now,
+      status: "active",
+      observationCount: 0,
+      ...(input.agentId ? { agentId: input.agentId } : {}),
+      ...(input.privacy ? { privacy: input.privacy } : {}),
+      ...(input.captureProfile
+        ? { captureProfile: input.captureProfile }
+        : {}),
+      ...(input.externalProcessing !== undefined
+        ? { externalProcessing: input.externalProcessing }
+        : {}),
+      ...(input.firstPrompt ? { firstPrompt: input.firstPrompt } : {}),
+    };
+    await kv.set(KV.sessions, input.sessionId, session);
+    const persisted = await kv.get<Session>(KV.sessions, input.sessionId);
+    if (!persisted || persisted.project !== input.project) {
+      return {
+        success: false,
+        error: "session project ownership could not be established",
+      };
+    }
+    return { success: true, session: persisted, created: true };
+  });
+}
+
 export function registerObserveFunction(
   sdk: ISdk,
   kv: StateKV,
@@ -127,6 +221,7 @@ export function registerObserveFunction(
         typeof payload.timestamp !== "string"
       ) {
         captureAdmission.failed += 1;
+        captureAdmission.lastFailureAt = new Date().toISOString();
         incrementCaptureReason(captureAdmission.failureReasons, "invalid_payload");
         return {
           success: false,
@@ -135,29 +230,22 @@ export function registerObserveFunction(
         };
       }
 
+      const project =
+        typeof payload.project === "string" ? payload.project.trim() : "";
+      if (!project) {
+        captureAdmission.scopeDenied += 1;
+        captureAdmission.lastScopeDenialAt = new Date().toISOString();
+        incrementCaptureReason(
+          captureAdmission.scopeDenialReasons,
+          "project_scope_missing",
+        );
+        return { success: false, error: "project_scope_required" };
+      }
+      payload = { ...payload, project };
+
       const obsId = generateId("obs");
 
       let dedupHash: string | undefined;
-      if (dedupMap) {
-        const d =
-          typeof payload.data === "object" && payload.data !== null
-            ? (payload.data as Record<string, unknown>)
-            : {};
-        const toolName = (d["tool_name"] as string) || payload.hookType;
-        dedupHash = dedupMap.computeHash(
-          payload.sessionId,
-          toolName,
-          d["tool_input"],
-          d["tool_output"] ?? d["error"],
-        );
-        if (dedupMap.isDuplicate(dedupHash)) {
-          return {
-            success: true,
-            deduplicated: true,
-            sessionId: payload.sessionId,
-          };
-        }
-      }
 
       let sanitizedRaw: unknown = payload.data;
       try {
@@ -207,6 +295,7 @@ export function registerObserveFunction(
 
       if (captureAdmission.active >= CAPTURE_CONCURRENCY_LIMIT) {
         captureAdmission.rejected += 1;
+        captureAdmission.lastRejectionAt = new Date().toISOString();
         incrementCaptureReason(
           captureAdmission.rejectionReasons,
           "capture_capacity_exceeded",
@@ -221,19 +310,56 @@ export function registerObserveFunction(
       captureAdmission.accepted += 1;
       try {
         const result = await withKeyedLock(`obs:${payload.sessionId}`, async () => {
-        const existingSession = await kv.get<Session>(
-          KV.sessions,
-          payload.sessionId,
-        );
+        const currentSession = await kv.get<Session>(KV.sessions, payload.sessionId);
         if (
-          existingSession &&
-          (existingSession.project !== payload.project ||
-            existingSession.cwd !== payload.cwd)
+          !currentSession &&
+          (typeof payload.cwd !== "string" || payload.cwd.trim().length === 0)
         ) {
-          return {
-            success: false,
-            error: "session project or cwd does not match observation",
-          };
+          return { success: false, error: "session_context_requires_cwd" };
+        }
+        const inheritedAgentId = currentSession
+          ? currentSession.agentId
+          : getAgentId();
+        const firstPrompt =
+          typeof raw.userPrompt === "string"
+            ? raw.userPrompt.replace(/\s+/g, " ").trim().slice(0, 200)
+            : undefined;
+        const sessionClaim = await ensureObservationSession(kv, {
+          sessionId: payload.sessionId,
+          project: payload.project!,
+          cwd: currentSession?.cwd ?? payload.cwd!.trim(),
+          timestamp: payload.timestamp,
+          ...(inheritedAgentId ? { agentId: inheritedAgentId } : {}),
+          ...(payload.privacy ? { privacy: payload.privacy } : {}),
+          ...(payload.captureProfile
+            ? { captureProfile: payload.captureProfile }
+            : {}),
+          ...(payload.externalProcessing !== undefined
+            ? { externalProcessing: payload.externalProcessing }
+            : {}),
+          ...(firstPrompt ? { firstPrompt } : {}),
+        });
+        if (!sessionClaim.success) return sessionClaim;
+        const existingSession = sessionClaim.session;
+        if (dedupMap) {
+          const d =
+            typeof payload.data === "object" && payload.data !== null
+              ? (payload.data as Record<string, unknown>)
+              : {};
+          const toolName = (d["tool_name"] as string) || payload.hookType;
+          dedupHash = dedupMap.computeHash(
+            payload.sessionId,
+            toolName,
+            d["tool_input"],
+            d["tool_output"] ?? d["error"],
+          );
+          if (dedupMap.isDuplicate(dedupHash)) {
+            return {
+              success: true,
+              deduplicated: true,
+              sessionId: payload.sessionId,
+            };
+          }
         }
         if (maxObservationsPerSession && maxObservationsPerSession > 0) {
           let existing = await kv.list<CompressedObservation>(
@@ -341,9 +467,8 @@ export function registerObserveFunction(
         // undefined). Env AGENT_ID only fires when no session row
         // exists yet — otherwise an unscoped session would get
         // retroactively scoped by a later AGENT_ID export.
-        const inheritedAgentId = existingSession
-          ? existingSession.agentId
-          : getAgentId();
+        // The cross-process session claim above is the source of truth for
+        // agent and project ownership before any observation is persisted.
         if (inheritedAgentId) {
           raw.agentId = inheritedAgentId;
         }
@@ -424,7 +549,7 @@ export function registerObserveFunction(
         });
 
         const session = existingSession;
-        if (session) {
+        {
           const updates: Array<{ type: "set"; path: string; value: unknown }> = [
             { type: "set", path: "updatedAt", value: new Date().toISOString() },
             {
@@ -466,45 +591,6 @@ export function registerObserveFunction(
             }
           }
           await kv.update(KV.sessions, payload.sessionId, updates);
-        } else if (
-          typeof payload.project === "string" &&
-          payload.project.trim().length > 0 &&
-          typeof payload.cwd === "string" &&
-          payload.cwd.trim().length > 0
-        ) {
-          // OpenCode (and any plugin that skips POST /session/start)
-          // can fire observations before the session record exists. Without
-          // an implicit create, those observations stack up but
-          // `memory_sessions` never lists them, and summarize bails with
-          // "Session not found for summarize". Create the session now from
-          // the observation payload — but only when project + cwd are
-          // present (HookPayload contract). Older test payloads without
-          // those fields keep their original no-op behaviour.
-          const trimmedPrompt =
-            typeof raw.userPrompt === "string"
-              ? raw.userPrompt.replace(/\s+/g, " ").trim().slice(0, 200)
-              : undefined;
-          const ts = new Date().toISOString();
-          await kv.set(KV.sessions, payload.sessionId, {
-            id: payload.sessionId,
-            project: payload.project,
-            cwd: payload.cwd,
-            startedAt: payload.timestamp ?? ts,
-            updatedAt: ts,
-            status: "active",
-            observationCount: 1,
-            ...(inheritedAgentId ? { agentId: inheritedAgentId } : {}),
-            ...(payload.privacy ? { privacy: payload.privacy } : {}),
-            ...(payload.captureProfile
-              ? { captureProfile: payload.captureProfile }
-              : {}),
-            ...(payload.externalProcessing !== undefined
-              ? { externalProcessing: payload.externalProcessing }
-              : {}),
-            ...(trimmedPrompt && trimmedPrompt.length > 0
-              ? { firstPrompt: trimmedPrompt }
-              : {}),
-          });
         }
 
         // Per-observation LLM compression is opt-in as of 0.8.8.
@@ -591,17 +677,30 @@ export function registerObserveFunction(
           "success" in result &&
           result.success === false
         ) {
-          captureAdmission.failed += 1;
-          incrementCaptureReason(
-            captureAdmission.failureReasons,
-            resultFailureReason(result),
-          );
+          const scopeDenialReason = resultScopeDenialReason(result);
+          if (scopeDenialReason) {
+            captureAdmission.scopeDenied += 1;
+            captureAdmission.lastScopeDenialAt = new Date().toISOString();
+            incrementCaptureReason(
+              captureAdmission.scopeDenialReasons,
+              scopeDenialReason,
+            );
+          } else {
+            captureAdmission.failed += 1;
+            captureAdmission.lastFailureAt = new Date().toISOString();
+            incrementCaptureReason(
+              captureAdmission.failureReasons,
+              resultFailureReason(result),
+            );
+          }
         } else {
           captureAdmission.completed += 1;
+          captureAdmission.lastCompletionAt = new Date().toISOString();
         }
         return result;
       } catch (error) {
         captureAdmission.failed += 1;
+        captureAdmission.lastFailureAt = new Date().toISOString();
         incrementCaptureReason(
           captureAdmission.failureReasons,
           exceptionFailureReason(error),

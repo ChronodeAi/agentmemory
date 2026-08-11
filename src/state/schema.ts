@@ -44,6 +44,7 @@ export const KV = {
     `mem:team:${teamId}:users:${userId}`,
   teamProfile: (teamId: string) => `mem:team:${teamId}:profile`,
   audit: "mem:audit",
+  auditGaps: "mem:audit:gaps",
   actions: "mem:actions",
   actionEdges: "mem:action-edges",
   leases: "mem:leases",

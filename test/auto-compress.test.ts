@@ -23,6 +23,17 @@ function mockKV() {
       store.get(scope)!.set(key, data);
       return data;
     },
+    update: async (
+      scope: string,
+      key: string,
+      updates: Array<{ path: string; value: unknown }>,
+    ) => {
+      const value = store.get(scope)?.get(key) as
+        | Record<string, unknown>
+        | undefined;
+      if (!value) return;
+      for (const update of updates) value[update.path] = update.value;
+    },
     delete: async (scope: string, key: string) => {
       store.get(scope)?.delete(key);
     },
@@ -68,6 +79,8 @@ function mockSdk() {
 function validPayload(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     sessionId: "ses_test",
+    project: "github.com/example/auto-compress",
+    cwd: "/tmp/auto-compress",
     hookType: "post_tool_use",
     timestamp: new Date().toISOString(),
     data: {

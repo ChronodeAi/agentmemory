@@ -7,6 +7,10 @@ import { KV } from "../state/schema.js";
 import { evaluateHealth } from "./thresholds.js";
 import { getCaptureAdmissionMetrics } from "../functions/observe.js";
 import { logger } from "../logger.js";
+import { getProcessBootIdentity } from "../runtime-identity.js";
+import { getBackgroundPipelineHealth } from "./background-pipeline.js";
+import { getAuditPersistenceHealth } from "../functions/audit.js";
+import { collectEngineResources } from "./engine-resources.js";
 
 const HEALTH_INTERVAL_MS = 30_000;
 const HEALTH_TTL_MS = HEALTH_INTERVAL_MS * 3;
@@ -15,6 +19,10 @@ let latestInMemoryHealth: HealthSnapshot | null = null;
 
 interface HealthMonitorOptions {
   getSearchIndexStatus?: () => NonNullable<HealthSnapshot["searchIndex"]>;
+  getIndexPersistenceStatus?: () => NonNullable<
+    HealthSnapshot["indexPersistence"]
+  >;
+  collectEngineResources?: typeof collectEngineResources;
 }
 
 function reasonDeltas(
@@ -29,12 +37,36 @@ function reasonDeltas(
   return deltas;
 }
 
-function criticalCollectionSnapshot(error: string): HealthSnapshot {
+function readIndexPersistenceStatus(
+  options: HealthMonitorOptions,
+): HealthSnapshot["indexPersistence"] {
+  if (!options.getIndexPersistenceStatus) return undefined;
+  try {
+    return options.getIndexPersistenceStatus();
+  } catch {
+    return {
+      status: "failed",
+      attempts: 0,
+      succeeded: 0,
+      failed: 1,
+      pending: 0,
+      consecutiveFailures: 1,
+      lastErrorCode: "STATUS_READ_FAILED",
+    };
+  }
+}
+
+function criticalCollectionSnapshot(
+  error: string,
+  options: HealthMonitorOptions,
+): HealthSnapshot {
   const now = Date.now();
   const mem = process.memoryUsage();
+  const indexPersistence = readIndexPersistenceStatus(options);
   return {
     collectedAt: new Date(now).toISOString(),
     expiresAt: new Date(now + HEALTH_TTL_MS).toISOString(),
+    boot: getProcessBootIdentity(),
     connectionState: "failed",
     workers: [],
     workerProbeStatus: "error",
@@ -51,6 +83,9 @@ function criticalCollectionSnapshot(error: string): HealthSnapshot {
     uptimeSeconds: process.uptime(),
     kvConnectivity: { status: "error", error },
     captureAdmission: getCaptureAdmissionMetrics(),
+    backgroundPipeline: getBackgroundPipelineHealth(),
+    ...(indexPersistence ? { indexPersistence } : {}),
+    auditPersistence: getAuditPersistenceHealth(),
     status: "critical",
     alerts: ["health_collection_failed"],
   };
@@ -68,8 +103,12 @@ export function registerHealthMonitor(
   let recovering = false;
   let previousRejected = 0;
   let previousFailed = 0;
+  let previousScopeDenied = 0;
   let previousFailureReasons: Record<string, number> = {};
   let previousRejectionReasons: Record<string, number> = {};
+  let previousScopeDenialReasons: Record<string, number> = {};
+  let previousEngineResources: HealthSnapshot["engineResources"];
+  let previousEngineCollectionAt: number | undefined;
 
   const eventSdk = sdk as ISdk & {
     on?: (event: string, listener: (state?: unknown) => void) => void;
@@ -162,6 +201,10 @@ export function registerHealthMonitor(
       0,
       admission.failed - previousFailed,
     );
+    const scopeDeniedSinceLastCollection = Math.max(
+      0,
+      admission.scopeDenied - previousScopeDenied,
+    );
     const failureReasonsSinceLastCollection = reasonDeltas(
       admission.failureReasons,
       previousFailureReasons,
@@ -170,14 +213,28 @@ export function registerHealthMonitor(
       admission.rejectionReasons,
       previousRejectionReasons,
     );
+    const scopeDenialReasonsSinceLastCollection = reasonDeltas(
+      admission.scopeDenialReasons,
+      previousScopeDenialReasons,
+    );
     previousRejected = admission.rejected;
     previousFailed = admission.failed;
+    previousScopeDenied = admission.scopeDenied;
     previousFailureReasons = admission.failureReasons;
     previousRejectionReasons = admission.rejectionReasons;
+    previousScopeDenialReasons = admission.scopeDenialReasons;
     const collectedAt = new Date(now).toISOString();
+    const engineResources = (options.collectEngineResources ?? collectEngineResources)(
+      previousEngineResources,
+      previousEngineCollectionAt ? now - previousEngineCollectionAt : undefined,
+    );
+    previousEngineResources = engineResources;
+    previousEngineCollectionAt = now;
+    const indexPersistence = readIndexPersistenceStatus(options);
     const snapshot: HealthSnapshot = {
       collectedAt,
       expiresAt: new Date(now + HEALTH_TTL_MS).toISOString(),
+      boot: getProcessBootIdentity(),
       connectionState,
       workers,
       workerProbeStatus,
@@ -194,6 +251,7 @@ export function registerHealthMonitor(
         systemMicros: currentCpu.system,
         percent: Math.round(cpuPercent * 100) / 100,
       },
+      engineResources,
       eventLoopLagMs,
       uptimeSeconds: uptime,
       kvConnectivity,
@@ -201,9 +259,14 @@ export function registerHealthMonitor(
         ...admission,
         failedSinceLastCollection,
         rejectedSinceLastCollection,
+        scopeDeniedSinceLastCollection,
         failureReasonsSinceLastCollection,
         rejectionReasonsSinceLastCollection,
+        scopeDenialReasonsSinceLastCollection,
       },
+      backgroundPipeline: getBackgroundPipelineHealth(),
+      ...(indexPersistence ? { indexPersistence } : {}),
+      auditPersistence: getAuditPersistenceHealth(),
       ...(options.getSearchIndexStatus
         ? { searchIndex: options.getSearchIndexStatus() }
         : {}),
@@ -247,7 +310,7 @@ export function registerHealthMonitor(
 
   const recordCollectionFailure = (error: unknown): void => {
     const message = error instanceof Error ? error.message : String(error);
-    latestInMemoryHealth = criticalCollectionSnapshot(message);
+    latestInMemoryHealth = criticalCollectionSnapshot(message, options);
     logger.error("Health collection failed", { error: message });
   };
   collectHealth().catch(recordCollectionFailure);
@@ -271,7 +334,7 @@ export async function getLatestHealth(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     const fallback =
-      latestInMemoryHealth ?? criticalCollectionSnapshot(message);
+      latestInMemoryHealth ?? criticalCollectionSnapshot(message, {});
     return {
       ...fallback,
       status: "critical",

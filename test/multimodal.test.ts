@@ -34,6 +34,17 @@ function mockKV() {
       store.get(scope)!.set(key, data);
       return data;
     },
+    update: async (
+      scope: string,
+      key: string,
+      updates: Array<{ path: string; value: unknown }>,
+    ): Promise<void> => {
+      const value = store.get(scope)?.get(key) as
+        | Record<string, unknown>
+        | undefined;
+      if (!value) return;
+      for (const update of updates) value[update.path] = update.value;
+    },
     delete: async (scope: string, key: string): Promise<void> => {
       store.get(scope)?.delete(key);
     },
@@ -82,6 +93,8 @@ describe("End-to-End Multimodal Flow", () => {
     const fakeIncomingData = {
       hookType: "post_tool_use",
       sessionId: "test-session",
+      project: "test/project",
+      cwd: "/tmp/test-project",
       timestamp: new Date().toISOString(),
       data: {
         tool_name: "screenshot",

@@ -885,17 +885,18 @@ describe("IndexPersistence", () => {
     expect(guardedKv.get).not.toHaveBeenCalledWith("", "data");
   });
 
-  it("scheduleSave debounces multiple calls", async () => {
+  it("scheduleSave coalesces calls without postponing the checkpoint", async () => {
     const bm25 = new SearchIndex();
     const persistence = new IndexPersistence(kv as never, bm25, null);
 
     persistence.scheduleSave();
+    vi.advanceTimersByTime(20_000);
     persistence.scheduleSave();
     persistence.scheduleSave();
 
     await expect(kv.get(BM25_SCOPE, BM25_MANIFEST_KEY)).resolves.toBeNull();
 
-    vi.advanceTimersByTime(5000);
+    vi.advanceTimersByTime(10_000);
     await vi.runAllTimersAsync();
 
     const saved = await kv.get<string>(BM25_SCOPE, BM25_MANIFEST_KEY);
@@ -987,12 +988,48 @@ describe("IndexPersistence", () => {
     const persistence = new IndexPersistence(kv as never, bm25, null);
 
     persistence.scheduleSave();
+    expect(persistence.getHealthStatus()).toMatchObject({
+      status: "scheduled",
+      pending: 1,
+      attempts: 0,
+    });
     persistence.stop();
     persistence.scheduleSave();
 
     vi.advanceTimersByTime(10000);
     const saved = await kv.get<string>(BM25_SCOPE, BM25_MANIFEST_KEY);
     expect(saved).toBeNull();
+    expect(persistence.getHealthStatus()).toMatchObject({
+      status: "stopped",
+      pending: 0,
+    });
+  });
+
+  it("reports boot-local scheduled, saving, and successful persistence", async () => {
+    const bm25 = new SearchIndex();
+    bm25.add(makeObs({ id: "obs_1", title: "health status" }));
+    const persistence = new IndexPersistence(kv as never, bm25, null);
+
+    expect(persistence.getHealthStatus()).toMatchObject({
+      status: "idle",
+      attempts: 0,
+      pending: 0,
+    });
+    persistence.scheduleSave();
+    expect(persistence.getHealthStatus()).toMatchObject({
+      status: "scheduled",
+      pending: 1,
+    });
+    vi.advanceTimersByTime(30_000);
+    await vi.runAllTimersAsync();
+    expect(persistence.getHealthStatus()).toMatchObject({
+      status: "ready",
+      attempts: 1,
+      succeeded: 1,
+      failed: 0,
+      pending: 0,
+      consecutiveFailures: 0,
+    });
   });
 
   it("returns null indexes when nothing has been saved", async () => {
@@ -1028,7 +1065,7 @@ describe("IndexPersistence", () => {
 
     try {
       persistence.scheduleSave();
-      vi.advanceTimersByTime(5000);
+      vi.advanceTimersByTime(30_000);
       await vi.runAllTimersAsync();
       // give microtasks a chance to flush
       await Promise.resolve();
@@ -1051,6 +1088,42 @@ describe("IndexPersistence", () => {
     const persistence = new IndexPersistence(failingKv as never, bm25, null);
 
     await expect(persistence.save()).resolves.toBeUndefined();
+    expect(persistence.getHealthStatus()).toMatchObject({
+      status: "failed",
+      attempts: 1,
+      succeeded: 0,
+      failed: 1,
+      pending: 0,
+      consecutiveFailures: 1,
+      lastErrorCode: "TIMEOUT",
+    });
+  });
+
+  it("clears a persistence alert after a later successful save", async () => {
+    let fail = true;
+    const recoverableKv = {
+      ...mockKV(),
+      set: vi.fn(async (scope: string, key: string, value: unknown) => {
+        if (fail) throw Object.assign(new Error("state::set timed out"), { code: "TIMEOUT" });
+        return kv.set(scope, key, value);
+      }),
+    };
+    const bm25 = new SearchIndex();
+    bm25.add(makeObs({ id: "obs_1", title: "recovery" }));
+    const persistence = new IndexPersistence(recoverableKv as never, bm25, null);
+
+    await persistence.save();
+    expect(persistence.getHealthStatus().status).toBe("failed");
+    fail = false;
+    await persistence.save();
+    expect(persistence.getHealthStatus()).toMatchObject({
+      status: "ready",
+      attempts: 2,
+      succeeded: 1,
+      failed: 1,
+      consecutiveFailures: 0,
+    });
+    expect(persistence.getHealthStatus().lastErrorCode).toBeUndefined();
   });
 
   // #797: first run after upgrading to 0.9.25 crashed with

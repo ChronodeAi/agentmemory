@@ -615,5 +615,3 @@ async function main() {
 main().catch(reportObservationDeliveryFailure);
 //#endregion
 export {};
-
-//# sourceMappingURL=post-tool-failure.mjs.map
