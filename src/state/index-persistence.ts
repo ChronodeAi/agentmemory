@@ -222,28 +222,30 @@ export class IndexPersistence {
     }
 
     const writeResults = await Promise.allSettled(
-      shards.map(async (shard, index) => {
+      shards.map((shard, index) => {
         const chunk = chunks[index] ?? "";
-        await this.kv.set(shard.scope, shard.key, chunk);
-        await this.auditIndexPersistence("shard_write", [
-          statePath(shard.scope, shard.key),
-        ], {
-          scope: shard.scope,
-          key: shard.key,
-          manifestKey,
-          generation,
-          chars: chunk.length,
-        });
+        return this.kv.set(shard.scope, shard.key, chunk);
       }),
     );
     const failedWrite = writeResults.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
     if (failedWrite) {
+      await this.auditIndexPersistence(
+        "shard_write_batch",
+        shards.map((shard) => statePath(shard.scope, shard.key)),
+        {
+          manifestKey,
+          generation,
+          chars: serialized.length,
+          shards: shards.length,
+          result: "failed",
+          error: errorMessage(failedWrite.reason),
+        },
+      );
       await this.deleteShards(shards, "shard_write_rollback");
       throw failedWrite.reason;
     }
-
     const previousGeneration =
       this.retainedGenerationOverrides.get(manifestKey) ??
       this.asGeneration(previous);
@@ -260,15 +262,6 @@ export class IndexPersistence {
         manifestKey,
         nextManifest,
       );
-      await this.auditIndexPersistence("manifest_publish", [
-        statePath(KV.bm25Index, manifestKey),
-      ], {
-        manifestKey,
-        generation,
-        chars: serialized.length,
-        shards: shards.length,
-        result: "committed",
-      });
     } catch (err) {
       if (await this.isManifestPublished(manifestKey, nextManifest)) {
         await this.auditIndexPersistence("manifest_publish", [
@@ -315,30 +308,52 @@ export class IndexPersistence {
     key: string,
     reason: string,
   ): Promise<void> {
-    let result = "deleted";
-    let error: string | undefined;
     try {
       await this.kv.delete(scope, key);
     } catch (err) {
-      result = "failed";
-      error = errorMessage(err);
+      await this.auditIndexPersistence("delete", [statePath(scope, key)], {
+        scope,
+        key,
+        reason,
+        result: "failed",
+        error: errorMessage(err),
+      });
     }
-    await this.auditIndexPersistence("delete", [statePath(scope, key)], {
-      scope,
-      key,
-      reason,
-      result,
-      error,
-    });
   }
 
   private async deleteShards(
     shards: IndexShardManifest["shards"],
     reason: string,
   ): Promise<void> {
+    if (shards.length === 0) return;
+    let deleted = 0;
+    const failures: Array<{ target: string; error: string }> = [];
     for (const shard of shards) {
-      await this.deleteKey(shard.scope, shard.key, reason);
+      const target = statePath(shard.scope, shard.key);
+      try {
+        await this.kv.delete(shard.scope, shard.key);
+        deleted += 1;
+      } catch (err) {
+        failures.push({ target, error: errorMessage(err) });
+      }
     }
+    if (failures.length > 0) {
+      await this.auditIndexPersistence(
+        "shard_delete_batch",
+        shards.map((shard) => statePath(shard.scope, shard.key)),
+        {
+          reason,
+          requested: shards.length,
+          deleted,
+          failed: failures.length,
+          failures: failures.slice(0, 10),
+        },
+      );
+    }
+    // Once a manifest is published, cleanup must not abort the paired BM25 and
+    // vector save. Failed deletions leave recoverable orphan shards and are
+    // audited above for later maintenance. Successful derived-index maintenance
+    // stays out of the governance audit log to prevent unbounded amplification.
   }
 
   private async deleteSupersededGenerations(
@@ -356,15 +371,17 @@ export class IndexPersistence {
       this.asGeneration(previousManifest?.previous),
     ];
     const seen = new Set<string>();
+    const superseded: IndexShardGeneration["shards"] = [];
     for (const generation of candidates) {
       if (!generation) continue;
       for (const shard of generation.shards) {
         const id = `${shard.scope}\0${shard.key}`;
         if (retainedShardIds.has(id) || seen.has(id)) continue;
         seen.add(id);
-        await this.deleteShards([shard], "previous_generation_cleanup");
+        superseded.push(shard);
       }
     }
+    await this.deleteShards(superseded, "previous_generation_cleanup");
   }
 
   private async isManifestPublished(

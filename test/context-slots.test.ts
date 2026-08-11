@@ -160,7 +160,7 @@ describe("mem::context — pinned slot injection", () => {
 
   describe("when AGENTMEMORY_SLOTS is off", () => {
     it("does not include any slot content", async () => {
-      delete process.env["AGENTMEMORY_SLOTS"];
+      process.env["AGENTMEMORY_SLOTS"] = "false";
       const kv = mockKV();
       const handler = wireContext(kv);
 

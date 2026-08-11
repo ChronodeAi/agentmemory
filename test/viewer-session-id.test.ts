@@ -282,6 +282,9 @@ describe("viewer session rendering", () => {
     expect(requests).toContain(
       "http://localhost:3113/agentmemory/crystals?scope=global",
     );
+    expect(requests.some((url) => url.includes("/agentmemory/audit?"))).toBe(
+      false,
+    );
     expect(requests).not.toContain(
       "http://localhost:3113/agentmemory/sessions",
     );

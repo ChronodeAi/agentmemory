@@ -252,6 +252,10 @@ export interface HealthSnapshot {
     rejected: number;
     failedSinceLastCollection?: number;
     rejectedSinceLastCollection?: number;
+    failureReasons?: Record<string, number>;
+    rejectionReasons?: Record<string, number>;
+    failureReasonsSinceLastCollection?: Record<string, number>;
+    rejectionReasonsSinceLastCollection?: Record<string, number>;
   };
   searchIndex?: {
     status: "initializing" | "rebuilding" | "ready" | "partial" | "failed";

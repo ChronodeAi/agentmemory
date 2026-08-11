@@ -710,6 +710,76 @@ describe("IndexPersistence", () => {
     expect(loaded.bm25!.search("alpha").length).toBe(0);
   });
 
+  it("continues the paired vector save when BM25 cleanup fails after publish", async () => {
+    const bm25 = makeBm25("obs_1", "first snapshot");
+    const vector = makeVector("obs_1");
+    let generationCount = 0;
+    const cleanupKv = {
+      ...kv,
+      delete: vi.fn(async (scope: string, key: string): Promise<void> => {
+        if (scope.includes(":bm25:gen_1:")) {
+          throw new Error("superseded BM25 cleanup failed");
+        }
+        return kv.delete(scope, key);
+      }),
+    };
+    const persistence = new IndexPersistence(
+      cleanupKv as never,
+      bm25,
+      vector,
+      {
+        shardChars: 80,
+        createGeneration: () => `gen_${++generationCount}`,
+      },
+    );
+
+    await persistence.save();
+    bm25.add(makeObs({ id: "obs_2", title: "second snapshot" }));
+    vector.add("obs_2", "ses_1", new Float32Array([0.4, 0.5, 0.6]));
+    await persistence.save();
+    bm25.add(makeObs({ id: "obs_3", title: "third snapshot" }));
+    vector.add("obs_3", "ses_1", new Float32Array([0.7, 0.8, 0.9]));
+    await persistence.save();
+
+    const bm25Manifest = await kv.get<TestIndexShardManifest>(
+      BM25_SCOPE,
+      BM25_MANIFEST_KEY,
+    );
+    const vectorManifest = await kv.get<TestIndexShardManifest>(
+      BM25_SCOPE,
+      VECTOR_MANIFEST_KEY,
+    );
+    expect(bm25Manifest?.generation).toBe("gen_5");
+    expect(vectorManifest?.generation).toBe("gen_6");
+
+    const audits = await kv.list<{
+      operation: string;
+      details: {
+        action?: string;
+        reason?: string;
+        failed?: number;
+      };
+    }>("mem:audit");
+    expect(audits).toContainEqual(
+      expect.objectContaining({
+        operation: "index_persist",
+        details: expect.objectContaining({
+          action: "shard_delete_batch",
+          reason: "previous_generation_cleanup",
+          failed: expect.any(Number),
+        }),
+      }),
+    );
+    expect(
+      audits.some(
+        (entry) =>
+          entry.details.action === "shard_delete_batch" &&
+          entry.details.reason === "previous_generation_cleanup" &&
+          (entry.details.failed ?? 0) > 0,
+      ),
+    ).toBe(true);
+  });
+
   it("keeps the previous vector generation when vector save fails after BM25 publish", async () => {
     const previousBm25 = makeBm25("obs_old", "alpha previous snapshot");
     const previousVector = makeVector("obs_old");
@@ -882,6 +952,33 @@ describe("IndexPersistence", () => {
     ).load();
     expect(loaded.bm25!.size).toBe(2);
     expect(loaded.bm25!.search("late")).toHaveLength(1);
+  });
+
+  it("does not amplify successful derived-index maintenance into audit rows", async () => {
+    const bm25 = makeBm25("obs_initial", "initial snapshot ".repeat(20));
+    const vector = makeVector("obs_initial");
+    let generationCount = 0;
+    const persistence = new IndexPersistence(kv as never, bm25, vector, {
+      shardChars: 40,
+      createGeneration: () => `gen_batch_${++generationCount}`,
+    });
+
+    await persistence.save();
+    bm25.add(makeObs({ id: "obs_next", title: "next snapshot ".repeat(20) }));
+    vector.add("obs_next", "ses_1", new Float32Array([0.4, 0.5, 0.6]));
+    await persistence.save();
+    bm25.add(makeObs({ id: "obs_final", title: "final snapshot ".repeat(20) }));
+    vector.add("obs_final", "ses_1", new Float32Array([0.7, 0.8, 0.9]));
+    await persistence.save();
+
+    const audits = await kv.list<{
+      operation: string;
+      targetIds: string[];
+      details: { action?: string; shards?: number; reason?: string };
+    }>("mem:audit");
+    expect(audits.filter((entry) => entry.operation === "index_persist")).toEqual(
+      [],
+    );
   });
 
   it("stop clears the pending timer", async () => {

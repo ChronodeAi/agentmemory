@@ -7,7 +7,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { getAllTools } from "../src/mcp/tools-registry.js";
-import { VERSION } from "../src/version.js";
+import { EXPORT_FORMAT_VERSION, VERSION } from "../src/version.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -35,9 +35,10 @@ describe("Consistency checks", () => {
     expect(plugin.version).toBe(pkg.version);
   });
 
-  it("export-import.ts supports current version", () => {
+  it("export-import.ts supports the stable export format version", () => {
     const src = readText("src/functions/export-import.ts");
-    expect(src).toContain(`"${VERSION}"`);
+    expect(EXPORT_FORMAT_VERSION).toBe("0.9.28");
+    expect(src).toContain(`"${EXPORT_FORMAT_VERSION}"`);
   });
 
   it("README mentions correct MCP tool count", () => {

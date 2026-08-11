@@ -31,7 +31,38 @@ const captureAdmission = {
   completed: 0,
   failed: 0,
   rejected: 0,
+  failureReasons: {} as Record<string, number>,
+  rejectionReasons: {} as Record<string, number>,
 };
+
+function incrementCaptureReason(
+  reasons: Record<string, number>,
+  reason: string,
+): void {
+  reasons[reason] = (reasons[reason] ?? 0) + 1;
+}
+
+function resultFailureReason(result: unknown): string {
+  const error =
+    result && typeof result === "object" && "error" in result
+      ? String((result as { error?: unknown }).error ?? "")
+      : "";
+  if (error === "compaction_summary_failed") return "compaction_summary_failed";
+  if (error.includes("session project or cwd")) return "session_scope_mismatch";
+  if (error.includes("observation limit reached")) return "session_observation_limit";
+  return "operation_failed";
+}
+
+function exceptionFailureReason(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  if (/timeout|timed out|invocation stopped/i.test(message)) {
+    return "state_or_worker_timeout";
+  }
+  if (/connection|socket|websocket|transport|epipe/i.test(message)) {
+    return "worker_transport_error";
+  }
+  return "exception";
+}
 
 export function getCaptureAdmissionMetrics(): {
   active: number;
@@ -40,6 +71,8 @@ export function getCaptureAdmissionMetrics(): {
   completed: number;
   failed: number;
   rejected: number;
+  failureReasons: Record<string, number>;
+  rejectionReasons: Record<string, number>;
 } {
   return {
     active: captureAdmission.active,
@@ -48,6 +81,8 @@ export function getCaptureAdmissionMetrics(): {
     completed: captureAdmission.completed,
     failed: captureAdmission.failed,
     rejected: captureAdmission.rejected,
+    failureReasons: { ...captureAdmission.failureReasons },
+    rejectionReasons: { ...captureAdmission.rejectionReasons },
   };
 }
 
@@ -92,6 +127,7 @@ export function registerObserveFunction(
         typeof payload.timestamp !== "string"
       ) {
         captureAdmission.failed += 1;
+        incrementCaptureReason(captureAdmission.failureReasons, "invalid_payload");
         return {
           success: false,
           error:
@@ -171,6 +207,10 @@ export function registerObserveFunction(
 
       if (captureAdmission.active >= CAPTURE_CONCURRENCY_LIMIT) {
         captureAdmission.rejected += 1;
+        incrementCaptureReason(
+          captureAdmission.rejectionReasons,
+          "capture_capacity_exceeded",
+        );
         return {
           success: false,
           retryable: true,
@@ -552,12 +592,20 @@ export function registerObserveFunction(
           result.success === false
         ) {
           captureAdmission.failed += 1;
+          incrementCaptureReason(
+            captureAdmission.failureReasons,
+            resultFailureReason(result),
+          );
         } else {
           captureAdmission.completed += 1;
         }
         return result;
       } catch (error) {
         captureAdmission.failed += 1;
+        incrementCaptureReason(
+          captureAdmission.failureReasons,
+          exceptionFailureReason(error),
+        );
         throw error;
       } finally {
         captureAdmission.active -= 1;

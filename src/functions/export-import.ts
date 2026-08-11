@@ -27,7 +27,7 @@ import type {
 import { normalizeAccessLog } from "./access-tracker.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
-import { VERSION } from "../version.js";
+import { EXPORT_FORMAT_VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
 
@@ -135,7 +135,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       ]);
 
       const exportData: ExportData = {
-        version: VERSION,
+        version: EXPORT_FORMAT_VERSION,
         exportedAt: new Date().toISOString(),
         ...(!includeAll && {
           sections: [...requestedSections].sort(),

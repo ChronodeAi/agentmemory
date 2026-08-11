@@ -44,46 +44,36 @@ function handleToolCall(
 
 describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
   const originalFetch = globalThis.fetch;
-  const originalAdminSecret = process.env["AGENTMEMORY_ADMIN_SECRET"];
-  const originalAdminSecretFile =
-    process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
+  const isolatedEnvironmentNames = [
+    "AGENTMEMORY_SECRET",
+    "AGENTMEMORY_SECRET_FILE",
+    "AGENTMEMORY_ADMIN_SECRET",
+    "AGENTMEMORY_ADMIN_SECRET_FILE",
+    "AGENTMEMORY_PROJECT_CAPABILITY_SECRET",
+    "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE",
+    "AGENTMEMORY_PROJECT_CAPABILITY_TOKEN",
+    "AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE",
+    "AGENTMEMORY_STRICT_CAPABILITY_MODE",
+  ] as const;
+  const originalEnvironment = Object.fromEntries(
+    isolatedEnvironmentNames.map((name) => [name, process.env[name]]),
+  ) as Record<(typeof isolatedEnvironmentNames)[number], string | undefined>;
 
   beforeEach(() => {
     resetHandleForTests();
     process.env["AGENTMEMORY_URL"] = BASE;
-    delete process.env["AGENTMEMORY_SECRET"];
-    delete process.env["AGENTMEMORY_SECRET_FILE"];
-    delete process.env["AGENTMEMORY_ADMIN_SECRET"];
-    delete process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
-    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"];
-    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE"];
-    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"];
-    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"];
-    delete process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"];
+    for (const name of isolatedEnvironmentNames) process.env[name] = "";
   });
 
   afterEach(() => {
     resetHandleForTests();
     globalThis.fetch = originalFetch;
     delete process.env["AGENTMEMORY_URL"];
-    delete process.env["AGENTMEMORY_SECRET"];
-    delete process.env["AGENTMEMORY_SECRET_FILE"];
-    if (originalAdminSecret === undefined) {
-      delete process.env["AGENTMEMORY_ADMIN_SECRET"];
-    } else {
-      process.env["AGENTMEMORY_ADMIN_SECRET"] = originalAdminSecret;
+    for (const name of isolatedEnvironmentNames) {
+      const original = originalEnvironment[name];
+      if (original === undefined) delete process.env[name];
+      else process.env[name] = original;
     }
-    if (originalAdminSecretFile === undefined) {
-      delete process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
-    } else {
-      process.env["AGENTMEMORY_ADMIN_SECRET_FILE"] =
-        originalAdminSecretFile;
-    }
-    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"];
-    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE"];
-    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_TOKEN"];
-    delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE"];
-    delete process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"];
   });
 
   it("proxies memory_sessions to GET /agentmemory/sessions when server is up", async () => {

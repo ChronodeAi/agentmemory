@@ -231,7 +231,7 @@ describe("observe implicit session create (#638)", () => {
   });
 
   it("rejects an observation that does not match an existing session scope", async () => {
-    const { registerObserveFunction } = await import("../src/functions/observe.js");
+    const { registerObserveFunction, getCaptureAdmissionMetrics } = await import("../src/functions/observe.js");
     const sdk = mockSdk();
     const kv = mockKV();
     registerObserveFunction(sdk as never, kv as never);
@@ -267,5 +267,61 @@ describe("observe implicit session create (#638)", () => {
     expect(
       kv.store.get("mem:obs:ses_existing")?.size ?? 0,
     ).toBe(0);
+    expect(getCaptureAdmissionMetrics().failureReasons).toEqual({
+      session_scope_mismatch: 1,
+    });
+  });
+
+  it("classifies invalid payload failures without storing payload content", async () => {
+    const { registerObserveFunction, getCaptureAdmissionMetrics } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    await sdk.trigger("mem::observe", {
+      sessionId: "ses_invalid",
+      data: { prompt: "must not appear in health telemetry" },
+    });
+
+    const metrics = getCaptureAdmissionMetrics();
+    expect(metrics.failureReasons).toEqual({ invalid_payload: 1 });
+    expect(JSON.stringify(metrics)).not.toContain("must not appear");
+  });
+
+  it.each([
+    ["state invocation timed out after 30000ms", "state_or_worker_timeout"],
+    ["WebSocket transport closed", "worker_transport_error"],
+  ])("classifies capture exception %s", async (message, expectedReason) => {
+    const { registerObserveFunction, getCaptureAdmissionMetrics } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const base = mockKV();
+    const kv = {
+      ...base,
+      get: async () => {
+        throw new Error(message);
+      },
+    };
+    registerObserveFunction(sdk as never, kv as never);
+
+    await expect(
+      sdk.trigger("mem::observe", {
+        sessionId: "ses_exception",
+        project: "github.com/chronodeai/memetics",
+        cwd: "/repo",
+        hookType: "prompt_submit",
+        timestamp: new Date().toISOString(),
+        data: { prompt: "bounded synthetic capture" },
+      }),
+    ).rejects.toThrow(message);
+
+    expect(getCaptureAdmissionMetrics()).toMatchObject({
+      active: 0,
+      failed: 1,
+      failureReasons: { [expectedReason]: 1 },
+    });
   });
 });

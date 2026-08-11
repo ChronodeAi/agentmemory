@@ -17,6 +17,18 @@ interface HealthMonitorOptions {
   getSearchIndexStatus?: () => NonNullable<HealthSnapshot["searchIndex"]>;
 }
 
+function reasonDeltas(
+  current: Record<string, number>,
+  previous: Record<string, number>,
+): Record<string, number> {
+  const deltas: Record<string, number> = {};
+  for (const [reason, count] of Object.entries(current)) {
+    const delta = Math.max(0, count - (previous[reason] ?? 0));
+    if (delta > 0) deltas[reason] = delta;
+  }
+  return deltas;
+}
+
 function criticalCollectionSnapshot(error: string): HealthSnapshot {
   const now = Date.now();
   const mem = process.memoryUsage();
@@ -56,6 +68,8 @@ export function registerHealthMonitor(
   let recovering = false;
   let previousRejected = 0;
   let previousFailed = 0;
+  let previousFailureReasons: Record<string, number> = {};
+  let previousRejectionReasons: Record<string, number> = {};
 
   const eventSdk = sdk as ISdk & {
     on?: (event: string, listener: (state?: unknown) => void) => void;
@@ -148,8 +162,18 @@ export function registerHealthMonitor(
       0,
       admission.failed - previousFailed,
     );
+    const failureReasonsSinceLastCollection = reasonDeltas(
+      admission.failureReasons,
+      previousFailureReasons,
+    );
+    const rejectionReasonsSinceLastCollection = reasonDeltas(
+      admission.rejectionReasons,
+      previousRejectionReasons,
+    );
     previousRejected = admission.rejected;
     previousFailed = admission.failed;
+    previousFailureReasons = admission.failureReasons;
+    previousRejectionReasons = admission.rejectionReasons;
     const collectedAt = new Date(now).toISOString();
     const snapshot: HealthSnapshot = {
       collectedAt,
@@ -177,6 +201,8 @@ export function registerHealthMonitor(
         ...admission,
         failedSinceLastCollection,
         rejectedSinceLastCollection,
+        failureReasonsSinceLastCollection,
+        rejectionReasonsSinceLastCollection,
       },
       ...(options.getSearchIndexStatus
         ? { searchIndex: options.getSearchIndexStatus() }
