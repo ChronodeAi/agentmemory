@@ -86,6 +86,11 @@ describe("api::session::end → event::session::stopped (#666)", () => {
       status: "active",
       startedAt: new Date().toISOString(),
       observationCount: 1,
+      backgroundPipelineStartedAt: "2026-01-01T00:00:01.000Z",
+      backgroundPipelineFinishedAt: "2026-01-01T00:00:02.000Z",
+      backgroundPipelineErrorCode: "STALE",
+      backgroundPipelineSummaryStatus: "succeeded",
+      backgroundPipelinePromotionStatus: "failed",
     });
     registerApiTriggers(surfaces.sdk as never, surfaces.kv as never);
     const handler = surfaces.functions.get("api::session::end")!;
@@ -123,6 +128,11 @@ describe("api::session::end → event::session::stopped (#666)", () => {
       backgroundPipelineStatus: "accepted",
       backgroundPipelineStage: "dispatch",
       backgroundPipelineAttempts: 1,
+      backgroundPipelineStartedAt: null,
+      backgroundPipelineFinishedAt: null,
+      backgroundPipelineErrorCode: null,
+      backgroundPipelineSummaryStatus: null,
+      backgroundPipelinePromotionStatus: null,
     });
 
     const duplicate = await handler({
@@ -259,15 +269,20 @@ describe("api::session::end → event::session::stopped (#666)", () => {
   });
 
   it("surfaces structured promotion persistence failure", async () => {
+    const calls: string[] = [];
+    let failPromotion = true;
     const surfaces = createLifecycleSurfaces(async (request) => {
+      calls.push(request.function_id);
       if (request.function_id === "mem::summarize") return { success: true };
       if (request.function_id === "mem::promotion-generate") {
-        return {
-          success: false,
-          error: { code: "PROMOTION_PERSISTENCE_FAILED" },
-          candidates: [{ id: "candidate-1" }],
-          promoted: 0,
-        };
+        return failPromotion
+          ? {
+              success: false,
+              error: { code: "PROMOTION_PERSISTENCE_FAILED" },
+              candidates: [{ id: "candidate-1" }],
+              promoted: 0,
+            }
+          : { success: true, candidates: [], promoted: 0 };
       }
       return { success: true };
     });
@@ -293,13 +308,39 @@ describe("api::session::end → event::session::stopped (#666)", () => {
       lastStage: "promotion",
       lastErrorCode: "PROMOTION_PERSISTENCE_FAILED",
     });
+    expect(surfaces.sessions.get("session-1")).toMatchObject({
+      backgroundPipelineStatus: "failed",
+      backgroundPipelineStage: "promotion",
+      backgroundPipelineSummaryStatus: "succeeded",
+      backgroundPipelinePromotionStatus: "failed",
+    });
+
+    failPromotion = false;
+    const retry = await surfaces.functions.get("event::session::stopped")!({
+      sessionId: "session-1",
+      project: "github.com/example/project",
+      pipelineRunId: "pipeline-2",
+    });
+    expect(retry).toMatchObject({ success: true, pipelineRunId: "pipeline-2" });
+    expect(calls).toEqual([
+      "mem::summarize",
+      "mem::promotion-generate",
+      "mem::promotion-generate",
+    ]);
+    expect(surfaces.sessions.get("session-1")).toMatchObject({
+      backgroundPipelineStatus: "succeeded",
+      backgroundPipelineAttempts: 2,
+      backgroundPipelineSummaryStatus: "succeeded",
+      backgroundPipelinePromotionStatus: "succeeded",
+    });
   });
 
   it("still evaluates promotion when summary throws", async () => {
     const calls: string[] = [];
+    let failSummary = true;
     const surfaces = createLifecycleSurfaces(async (request) => {
       calls.push(request.function_id);
-      if (request.function_id === "mem::summarize") {
+      if (request.function_id === "mem::summarize" && failSummary) {
         throw Object.assign(new Error("state::set timed out"), { code: "TIMEOUT" });
       }
       return { success: true };
@@ -321,6 +362,31 @@ describe("api::session::end → event::session::stopped (#666)", () => {
       status: "failed",
       lastStage: "summary",
       lastErrorCode: "TIMEOUT",
+    });
+    expect(surfaces.sessions.get("session-1")).toMatchObject({
+      backgroundPipelineStatus: "failed",
+      backgroundPipelineStage: "summary",
+      backgroundPipelineSummaryStatus: "failed",
+      backgroundPipelinePromotionStatus: "succeeded",
+    });
+
+    failSummary = false;
+    const retry = await surfaces.functions.get("event::session::stopped")!({
+      sessionId: "session-1",
+      project: "github.com/example/project",
+      pipelineRunId: "pipeline-3",
+    });
+    expect(retry).toMatchObject({ success: true, pipelineRunId: "pipeline-3" });
+    expect(calls).toEqual([
+      "mem::summarize",
+      "mem::promotion-generate",
+      "mem::summarize",
+    ]);
+    expect(surfaces.sessions.get("session-1")).toMatchObject({
+      backgroundPipelineStatus: "succeeded",
+      backgroundPipelineAttempts: 2,
+      backgroundPipelineSummaryStatus: "succeeded",
+      backgroundPipelinePromotionStatus: "succeeded",
     });
   });
 
@@ -429,7 +495,7 @@ describe("api::session::end → event::session::stopped (#666)", () => {
     ]);
     expect(surfaces.sessions.get("interrupted")).toMatchObject({
       backgroundPipelineStatus: "accepted",
-      backgroundPipelineStage: "dispatch",
+      backgroundPipelineStage: "summary",
     });
     expect(getBackgroundPipelineHealth()).toMatchObject({
       activeAccepted: 1,

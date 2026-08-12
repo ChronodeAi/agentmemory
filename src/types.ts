@@ -36,11 +36,15 @@ export interface Session {
     | "promotion";
   backgroundPipelineAttempts?: number;
   backgroundPipelineAcceptedAt?: string;
-  backgroundPipelineStartedAt?: string;
-  backgroundPipelineFinishedAt?: string;
+  backgroundPipelineStartedAt?: string | null;
+  backgroundPipelineFinishedAt?: string | null;
   backgroundPipelineErrorCode?: string | null;
-  backgroundPipelineSummaryStatus?: "succeeded" | "skipped" | "failed";
-  backgroundPipelinePromotionStatus?: "succeeded" | "failed";
+  backgroundPipelineSummaryStatus?:
+    | "succeeded"
+    | "skipped"
+    | "failed"
+    | null;
+  backgroundPipelinePromotionStatus?: "succeeded" | "failed" | null;
 }
 
 export type FileOperation = "write" | "edit" | "delete";

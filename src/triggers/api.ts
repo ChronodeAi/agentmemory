@@ -1271,11 +1271,6 @@ export function registerApiTriggers(
             },
             {
               type: "set",
-              path: "backgroundPipelineStage",
-              value: "dispatch",
-            },
-            {
-              type: "set",
               path: "backgroundPipelineAcceptedAt",
               value: acceptedAt,
             },
@@ -1346,6 +1341,31 @@ export function registerApiTriggers(
           type: "set",
           path: "backgroundPipelineAcceptedAt",
           value: acceptedAt,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineStartedAt",
+          value: null,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineFinishedAt",
+          value: null,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineErrorCode",
+          value: null,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineSummaryStatus",
+          value: null,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelinePromotionStatus",
+          value: null,
         },
       ]);
       // Fan out session-stopped lifecycle (non-blocking).

@@ -88,7 +88,11 @@ async function persistPipelineFailure(
         ) {
           return false;
         }
-        await kv.update(KV.sessions, input.sessionId, [
+        const updates: Array<{
+          type: "set";
+          path: string;
+          value: unknown;
+        }> = [
           {
             type: "set",
             path: "backgroundPipelineRunId",
@@ -114,7 +118,21 @@ async function persistPipelineFailure(
             path: "backgroundPipelineFinishedAt",
             value: finishedAt,
           },
-        ]);
+        ];
+        if (input.stage === "summary") {
+          updates.push({
+            type: "set",
+            path: "backgroundPipelineSummaryStatus",
+            value: "failed",
+          });
+        } else if (input.stage === "promotion") {
+          updates.push({
+            type: "set",
+            path: "backgroundPipelinePromotionStatus",
+            value: "failed",
+          });
+        }
+        await kv.update(KV.sessions, input.sessionId, updates);
         return true;
       },
     );
@@ -346,11 +364,6 @@ export async function reconcileBackgroundPipelines(
       },
       {
         type: "set",
-        path: "backgroundPipelineStage",
-        value: "dispatch",
-      },
-      {
-        type: "set",
         path: "backgroundPipelineAcceptedAt",
         value: acceptedAt,
       },
@@ -510,6 +523,18 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
       };
     }
 
+    const resumeStage = session.backgroundPipelineStage;
+    const summaryAlreadyComplete =
+      resumeStage === "promotion" &&
+      (session.backgroundPipelineSummaryStatus === "succeeded" ||
+        session.backgroundPipelineSummaryStatus === "skipped");
+    const promotionAlreadyComplete =
+      resumeStage === "summary" &&
+      session.backgroundPipelinePromotionStatus === "succeeded";
+    const startStage: BackgroundPipelineStage = summaryAlreadyComplete
+      ? "promotion"
+      : "summary";
+
     const startedAt = new Date().toISOString();
     await kv.update(KV.sessions, data.sessionId, [
       {
@@ -525,7 +550,7 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
       {
         type: "set",
         path: "backgroundPipelineStage",
-        value: "summary",
+        value: startStage,
       },
       {
         type: "set",
@@ -547,25 +572,40 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
       runId: pipelineRunId,
       sessionId: data.sessionId,
       project: data.project,
+      stage: startStage,
       startedAt,
     });
 
-    let summary: unknown;
+    let summary: unknown = summaryAlreadyComplete
+      ? {
+          success: true,
+          resumedStage: true,
+          ...(session.backgroundPipelineSummaryStatus === "skipped"
+            ? { summarySkipped: "previously_skipped" }
+            : {}),
+        }
+      : undefined;
     let summaryError: unknown;
-    let summarySkipped: string | null = null;
-    try {
-      summary = await sdk.trigger({
-        function_id: "mem::summarize",
-        payload: { sessionId: data.sessionId, project: data.project },
-      });
-    } catch (error) {
-      summaryError = error;
-      logger.warn("session summary generation failed", {
-        sessionId: data.sessionId,
-        project: data.project,
-        pipelineRunId,
-        ...pipelineErrorLog(error),
-      });
+    let summarySkipped: string | null =
+      session.backgroundPipelineSummaryStatus === "skipped" &&
+      summaryAlreadyComplete
+        ? "previously_skipped"
+        : null;
+    if (!summaryAlreadyComplete) {
+      try {
+        summary = await sdk.trigger({
+          function_id: "mem::summarize",
+          payload: { sessionId: data.sessionId, project: data.project },
+        });
+      } catch (error) {
+        summaryError = error;
+        logger.warn("session summary generation failed", {
+          sessionId: data.sessionId,
+          project: data.project,
+          pipelineRunId,
+          ...pipelineErrorLog(error),
+        });
+      }
     }
     if (!summaryError && !successful(summary)) {
       summarySkipped = expectedSummarySkip(summary);
@@ -579,8 +619,19 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         });
       }
     }
-    await kv.update(KV.sessions, data.sessionId, [
+    const postSummaryUpdates: Array<{
+      type: "set";
+      path: string;
+      value: unknown;
+    }> = [
       {
+        type: "set",
+        path: "backgroundPipelineStage",
+        value: "promotion",
+      },
+    ];
+    if (!summaryAlreadyComplete) {
+      postSummaryUpdates.unshift({
         type: "set",
         path: "backgroundPipelineSummaryStatus",
         value: summaryError
@@ -588,38 +639,43 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
           : summarySkipped
             ? "skipped"
             : "succeeded",
-      },
-      {
-        type: "set",
-        path: "backgroundPipelineStage",
-        value: "promotion",
-      },
-    ]);
+      });
+    }
+    await kv.update(KV.sessions, data.sessionId, postSummaryUpdates);
 
-    let promotion: unknown;
-    try {
-      promotion = await sdk.trigger({
-        function_id: "mem::promotion-generate",
-        payload: {
+    let promotion: unknown = promotionAlreadyComplete
+      ? { success: true, candidates: [], promoted: 0, resumedStage: true }
+      : undefined;
+    if (!promotionAlreadyComplete) {
+      try {
+        promotion = await sdk.trigger({
+          function_id: "mem::promotion-generate",
+          payload: {
+            sessionId: data.sessionId,
+            project: session.project,
+          },
+        });
+      } catch (error) {
+        await persistPipelineFailure(kv, {
+          runId: pipelineRunId,
           sessionId: data.sessionId,
-          project: session.project,
-        },
-      });
-    } catch (error) {
-      await persistPipelineFailure(kv, {
-        runId: pipelineRunId,
-        sessionId: data.sessionId,
-        project: data.project,
-        stage: "promotion",
-        error,
-      });
-      logger.warn("promotion generation failed", {
-        sessionId: data.sessionId,
-        project: data.project,
-        pipelineRunId,
-        ...pipelineErrorLog(error),
-      });
-      return { success: false, error: "promotion_failed", pipelineRunId, summary };
+          project: data.project,
+          stage: "promotion",
+          error,
+        });
+        logger.warn("promotion generation failed", {
+          sessionId: data.sessionId,
+          project: data.project,
+          pipelineRunId,
+          ...pipelineErrorLog(error),
+        });
+        return {
+          success: false,
+          error: "promotion_failed",
+          pipelineRunId,
+          summary,
+        };
+      }
     }
     if (!successful(promotion)) {
       const promotionError =

@@ -152,6 +152,7 @@ export function recordBackgroundPipelineStarted(input: {
   runId: string;
   sessionId: string;
   project: string;
+  stage?: BackgroundPipelineStage;
   startedAt?: string;
 }): void {
   if (!activeRuns.has(input.runId)) recordBackgroundPipelineAccepted(input);
@@ -163,7 +164,7 @@ export function recordBackgroundPipelineStarted(input: {
   health.lastRunId = input.runId;
   health.lastSessionId = input.sessionId;
   health.lastProject = input.project;
-  health.lastStage = "summary";
+  health.lastStage = input.stage ?? "summary";
   health.lastStartedAt = run.startedAt;
   updateActiveCounts();
 }
