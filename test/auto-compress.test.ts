@@ -300,6 +300,7 @@ describe("buildSyntheticCompression", () => {
       ["Read", "file_read"],
       ["Write", "file_write"],
       ["Edit", "file_edit"],
+      ["DeleteFile", "file_edit"],
       ["Bash", "command_run"],
       ["Grep", "search"],
       ["WebFetch", "web_fetch"],
@@ -330,8 +331,90 @@ describe("buildSyntheticCompression", () => {
       raw: {},
     });
     expect(synth.files).toContain("/app/src/bar.ts");
-    expect(synth.files).toContain("foo");
+    expect(synth.files).not.toContain("foo");
     expect(synth.type).toBe("file_edit");
+  });
+
+  it("retains exact mutation paths from redacted worktree provenance", async () => {
+    const { buildSyntheticCompression } = await import(
+      "../src/functions/compress-synthetic.js"
+    );
+    const synth = buildSyntheticCompression({
+      id: "obs_provenance",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "post_tool_use",
+      toolName: "apply_patch",
+      toolInput: "*** Begin Patch\n*** Update File: src/patched.ts",
+      raw: {
+        provenance: {
+          project: "github.com/example/project",
+          worktreeId: `wt_${"1".repeat(32)}`,
+          baseHeadSha: "2".repeat(40),
+          dirty: true,
+          transitions: [
+            {
+              path: "src/patched.ts",
+              operation: "edit",
+              digest: "0".repeat(40),
+              digestKind: "git-blob",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(synth.type).toBe("file_edit");
+    expect(synth.files).toEqual(["src/patched.ts"]);
+    expect(synth.provenance?.transitions).toEqual([
+      {
+        path: "src/patched.ts",
+        operation: "edit",
+        digest: "0".repeat(40),
+        digestKind: "git-blob",
+      },
+    ]);
+  });
+
+  it("does not retain mutation provenance for failed or read-only events", async () => {
+    const { buildSyntheticCompression } = await import(
+      "../src/functions/compress-synthetic.js"
+    );
+    const provenance = {
+      project: "github.com/example/project",
+      worktreeId: `wt_${"1".repeat(32)}`,
+      baseHeadSha: "2".repeat(40),
+      dirty: true,
+      transitions: [
+        {
+          path: "src/forged.ts",
+          operation: "edit",
+          digest: "3".repeat(40),
+          digestKind: "git-blob",
+        },
+      ],
+    };
+    const failed = buildSyntheticCompression({
+      id: "obs_failed",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "post_tool_failure",
+      toolName: "Edit",
+      raw: { provenance },
+    });
+    const read = buildSyntheticCompression({
+      id: "obs_read",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "post_tool_use",
+      toolName: "Read",
+      toolInput: { file_path: "src/read.ts" },
+      raw: {},
+    });
+
+    expect(failed.type).toBe("error");
+    expect(failed.provenance).toBeUndefined();
+    expect(read.provenance).toBeUndefined();
   });
 
   it("truncates long narratives so it can't blow up the index", async () => {

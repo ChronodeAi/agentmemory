@@ -19,6 +19,7 @@ describe("project-scoped session lifecycle", () => {
     const again = await startOrResumeSession(kv as never, input);
     expect(first.resumed).toBe(false);
     expect(again.resumed).toBe(false);
+    expect(first.session.retainedObservationCount).toBe(0);
 
     await kv.set<Session>(KV.sessions, "session-1", {
       ...again.session,

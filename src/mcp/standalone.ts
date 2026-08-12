@@ -512,6 +512,18 @@ export async function handleToolsList(): Promise<{ tools: unknown[] }> {
   return { tools: fallback };
 }
 
+let shutdownPromise: Promise<never> | null = null;
+
+async function finishShutdown(): Promise<never> {
+  if (!shutdownPromise) {
+    shutdownPromise = Promise.resolve().then(() => {
+      kv.persist();
+      process.exit(0);
+    });
+  }
+  return shutdownPromise;
+}
+
 const transport = createStdioTransport(async (method, params) => {
   switch (method) {
     case "initialize":
@@ -551,18 +563,17 @@ const transport = createStdioTransport(async (method, params) => {
     default:
       throw new Error(`Unknown method: ${method}`);
   }
-});
+}, { onInputClose: finishShutdown });
 
 process.stderr.write(
   `[@agentmemory/mcp] Standalone MCP server v${SERVER_INFO.version} starting...\n`,
 );
 transport.start();
 
-process.on("SIGINT", () => {
-  kv.persist();
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  kv.persist();
-  process.exit(0);
-});
+async function shutdown(): Promise<never> {
+  await transport.stop();
+  return finishShutdown();
+}
+
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());

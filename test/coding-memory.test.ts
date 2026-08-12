@@ -249,6 +249,22 @@ describe("coding memory lifecycle functions", () => {
     expect(result.sourceIds.filter((id) => id.startsWith("canary-"))).toHaveLength(1);
   });
 
+  it("reads the delivery ledger once per context packet", async () => {
+    const listSpy = vi.spyOn(kv, "list");
+
+    const result = await sdk.trigger("mem::context-packet", {
+      project,
+      sessionId,
+      files: ["src/index.ts"],
+    }) as { success: boolean };
+
+    expect(result.success).toBe(true);
+    const ledgerReads = listSpy.mock.calls.filter(
+      ([scope]) => scope === KV.injectedSources(sessionId),
+    );
+    expect(ledgerReads).toHaveLength(1);
+  });
+
   it("suppresses older episodes for current queries when a verified lesson exists", async () => {
     const verifiedAt = "2026-08-04T14:15:26.154Z";
     await kv.set(KV.lessons, "verified-current", {

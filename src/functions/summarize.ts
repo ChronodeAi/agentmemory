@@ -1,6 +1,7 @@
 import type { ISdk } from "iii-sdk";
 import type {
   CompressedObservation,
+  FactLedgerEntry,
   SessionSummary,
   MemoryProvider,
   Session,
@@ -35,6 +36,40 @@ const CHUNK_CONCURRENCY_DEFAULT = 6;
 // Bail on the merged summary if more than this fraction of chunks fail
 // to parse — a half-blind narrative is worse than a clean error.
 const MAX_SKIP_RATIO = 0.5;
+
+function observedModifiedFiles(
+  observations: Array<
+    Pick<CompressedObservation, "timestamp" | "provenance">
+  >,
+): string[] {
+  const files = new Set<string>();
+  const chronological = observations
+    .map((observation, index) => ({ observation, index }))
+    .sort(
+      (a, b) =>
+        a.observation.timestamp.localeCompare(b.observation.timestamp) ||
+        a.index - b.index,
+    );
+  for (const { observation } of chronological) {
+    for (const transition of observation.provenance?.transitions ?? []) {
+      const normalized = transition.path.trim();
+      if (normalized) files.add(normalized);
+    }
+  }
+  return Array.from(files).slice(0, 100);
+}
+
+function reconcileModifiedFiles(
+  summary: SessionSummary,
+  observations: Array<
+    Pick<CompressedObservation, "timestamp" | "provenance">
+  >,
+): SessionSummary {
+  return {
+    ...summary,
+    filesModified: observedModifiedFiles(observations),
+  };
+}
 
 function getChunkSize(): number {
   const raw = process.env.SUMMARIZE_CHUNK_SIZE;
@@ -72,7 +107,7 @@ async function summarizeChunkWithRetry(
         buildSummaryPrompt(chunk),
       );
       const parsed = parseSummaryXml(xml, sessionId, project, chunk.length);
-      if (parsed) return parsed;
+      if (parsed) return reconcileModifiedFiles(parsed, chunk);
       logger.warn("Summarize chunk parse failed", {
         sessionId,
         chunk: `${idx + 1}/${total}`,
@@ -263,6 +298,8 @@ export function registerSummarizeFunction(
         KV.observations(sessionId),
       );
       const compressed = observations.filter((o) => o.title);
+      const archived = await kv.list<FactLedgerEntry>(KV.factLedger(sessionId));
+      const mutationEvidence = [...archived, ...compressed];
 
       if (compressed.length === 0) {
         logger.info("No observations to summarize", {
@@ -279,9 +316,7 @@ export function registerSummarizeFunction(
           .slice()
           .sort((a, b) => b.importance - a.importance)
           .slice(0, 12);
-        const files = Array.from(
-          new Set(ranked.flatMap((observation) => observation.files ?? [])),
-        );
+        const files = observedModifiedFiles(mutationEvidence);
         const concepts = Array.from(
           new Set(ranked.flatMap((observation) => observation.concepts ?? [])),
         );
@@ -304,7 +339,7 @@ export function registerSummarizeFunction(
             .filter((observation) => observation.type === "decision")
             .map((observation) => observation.title)
             .slice(0, 20),
-          filesModified: files.slice(0, 100),
+          filesModified: files,
           concepts: concepts.slice(0, 100),
           observationCount: compressed.length,
         };
@@ -364,12 +399,15 @@ export function registerSummarizeFunction(
             });
             continue;
           }
-          summary = parseSummaryXml(
+          const parsed = parseSummaryXml(
             response,
             sessionId,
             session.project,
             compressed.length,
           );
+          summary = parsed
+            ? reconcileModifiedFiles(parsed, mutationEvidence)
+            : null;
           if (summary) break;
           logger.warn("Failed to parse summary XML", { sessionId, attempt });
         }

@@ -183,6 +183,18 @@ describe("balanced coding capture", () => {
     }
   });
 
+  it("never attaches mutation provenance to failed tool events", () => {
+    expect(
+      captureToolEvent(
+        "file_edit",
+        { file_path: "src/app.ts" },
+        "failed",
+        config,
+        true,
+      )?.provenance,
+    ).toBeUndefined();
+  });
+
   it("parses commit rename and delete transitions idempotently", () => {
     const status = [
       "M\tsrc/changed.ts",

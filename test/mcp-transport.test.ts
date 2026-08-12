@@ -1,5 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
+import { PassThrough } from "node:stream";
 import {
+  createStdioTransport,
   createMessageParser,
   formatResponse,
   processLine,
@@ -271,5 +273,42 @@ describe("stdio framing", () => {
 
     expect(header).toBe(`Content-Length: ${Buffer.byteLength(body, "utf8")}\r\n\r\n`);
     expect(JSON.parse(body)).toEqual(response);
+  });
+});
+
+describe("stdio lifecycle", () => {
+  it("drains queued responses before handling input EOF", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    let release!: () => void;
+    const handler = vi.fn(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ ok: true });
+        }),
+    );
+    const closed = vi.fn();
+    const chunks: Buffer[] = [];
+    output.on("data", (chunk) => chunks.push(Buffer.from(chunk)));
+    const transport = createStdioTransport(handler, {
+      input,
+      output,
+      onInputClose: closed,
+    });
+
+    transport.start();
+    input.write(
+      `${JSON.stringify({ jsonrpc: "2.0", id: 1, method: "initialize" })}\n`,
+    );
+    input.end();
+    await vi.waitFor(() => expect(handler).toHaveBeenCalledOnce());
+    expect(closed).not.toHaveBeenCalled();
+
+    release();
+    await vi.waitFor(() => expect(closed).toHaveBeenCalledOnce());
+    expect(Buffer.concat(chunks).toString("utf8")).toContain(
+      '\"result\":{\"ok\":true}',
+    );
+    await expect(transport.stop()).resolves.toBeUndefined();
   });
 });

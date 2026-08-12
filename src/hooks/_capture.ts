@@ -5,6 +5,12 @@ import type {
   AgentmemoryProjectConfig,
   CaptureProfile,
 } from "../project-config.js";
+import type {
+  CommitTransition,
+  FileOperation,
+  FileTransition,
+  WorktreeProvenance,
+} from "../types.js";
 import {
   isProjectPathExcluded,
   normalizedProjectPath,
@@ -16,29 +22,6 @@ const HIGH_VALUE_TOOLS =
   /(?:edit|write|create|patch|apply|test|spec|migrat|commit|task|decision|deploy|build)/i;
 const MUTATION_TOOLS =
   /(?:edit|write|create|patch|apply|delete|remove|unlink)/i;
-
-export type FileOperation = "write" | "edit" | "delete";
-
-export interface FileTransition {
-  path: string;
-  operation: FileOperation;
-  digest: string;
-  digestKind: "git-blob";
-}
-
-export interface CommitTransition {
-  path: string;
-  operation: FileOperation | "rename" | "copy";
-  previousPath?: string;
-}
-
-export interface WorktreeProvenance {
-  project: string;
-  worktreeId: string;
-  baseHeadSha: string;
-  dirty: boolean;
-  transitions: FileTransition[];
-}
 
 function serialize(value: unknown): string {
   if (typeof value === "string") return value;

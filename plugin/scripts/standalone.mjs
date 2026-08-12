@@ -190,32 +190,60 @@ function createMessageParser(onMessage, writeErr = (msg) => process.stderr.write
 		}
 	};
 }
-function createStdioTransport(handler) {
+function createStdioTransport(handler, options = {}) {
+	const input = options.input ?? process.stdin;
+	const output = options.output ?? process.stdout;
 	let parser = null;
 	let queue = Promise.resolve();
+	let started = false;
+	let stopPromise = null;
+	let closeHandled = false;
 	const writeResponse = (response) => {
 		const formatted = formatResponse(response, parser?.isFramed() ?? false);
 		if (typeof formatted === "string") {
-			process.stdout.write(formatted);
+			output.write(formatted);
 			return;
 		}
-		for (const chunk of formatted) process.stdout.write(chunk);
+		for (const chunk of formatted) output.write(chunk);
 	};
 	const onData = (chunk) => parser?.push(chunk);
+	const stop = async () => {
+		if (stopPromise) return stopPromise;
+		stopPromise = (async () => {
+			input.off("data", onData);
+			input.off("end", onInputClose);
+			input.off("close", onInputClose);
+			started = false;
+			await queue.catch(() => void 0);
+			if (output.writableNeedDrain) await new Promise((resolve) => output.once("drain", resolve));
+			parser = null;
+		})();
+		return stopPromise;
+	};
+	const onInputClose = () => {
+		if (closeHandled) return;
+		closeHandled = true;
+		stop().then(() => options.onInputClose?.()).catch((err) => {
+			process.stderr.write(`[mcp-transport] input-close shutdown failed: ${err instanceof Error ? err.message : String(err)}\n`);
+		});
+	};
 	return {
 		start() {
+			if (started) return;
+			started = true;
+			stopPromise = null;
+			closeHandled = false;
 			parser = createMessageParser((message) => {
 				queue = queue.then(() => processLine(message, handler, writeResponse));
 				queue.catch((err) => {
 					process.stderr.write(`[mcp-transport] request processing failed: ${err instanceof Error ? err.message : String(err)}\n`);
 				});
 			});
-			process.stdin.on("data", onData);
+			input.on("data", onData);
+			input.once("end", onInputClose);
+			input.once("close", onInputClose);
 		},
-		stop() {
-			process.stdin.off("data", onData);
-			parser = null;
-		}
+		stop
 	};
 }
 //#endregion
@@ -1611,7 +1639,7 @@ function getAllTools() {
 }
 //#endregion
 //#region src/version.ts
-const VERSION = "0.9.28-chronode.5";
+const VERSION = "0.9.28-chronode.6";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
 //#endregion
@@ -2133,6 +2161,14 @@ async function handleToolsList() {
 	if (debug) process.stderr.write(`[@agentmemory/mcp] tools/list: returning ${fallback.length} local fallback tools (${fallback.map((t) => t.name).join(",")})\n`);
 	return { tools: fallback };
 }
+let shutdownPromise = null;
+async function finishShutdown() {
+	if (!shutdownPromise) shutdownPromise = Promise.resolve().then(() => {
+		kv.persist();
+		process.exit(0);
+	});
+	return shutdownPromise;
+}
 const transport = createStdioTransport(async (method, params) => {
 	switch (method) {
 		case "initialize": return {
@@ -2162,16 +2198,14 @@ const transport = createStdioTransport(async (method, params) => {
 		}
 		default: throw new Error(`Unknown method: ${method}`);
 	}
-});
+}, { onInputClose: finishShutdown });
 process.stderr.write(`[@agentmemory/mcp] Standalone MCP server v${SERVER_INFO.version} starting...\n`);
 transport.start();
-process.on("SIGINT", () => {
-	kv.persist();
-	process.exit(0);
-});
-process.on("SIGTERM", () => {
-	kv.persist();
-	process.exit(0);
-});
+async function shutdown() {
+	await transport.stop();
+	return finishShutdown();
+}
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());
 //#endregion
 export { handleToolCall, handleToolsList };

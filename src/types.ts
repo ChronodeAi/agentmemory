@@ -10,6 +10,7 @@ export interface Session {
   staleClosedAt?: string;
   status: "active" | "completed" | "abandoned";
   observationCount: number;
+  retainedObservationCount?: number;
   model?: string;
   tags?: string[];
   firstPrompt?: string;
@@ -42,6 +43,29 @@ export interface Session {
   backgroundPipelinePromotionStatus?: "succeeded" | "failed";
 }
 
+export type FileOperation = "write" | "edit" | "delete";
+
+export interface FileTransition {
+  path: string;
+  operation: FileOperation;
+  digest: string;
+  digestKind: "git-blob";
+}
+
+export interface WorktreeProvenance {
+  project: string;
+  worktreeId: string;
+  baseHeadSha: string;
+  dirty: boolean;
+  transitions: FileTransition[];
+}
+
+export interface CommitTransition {
+  path: string;
+  operation: FileOperation | "rename" | "copy";
+  previousPath?: string;
+}
+
 export interface CommitLink {
   project?: string;
   sha: string;
@@ -70,6 +94,7 @@ export interface RawObservation {
   modality?: "text" | "image" | "mixed";
   imageData?: string;
   agentId?: string;
+  provenance?: WorktreeProvenance;
 }
 
 export interface FactLedgerEntry {
@@ -80,6 +105,7 @@ export interface FactLedgerEntry {
   title?: string;
   facts: string[];
   files: string[];
+  provenance?: WorktreeProvenance;
   compactedAt: string;
 }
 
@@ -101,6 +127,7 @@ export interface CompressedObservation {
   imageDescription?: string;
   modality?: "text" | "image" | "mixed";
   agentId?: string;
+  provenance?: WorktreeProvenance;
   recalledOnly?: boolean;
 }
 

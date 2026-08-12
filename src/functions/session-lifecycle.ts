@@ -98,6 +98,7 @@ export async function startOrResumeSession(
           updatedAt: now,
           status: "active",
           observationCount: 0,
+          retainedObservationCount: 0,
           ...(input.agentId ? { agentId: input.agentId } : {}),
           ...(input.parentSessionId
             ? { parentSessionId: input.parentSessionId }

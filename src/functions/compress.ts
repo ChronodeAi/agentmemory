@@ -28,6 +28,7 @@ import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
 import { modelProcessingForSession } from "./model-processing.js";
 import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
+import { observationWorktreeProvenance } from "./compress-synthetic.js";
 
 const VALID_TYPES = new Set<string>([
   "file_read",
@@ -165,6 +166,7 @@ export function registerCompressFunction(
         }
 
         const qualityScore = scoreCompression(parsed);
+        const provenance = observationWorktreeProvenance(data.raw);
 
         const compressed: CompressedObservation = {
           id: data.observationId,
@@ -176,6 +178,7 @@ export function registerCompressFunction(
           ...(imageDescription ? { imageDescription } : {}),
           ...(data.raw.imageData ? { imageRef: data.raw.imageData } : {}),
           ...(data.raw.agentId ? { agentId: data.raw.agentId } : {}),
+          ...(provenance ? { provenance } : {}),
         };
         compressed.recalledOnly = isRetrievalGeneratedObservation(compressed);
 

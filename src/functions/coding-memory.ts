@@ -244,6 +244,20 @@ function observationTimestamp(row: Record<string, unknown>): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function episodicSourceId(
+  row: Record<string, unknown>,
+): string | undefined {
+  if (typeof row.obsId === "string") return row.obsId;
+  if (
+    row.observation &&
+    typeof row.observation === "object" &&
+    typeof (row.observation as Record<string, unknown>).id === "string"
+  ) {
+    return (row.observation as Record<string, unknown>).id as string;
+  }
+  return undefined;
+}
+
 function hasStructuredEpisodicEvidence(
   row: Record<string, unknown>,
 ): boolean {
@@ -604,11 +618,10 @@ function escapeXmlAttribute(value: string): string {
     .replace(/>/g, "&gt;");
 }
 
-async function hasBeenInjected(
+async function listAcknowledgedSourceIds(
   kv: StateKV,
   sessionId: string,
-  sourceId: string,
-): Promise<boolean> {
+): Promise<Set<string>> {
   const scope = KV.injectedSources(sessionId);
   let records: ContextAcknowledgement[];
   try {
@@ -616,12 +629,17 @@ async function hasBeenInjected(
   } catch (error) {
     throw new DeliveryLedgerError("list", error);
   }
-  return records.some(
-    (record) =>
-      record.kind === "context_acknowledgement" &&
-      record.sessionId === sessionId &&
-      record.sourceIds.includes(sourceId),
-  );
+  const sourceIds = new Set<string>();
+  for (const record of records) {
+    if (
+      record.kind !== "context_acknowledgement" ||
+      record.sessionId !== sessionId
+    ) {
+      continue;
+    }
+    for (const sourceId of record.sourceIds) sourceIds.add(sourceId);
+  }
+  return sourceIds;
 }
 
 async function ledgerGet<T>(
@@ -929,15 +947,7 @@ export function registerCodingMemoryFunctions(
               : {};
           return { ...row, ...observation };
         },
-        (row) =>
-          typeof row.obsId === "string"
-            ? row.obsId
-            : row.observation &&
-                typeof row.observation === "object" &&
-                typeof (row.observation as Record<string, unknown>).id ===
-                  "string"
-              ? ((row.observation as Record<string, unknown>).id as string)
-              : undefined,
+        episodicSourceId,
         eligibilityExclusions,
         eligibilityNow,
       );
@@ -1052,18 +1062,29 @@ export function registerCodingMemoryFunctions(
       const slotSources = eligibleSlots.map(
         (slot) => `slot:${project}:${slot.label}:${slot.updatedAt}`,
       );
-      const freshSlotSources: string[] = [];
-      for (const sourceId of slotSources) {
-        if (!(await hasBeenInjected(kv, sessionId, sourceId))) {
-          freshSlotSources.push(sourceId);
-        }
-      }
       const profileSource = profile
         ? `profile:${project}:${profile.updatedAt}`
         : undefined;
+      const episodicSourceIds = searchRows
+        .map(episodicSourceId)
+        .filter((id): id is string => Boolean(id));
+      const candidateSourceIds = [
+        ...slotSources,
+        ...(profileSource ? [profileSource] : []),
+        ...projectLessons.map((lesson) => lesson.id),
+        ...episodicSourceIds,
+        ...eligibleFileSourceIds,
+      ];
+      const acknowledgedSourceIds =
+        candidateSourceIds.length > 0
+          ? await listAcknowledgedSourceIds(kv, sessionId)
+          : new Set<string>();
+      const freshSlotSources = slotSources.filter(
+        (sourceId) => !acknowledgedSourceIds.has(sourceId),
+      );
       const profileIsFresh =
         profileSource &&
-        !(await hasBeenInjected(kv, sessionId, profileSource));
+        !acknowledgedSourceIds.has(profileSource);
       if (freshSlotSources.length > 0 || profileIsFresh) {
         const identityParts: string[] = [];
         const pinned = renderPinnedContext(eligibleSlots);
@@ -1100,12 +1121,9 @@ export function registerCodingMemoryFunctions(
         }
       }
 
-      const freshLessons: Lesson[] = [];
-      for (const lesson of projectLessons) {
-        if (!(await hasBeenInjected(kv, sessionId, lesson.id))) {
-          freshLessons.push(lesson);
-        }
-      }
+      const freshLessons = projectLessons.filter(
+        (lesson) => !acknowledgedSourceIds.has(lesson.id),
+      );
       if (freshLessons.length > 0) {
         sections.push(
           fit(
@@ -1123,16 +1141,8 @@ export function registerCodingMemoryFunctions(
 
       const freshRows: Array<Record<string, unknown>> = [];
       for (const row of searchRows) {
-        const sourceId =
-          typeof row.obsId === "string"
-            ? row.obsId
-            : row.observation &&
-                typeof row.observation === "object" &&
-                typeof (row.observation as Record<string, unknown>).id ===
-                  "string"
-              ? ((row.observation as Record<string, unknown>).id as string)
-              : undefined;
-        if (sourceId && !(await hasBeenInjected(kv, sessionId, sourceId))) {
+        const sourceId = episodicSourceId(row);
+        if (sourceId && !acknowledgedSourceIds.has(sourceId)) {
           freshRows.push(row);
           selectedSourceIds.push(sourceId);
         }
@@ -1166,17 +1176,12 @@ export function registerCodingMemoryFunctions(
               (id): id is string => typeof id === "string",
             )
           : [];
-      const freshFileSources = (
-        await Promise.all(
-          fileSourceIds.map(async (id) => ({
-            id,
-            fresh: !(await hasBeenInjected(kv, sessionId, id)),
-          })),
-        )
-      ).filter((item) => item.fresh);
+      const freshFileSources = fileSourceIds.filter(
+        (id) => !acknowledgedSourceIds.has(id),
+      );
       if (fileContext && freshFileSources.length > 0) {
         sections.push(fit(fileContext, budgets.files));
-        selectedSourceIds.push(...freshFileSources.map((item) => item.id));
+        selectedSourceIds.push(...freshFileSources);
       }
 
       const uniqueSourceIds = Array.from(new Set(selectedSourceIds));

@@ -12,7 +12,10 @@ import { stripPrivateData } from "./privacy.js";
 import { DedupMap } from "./dedup.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { isAutoCompressEnabled } from "../config.js";
-import { buildSyntheticCompression } from "./compress-synthetic.js";
+import {
+  buildSyntheticCompression,
+  parseWorktreeProvenance,
+} from "./compress-synthetic.js";
 import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
 import {
   getSearchIndex,
@@ -181,6 +184,7 @@ export async function ensureObservationSession(
       updatedAt: now,
       status: "active",
       observationCount: 0,
+      retainedObservationCount: 0,
       ...(input.agentId ? { agentId: input.agentId } : {}),
       ...(input.privacy ? { privacy: input.privacy } : {}),
       ...(input.captureProfile
@@ -276,6 +280,10 @@ export function registerObserveFunction(
           raw.toolInput = d["tool_input"];
           raw.toolOutput = d["tool_output"] || d["error"];
         }
+        if (payload.hookType === "post_tool_use") {
+          const provenance = parseWorktreeProvenance(d["provenance"]);
+          if (provenance?.project === project) raw.provenance = provenance;
+        }
         if (payload.hookType === "prompt_submit") {
           raw.userPrompt = d["prompt"] as string | undefined;
         }
@@ -361,6 +369,10 @@ export function registerObserveFunction(
             };
           }
         }
+        let retainedObservationCount =
+          (existingSession.retainedObservationCount ??
+            existingSession.observationCount ??
+            0) + 1;
         if (maxObservationsPerSession && maxObservationsPerSession > 0) {
           let existing = await kv.list<CompressedObservation>(
             KV.observations(payload.sessionId),
@@ -430,6 +442,9 @@ export function registerObserveFunction(
                 files: Array.isArray(observation.files)
                   ? observation.files
                   : [],
+                ...(observation.provenance
+                  ? { provenance: observation.provenance }
+                  : {}),
                 compactedAt,
               };
               await kv.set(
@@ -461,6 +476,7 @@ export function registerObserveFunction(
               error: `Session observation limit reached (${maxObservationsPerSession})`,
             };
           }
+          retainedObservationCount = existing.length + 1;
         }
 
         // Existing session is the source of truth for agentId (even
@@ -556,6 +572,11 @@ export function registerObserveFunction(
               type: "set",
               path: "observationCount",
               value: (session.observationCount || 0) + 1,
+            },
+            {
+              type: "set",
+              path: "retainedObservationCount",
+              value: retainedObservationCount,
             },
           ];
           if (!session.firstPrompt && typeof raw.userPrompt === "string") {

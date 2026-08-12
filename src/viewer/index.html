@@ -1166,6 +1166,14 @@
       var name = sessionDisplayName(s);
       return id ? name + ' (' + id + ')' : name + ' (missing id)';
     }
+    function sessionObservationLabel(s) {
+      var total = Number(s && s.observationCount) || 0;
+      var retained = Number(s && s.retainedObservationCount);
+      if (Number.isFinite(retained) && retained < total) {
+        return retained + ' retained / ' + total + ' total';
+      }
+      return total + ' obs';
+    }
     function projectForSession(id) {
       var collections = [
         state.sessions.items,
@@ -1483,7 +1491,10 @@
         html += '<div class="stat-card"><div class="label">Circuit Breaker</div><div class="value"><span class="cb-indicator ' + cbClass + '">' + esc(cb.state) + '</span></div>';
         html += '<div class="sub">' + (cb.failures || 0) + ' failures</div></div>';
       }
-      var totalObs = d.sessions.reduce(function(a, s) { return a + (s.observationCount || 0); }, 0);
+      var totalObs = d.sessions.reduce(function(a, s) {
+        var retained = Number(s.retainedObservationCount);
+        return a + (Number.isFinite(retained) ? retained : (s.observationCount || 0));
+      }, 0);
       var tokenBudget = parseInt(new URLSearchParams(window.location.search).get('tokenBudget') || '2000', 10) || 2000;
       var estFull = totalObs * 80;
       var estInjected = d.sessions.length * tokenBudget;
@@ -1584,12 +1595,12 @@
         html += '<div class="empty-state"><p>No sessions yet. Start a coding session with agentmemory hooks enabled.</p></div>';
       } else {
         var recent = d.sessions.slice().sort(function(a, b) { return (b.startedAt || '').localeCompare(a.startedAt || ''); }).slice(0, 5);
-        html += '<table><tr><th>Project</th><th>Status</th><th>Obs</th><th>Started</th></tr>';
+        html += '<table><tr><th>Project</th><th>Status</th><th>Observations</th><th>Started</th></tr>';
         recent.forEach(function(s) {
           var statusBadge = s.status === 'active' ? 'badge-green' : s.status === 'completed' ? 'badge-blue' : 'badge-muted';
           html += '<tr><td style="color:var(--ink);font-weight:500;">' + esc(sessionDisplayName(s)) + '</td>';
           html += '<td><span class="badge ' + statusBadge + '">' + esc(s.status) + '</span></td>';
-          html += '<td style="color:var(--ink-muted);font-family:var(--font-mono);font-size:12px;">' + (s.observationCount || 0) + '</td>';
+          html += '<td style="color:var(--ink-muted);font-family:var(--font-mono);font-size:12px;">' + esc(sessionObservationLabel(s)) + '</td>';
           html += '<td style="font-family:var(--font-mono);font-size:11px;color:var(--ink-faint);">' + esc(shortTime(s.startedAt)) + '</td></tr>';
         });
         html += '</table>';
@@ -2993,7 +3004,7 @@
             html += '<div class="session-preview" style="font-size:13px;color:var(--ink);margin:4px 0;line-height:1.4;">' + esc(truncate(preview, 140)) + '</div>';
           }
           html += '<div class="session-meta">' + esc(shortSessionId(s, 12) || 'missing id') + ' &middot; ' + esc(formatTime(s.startedAt));
-          html += ' &middot; ' + (s.observationCount || 0) + ' obs';
+          html += ' &middot; ' + esc(sessionObservationLabel(s));
           if (s.model) html += ' &middot; ' + esc(s.model);
           html += '</div></div>';
         });
@@ -4056,7 +4067,7 @@
       var sessions = state.replay.sessions || [];
       var options = '<option value="">— pick a session —</option>' + sessions.map(function(s) {
         var id = sessionId(s);
-        var label = sessionDisplayName(s) + ' · ' + (shortSessionId(s, 8) || 'missing id') + ' · ' + (s.observationCount || 0) + ' obs';
+        var label = sessionDisplayName(s) + ' · ' + (shortSessionId(s, 8) || 'missing id') + ' · ' + sessionObservationLabel(s);
         return '<option value="' + esc(id) + '"' + (id && id === state.replay.selectedId ? ' selected' : '') + (id ? '' : ' disabled') + '>' + esc(label) + '</option>';
       }).join('');
 

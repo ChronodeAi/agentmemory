@@ -246,6 +246,11 @@ describe("observe implicit session create (#638)", () => {
     expect(vector.size).toBe(79);
     expect(getSearchIndex().size).toBe(80);
     expect(scheduleSave).toHaveBeenCalledTimes(2);
+    const session = kv.store
+      .get("mem:sessions")
+      ?.get("ses_compact") as { observationCount: number; retainedObservationCount: number };
+    expect(session.observationCount).toBe(100);
+    expect(session.retainedObservationCount).toBe(80);
   });
 
   it("rejects an observation that does not match an existing session scope", async () => {
