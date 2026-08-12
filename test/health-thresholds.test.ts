@@ -82,6 +82,56 @@ describe("evaluateHealth memory severity", () => {
     });
   });
 
+  it("keeps large iii RSS advisory when host-relative pressure is low", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          memory: {
+            heapUsed: 100 * 1024 * 1024,
+            heapTotal: 200 * 1024 * 1024,
+            rss: 1024 * 1024 * 1024,
+            external: 0,
+            systemTotal: 128 * 1024 * 1024 * 1024,
+          },
+          engineResources: {
+            status: "ok",
+            pid: 42,
+            cpuPercent: 1,
+            rssBytes: 1843 * 1024 * 1024,
+          },
+        }),
+      ),
+    ).toEqual({
+      status: "healthy",
+      alerts: [],
+      notes: ["engine_rss_elevated_1843mb_1.4%"],
+    });
+  });
+
+  it("falls back to absolute iii RSS thresholds without host capacity", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          memory: {
+            heapUsed: 0,
+            heapTotal: 1,
+            rss: 0,
+            external: 0,
+          },
+          engineResources: {
+            status: "ok",
+            pid: 42,
+            cpuPercent: 1,
+            rssBytes: 3 * 1024 * 1024 * 1024,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: "critical",
+      alerts: ["engine_rss_critical_3072mb"],
+    });
+  });
+
   it("degrades on unbounded iii store growth", () => {
     expect(
       evaluateHealth(

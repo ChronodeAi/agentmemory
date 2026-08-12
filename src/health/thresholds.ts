@@ -9,6 +9,8 @@ interface ThresholdConfig {
   engineCpuCriticalPercent: number;
   engineRssWarnBytes: number;
   engineRssCriticalBytes: number;
+  engineRssWarnSystemPercent: number;
+  engineRssCriticalSystemPercent: number;
   engineStoreGrowthWarnBytesPerMinute: number;
   engineStoreGrowthCriticalBytesPerMinute: number;
   memoryWarnPercent: number;
@@ -33,6 +35,8 @@ const DEFAULTS: ThresholdConfig = {
   engineCpuCriticalPercent: 85,
   engineRssWarnBytes: 1024 * 1024 * 1024,
   engineRssCriticalBytes: 2 * 1024 * 1024 * 1024,
+  engineRssWarnSystemPercent: 5,
+  engineRssCriticalSystemPercent: 10,
   engineStoreGrowthWarnBytesPerMinute: 32 * 1024 * 1024,
   engineStoreGrowthCriticalBytesPerMinute: 128 * 1024 * 1024,
   memoryWarnPercent: 80,
@@ -167,6 +171,7 @@ export function evaluateHealth(
     degraded = true;
   }
 
+  const systemTotal = snapshot.memory.systemTotal ?? 0;
   const engine = snapshot.engineResources;
   if (engine) {
     if (engine.status === "error") {
@@ -188,16 +193,30 @@ export function evaluateHealth(
       degraded = true;
     }
     const engineRss = engine.rssBytes ?? 0;
-    if (engineRss > cfg.engineRssCriticalBytes) {
+    const engineRssSystemPercent =
+      systemTotal > 0 ? (engineRss / systemTotal) * 100 : 0;
+    const engineRssCritical =
+      engineRss > cfg.engineRssCriticalBytes &&
+      (systemTotal <= 0 ||
+        engineRssSystemPercent > cfg.engineRssCriticalSystemPercent);
+    const engineRssWarn =
+      engineRss > cfg.engineRssWarnBytes &&
+      (systemTotal <= 0 ||
+        engineRssSystemPercent > cfg.engineRssWarnSystemPercent);
+    if (engineRssCritical) {
       alerts.push(
         `engine_rss_critical_${Math.round(engineRss / (1024 * 1024))}mb`,
       );
       critical = true;
-    } else if (engineRss > cfg.engineRssWarnBytes) {
+    } else if (engineRssWarn) {
       alerts.push(
         `engine_rss_warn_${Math.round(engineRss / (1024 * 1024))}mb`,
       );
       degraded = true;
+    } else if (engineRss > cfg.engineRssWarnBytes && systemTotal > 0) {
+      notes.push(
+        `engine_rss_elevated_${Math.round(engineRss / (1024 * 1024))}mb_${engineRssSystemPercent.toFixed(1)}%`,
+      );
     }
     const growthPerMinute = Math.max(
       engine.stateStore?.growthBytesPerMinute ?? 0,
@@ -218,7 +237,6 @@ export function evaluateHealth(
       : 0;
   const rss = snapshot.memory.rss ?? 0;
   const external = snapshot.memory.external ?? 0;
-  const systemTotal = snapshot.memory.systemTotal ?? 0;
   const rssSystemPercent =
     systemTotal > 0 ? (rss / systemTotal) * 100 : 0;
   const heapAboveFloor = snapshot.memory.heapUsed >= cfg.memoryHeapFloorBytes;

@@ -1523,9 +1523,14 @@
           var engine = snap.engineResources;
           var engineCpu = engine.cpuPercent || 0;
           var engineRss = Math.round((engine.rssBytes || 0) / 1024 / 1024);
+          var systemTotalMb = Math.round(((snap.memory || {}).systemTotal || 0) / 1024 / 1024);
+          var engineRssSystemPct = systemTotalMb > 0 ? engineRss / systemTotalMb * 100 : 0;
+          var engineRssGaugePct = systemTotalMb > 0 ? Math.min(100, engineRssSystemPct / 5 * 100) : Math.min(100, Math.round(engineRss / 2048 * 100));
+          var engineRssColor = (engineRss > 2048 && (systemTotalMb <= 0 || engineRssSystemPct > 10)) ? 'var(--red)' : (engineRss > 1024 && (systemTotalMb <= 0 || engineRssSystemPct > 5)) ? 'var(--yellow)' : 'var(--blue)';
+          var engineRssLabel = engineRss + ' MB' + (systemTotalMb > 0 ? ' &middot; ' + engineRssSystemPct.toFixed(1) + '% RAM' : '');
           var engineCpuColor = engineCpu > 85 ? 'var(--red)' : engineCpu > 60 ? 'var(--yellow)' : 'var(--green)';
           html += '<div class="gauge"><span class="gauge-label">iii CPU</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, engineCpu) + '%;background:' + engineCpuColor + '"></div></div><span class="gauge-value">' + engineCpu.toFixed(1) + '%</span></div>';
-          html += '<div class="gauge"><span class="gauge-label">iii RSS</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + Math.min(100, Math.round(engineRss / 2048 * 100)) + '%;background:var(--blue)"></div></div><span class="gauge-value">' + engineRss + ' MB</span></div>';
+          html += '<div class="gauge"><span class="gauge-label">iii RSS</span><div class="gauge-bar"><div class="gauge-fill" style="width:' + engineRssGaugePct + '%;background:' + engineRssColor + '"></div></div><span class="gauge-value">' + engineRssLabel + '</span></div>';
           var stateMb = Math.round(((engine.stateStore || {}).bytes || 0) / 1024 / 1024);
           var streamMb = Math.round(((engine.streamStore || {}).bytes || 0) / 1024 / 1024);
           html += '<div class="sub" style="margin-top:6px;">iii stores: ' + stateMb + ' MB state &middot; ' + streamMb + ' MB stream &middot; probe ' + esc(engine.status || 'unknown') + '</div>';
