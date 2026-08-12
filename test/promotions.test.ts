@@ -6,6 +6,7 @@ import type {
   CompressedObservation,
   Lesson,
   PromotionCandidate,
+  RawObservation,
   Session,
 } from "../src/types.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
@@ -153,6 +154,44 @@ describe("evidence-gated promotions", () => {
       result.candidates.find((item) => item.category === "architecture")
         ?.status,
     ).toBe("pending");
+  });
+
+  it("skips retained raw observations without failing promotion generation", async () => {
+    const raw: RawObservation = {
+      id: "raw-compression-failure",
+      sessionId: "session-1",
+      timestamp: "2026-01-01T00:01:30.000Z",
+      hookType: "post_tool_failure",
+      toolName: "Bash",
+      raw: { status: "compression_pending" },
+    };
+    await kv.set(KV.observations("session-1"), raw.id, raw);
+    await kv.set(
+      KV.observations("session-1"),
+      "verified-with-raw",
+      evidenceObservation(
+        "verified-with-raw",
+        "test",
+        "verified",
+        "2026-01-01T00:02:00.000Z",
+        { sourceIds: ["test:ci-run:raw-boundary"] },
+      ),
+    );
+
+    const result = (await sdk.trigger("mem::promotion-generate", {
+      sessionId: "session-1",
+      project: PROJECT,
+    })) as {
+      success: boolean;
+      promoted: number;
+      nonCompressedObservationsSkipped: number;
+    };
+
+    expect(result).toMatchObject({
+      success: true,
+      promoted: 1,
+      nonCompressedObservationsSkipped: 1,
+    });
   });
 
   it("keeps externally accepted ADR evidence behind explicit acceptance", async () => {

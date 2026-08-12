@@ -45,6 +45,22 @@ function expectedSummarySkip(result: unknown): string | null {
     : null;
 }
 
+function pipelineErrorLog(error: unknown): {
+  errorCode: string;
+  errorMessage?: string;
+} {
+  const errorMessage =
+    error instanceof Error
+      ? error.message
+      : typeof error === "string"
+        ? error
+        : undefined;
+  return {
+    errorCode: pipelineFailureCode(error),
+    ...(errorMessage ? { errorMessage: errorMessage.slice(0, 500) } : {}),
+  };
+}
+
 async function persistPipelineFailure(
   kv: StateKV,
   input: {
@@ -250,7 +266,7 @@ export async function dispatchSessionStopped(
         sessionId: input.sessionId,
         project: input.project,
         pipelineRunId: input.pipelineRunId,
-        error: error instanceof Error ? error.message : String(error),
+        ...pipelineErrorLog(error),
       });
     });
     return true;
@@ -266,7 +282,7 @@ export async function dispatchSessionStopped(
       sessionId: input.sessionId,
       project: input.project,
       pipelineRunId: input.pipelineRunId,
-      error: error instanceof Error ? error.message : String(error),
+      ...pipelineErrorLog(error),
     });
     return false;
   }
@@ -548,7 +564,7 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         sessionId: data.sessionId,
         project: data.project,
         pipelineRunId,
-        error: error instanceof Error ? error.message : String(error),
+        ...pipelineErrorLog(error),
       });
     }
     if (!summaryError && !successful(summary)) {
@@ -599,8 +615,9 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
       });
       logger.warn("promotion generation failed", {
         sessionId: data.sessionId,
+        project: data.project,
         pipelineRunId,
-        error: error instanceof Error ? error.message : String(error),
+        ...pipelineErrorLog(error),
       });
       return { success: false, error: "promotion_failed", pipelineRunId, summary };
     }

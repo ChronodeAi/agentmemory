@@ -7,6 +7,7 @@ import {
 } from "../state/schema.js";
 import type {
   CompressedObservation,
+  ObservationType,
   PromotionCandidate,
   PromotionCategory,
   Session,
@@ -116,6 +117,68 @@ const SOURCE_DECLARABLE_EVIDENCE_KINDS = new Set<EvidenceKind>([
   "commit",
   "adr",
 ]);
+const OBSERVATION_TYPES = new Set<ObservationType>([
+  "file_read",
+  "file_write",
+  "file_edit",
+  "command_run",
+  "search",
+  "web_fetch",
+  "conversation",
+  "error",
+  "decision",
+  "discovery",
+  "subagent",
+  "notification",
+  "task",
+  "image",
+  "other",
+]);
+
+function isCompressedObservation(
+  value: unknown,
+): value is CompressedObservation {
+  if (!value || typeof value !== "object") return false;
+  const observation = value as Partial<CompressedObservation>;
+  return (
+    typeof observation.id === "string" &&
+    observation.id.length > 0 &&
+    typeof observation.sessionId === "string" &&
+    observation.sessionId.length > 0 &&
+    typeof observation.timestamp === "string" &&
+    observation.timestamp.length > 0 &&
+    typeof observation.type === "string" &&
+    OBSERVATION_TYPES.has(observation.type as ObservationType) &&
+    typeof observation.title === "string" &&
+    typeof observation.narrative === "string" &&
+    Array.isArray(observation.facts) &&
+    observation.facts.every((fact) => typeof fact === "string") &&
+    Array.isArray(observation.concepts) &&
+    observation.concepts.every((concept) => typeof concept === "string") &&
+    Array.isArray(observation.files) &&
+    observation.files.every((file) => typeof file === "string") &&
+    typeof observation.importance === "number" &&
+    Number.isFinite(observation.importance)
+  );
+}
+
+async function loadCompressedObservations(
+  kv: StateKV,
+  sessionId: string,
+): Promise<{
+  observations: CompressedObservation[];
+  nonCompressedObservationsSkipped: number;
+}> {
+  const stored = await kv.list<unknown>(KV.observations(sessionId));
+  const observations = stored.filter(isCompressedObservation).sort(
+    (a, b) =>
+      new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime(),
+  );
+  return {
+    observations,
+    nonCompressedObservationsSkipped: stored.length - observations.length,
+  };
+}
 
 function observationText(observation: CompressedObservation): string {
   return [
@@ -478,17 +541,26 @@ export function registerPromotionFunctions(
         };
       }
 
-      const allObservations = (
-        await kv.list<CompressedObservation>(KV.observations(sessionId))
-      ).sort(
-        (a, b) =>
-          new Date(a.timestamp).getTime() -
-          new Date(b.timestamp).getTime(),
-      );
+      const observationSet = await loadCompressedObservations(kv, sessionId);
+      const allObservations = observationSet.observations;
+      const { nonCompressedObservationsSkipped } = observationSet;
       const evidenceGraph = buildEvidenceGraph(allObservations);
       const observations = allObservations.filter(canUseAsPromotionSource);
       if (observations.length === 0) {
-        return { success: true, candidates: [], promoted: 0 };
+        await safeAudit(kv, "consolidate", "mem::promotion-generate", [], {
+          project,
+          sessionId,
+          candidates: 0,
+          promoted: 0,
+          persistenceFailures: 0,
+          nonCompressedObservationsSkipped,
+        });
+        return {
+          success: true,
+          candidates: [],
+          promoted: 0,
+          nonCompressedObservationsSkipped,
+        };
       }
 
       const now = new Date().toISOString();
@@ -655,6 +727,7 @@ export function registerPromotionFunctions(
         candidates: candidates.length,
         promoted,
         persistenceFailures: persistenceFailures.length,
+        nonCompressedObservationsSkipped,
       });
       if (persistenceFailures.length > 0) {
         return {
@@ -662,9 +735,15 @@ export function registerPromotionFunctions(
           error: persistenceError(persistenceFailures),
           candidates,
           promoted,
+          nonCompressedObservationsSkipped,
         };
       }
-      return { success: true, candidates, promoted };
+      return {
+        success: true,
+        candidates,
+        promoted,
+        nonCompressedObservationsSkipped,
+      };
     },
   );
 
@@ -747,14 +826,9 @@ export function registerPromotionFunctions(
 
       let acceptedEvidenceSourceIds: string[] = [];
       if (candidate.category === "bug" || candidate.category === "workflow") {
-        const observations = (
-          await kv.list<CompressedObservation>(
-            KV.observations(candidate.sessionId),
-          )
-        ).sort(
-          (a, b) =>
-            new Date(a.timestamp).getTime() -
-            new Date(b.timestamp).getTime(),
+        const { observations } = await loadCompressedObservations(
+          kv,
+          candidate.sessionId,
         );
         const originIds = [
           ...candidate.failureObservationIds,
