@@ -706,6 +706,12 @@ describe("coding memory lifecycle functions", () => {
       scopeCoverage: number;
       globalUnscopedRecords: number;
       projectUnscopedRecords: number;
+      commitCoverageDetails: {
+        eligibleSessions: number;
+        linkedSessions: number;
+        richProvenanceSessions: number;
+        missingRichProvenanceSessionIds: string[];
+      };
     };
 
     expect(first.success).toBe(true);
@@ -715,5 +721,11 @@ describe("coding memory lifecycle functions", () => {
     expect(health.scopeCoverage).toBe(1);
     expect(health.projectUnscopedRecords).toBe(0);
     expect(health.globalUnscopedRecords).toBe(1);
+    expect(health.commitCoverageDetails).toMatchObject({
+      eligibleSessions: 1,
+      linkedSessions: 1,
+      richProvenanceSessions: 0,
+      missingRichProvenanceSessionIds: [sessionId],
+    });
   });
 });

@@ -25,6 +25,7 @@ import {
   type ProjectReadScope,
 } from "../project-scope.js";
 import type { HybridSearchProcessingContext } from "../state/hybrid-search.js";
+import { evaluateContextCandidate } from "./coding-memory.js";
 
 // #771: smart-search followup-rate diagnostic. Stored per session as
 // the most recent search payload, used to detect whether the next
@@ -81,6 +82,30 @@ export function resetFollowupStatsForTests(): void {
 const LESSON_CONTENT_PREVIEW_CHARS = 240;
 const MIN_VECTOR_RELEVANCE = 0.35;
 
+interface RetrievalQuarantineRecord {
+  sourceScope?: string;
+  sourceKey?: string;
+}
+
+function quarantineKey(scope: string, key: string): string {
+  return `${scope}\u0000${key}`;
+}
+
+async function loadRetrievalQuarantine(kv: StateKV): Promise<Set<string>> {
+  const records = await kv.list<RetrievalQuarantineRecord>(
+    KV.migrationQuarantine,
+  );
+  return new Set(
+    records
+      .filter(
+        (record): record is Required<RetrievalQuarantineRecord> =>
+          typeof record.sourceScope === "string" &&
+          typeof record.sourceKey === "string",
+      )
+      .map((record) => quarantineKey(record.sourceScope, record.sourceKey)),
+  );
+}
+
 function hasRetrievalEvidence(result: HybridSearchResult): boolean {
   const hasStreamScore =
     Number.isFinite(result.bm25Score) ||
@@ -127,6 +152,7 @@ export function registerSmartSearchFunction(
     }) => {
 
       const projectScope = requireProjectReadScope(data, "mem::smart-search");
+      const retrievalQuarantine = await loadRetrievalQuarantine(kv);
 
       // Compute the agent filter once, up front. Both the expandIds
       // branch and the hybrid-search branch consult it — otherwise
@@ -189,7 +215,14 @@ export function registerSmartSearchFunction(
 
         const projectScoped: typeof expanded = [];
         for (const item of expanded) {
-          if (await observationMatchesProject(kv, item, projectScope)) {
+          if (
+            await observationMatchesProject(
+              kv,
+              item,
+              projectScope,
+              retrievalQuarantine,
+            )
+          ) {
             projectScoped.push(item);
           }
         }
@@ -260,7 +293,12 @@ export function registerSmartSearchFunction(
       for (const result of hybridResults) {
         if (
           hasRetrievalEvidence(result) &&
-          (await hybridResultMatchesProject(kv, result, projectScope))
+          (await hybridResultMatchesProject(
+            kv,
+            result,
+            projectScope,
+            retrievalQuarantine,
+          ))
         ) {
           projectFiltered.push(result);
         }
@@ -391,29 +429,67 @@ async function recallLessons(
 
 async function observationMatchesProject(
   kv: StateKV,
-  item: { obsId: string; sessionId: string },
+  item: {
+    obsId: string;
+    sessionId: string;
+    observation?: CompressedObservation;
+  },
   scope: ProjectReadScope,
+  retrievalQuarantine: Set<string>,
 ): Promise<boolean> {
-  if (scope.kind === "global") return true;
   const session = await kv
     .get<Session>(KV.sessions, item.sessionId)
     .catch(() => null);
-  if (session) return session.project === scope.project;
+  if (session) {
+    if (
+      retrievalQuarantine.has(
+        quarantineKey(KV.observations(item.sessionId), item.obsId),
+      )
+    ) {
+      return false;
+    }
+    const observation =
+      item.observation ??
+      (await kv
+        .get<CompressedObservation>(KV.observations(item.sessionId), item.obsId)
+        .catch(() => null));
+    if (!observation) return false;
+    if (!recordMatchesProject(session.project, scope)) return false;
+    return evaluateContextCandidate(
+      observation as unknown as Record<string, unknown>,
+      { contextClass: "advisory", candidateId: item.obsId },
+    ).eligible;
+  }
+  if (
+    retrievalQuarantine.has(quarantineKey(KV.memories, item.obsId))
+  ) {
+    return false;
+  }
   const memory = await kv
     .get<Memory>(KV.memories, item.obsId)
     .catch(() => null);
-  return recordMatchesProject(memory?.project, scope);
+  if (!memory || !recordMatchesProject(memory.project, scope)) return false;
+  return evaluateContextCandidate(
+    memory as unknown as Record<string, unknown>,
+    { contextClass: "advisory", candidateId: item.obsId },
+  ).eligible;
 }
 
 async function hybridResultMatchesProject(
   kv: StateKV,
   result: HybridSearchResult,
   scope: ProjectReadScope,
+  retrievalQuarantine: Set<string>,
 ): Promise<boolean> {
   return observationMatchesProject(
     kv,
-    { obsId: result.observation.id, sessionId: result.sessionId },
+    {
+      obsId: result.observation.id,
+      sessionId: result.sessionId,
+      observation: result.observation,
+    },
     scope,
+    retrievalQuarantine,
   );
 }
 

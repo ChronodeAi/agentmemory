@@ -1535,6 +1535,7 @@ export function registerCodingMemoryFunctions(
         accesses,
         metrics,
         promotions,
+        allCommits,
       ] = await Promise.all([
         kv.list<Session>(KV.sessions),
         kv.list<Memory>(KV.memories),
@@ -1543,6 +1544,7 @@ export function registerCodingMemoryFunctions(
         kv.list<AccessLog>(KV.accessLog),
         kv.get<InjectionMetrics>(KV.projectMetrics(project), "injection"),
         kv.list<PromotionCandidate>(KV.promotionCandidates(project)),
+        kv.list<CommitLink>(KV.commits),
       ]);
       const sessions = allSessions.filter(
         (session) => session.project === project,
@@ -1582,8 +1584,27 @@ export function registerCodingMemoryFunctions(
       const substantive = sessions.filter(
         (session) => session.observationCount > 0,
       );
-      const commits = substantive.filter(
-        (session) => (session.commitShas?.length ?? 0) > 0,
+      const projectCommits = allCommits.filter(
+        (commit) => commit.project === project,
+      );
+      const linkedSessionIds = new Set(
+        projectCommits.flatMap((commit) => commit.sessionIds ?? []),
+      );
+      const richProvenanceSessionIds = new Set(
+        projectCommits
+          .filter(
+            (commit) =>
+              Boolean(commit.baseHeadSha) &&
+              Boolean(commit.worktreeId) &&
+              (commit.fileTransitions?.length ?? 0) > 0,
+          )
+          .flatMap((commit) => commit.sessionIds ?? []),
+      );
+      const linkedSessions = substantive.filter(
+        (session) => linkedSessionIds.has(session.id),
+      );
+      const richProvenanceSessions = substantive.filter((session) =>
+        richProvenanceSessionIds.has(session.id),
       );
       const scopedRecords =
         sessions.length + memories.length + lessons.length + insights.length;
@@ -1657,7 +1678,24 @@ export function registerCodingMemoryFunctions(
         injectionLatencyP95Ms: percentile95(metrics?.samplesMs ?? []),
         contextPackets: metrics?.packetCount ?? 0,
         commitCoverage:
-          substantive.length > 0 ? commits.length / substantive.length : 1,
+          substantive.length > 0
+            ? linkedSessions.length / substantive.length
+            : 1,
+        commitCoverageDetails: {
+          eligibleSessions: substantive.length,
+          linkedSessions: linkedSessions.length,
+          richProvenanceSessions: richProvenanceSessions.length,
+          missingSessionIds: substantive
+            .filter((session) => !linkedSessionIds.has(session.id))
+            .map((session) => session.id)
+            .slice(0, 20),
+          missingRichProvenanceSessionIds: substantive
+            .filter(
+              (session) => !richProvenanceSessionIds.has(session.id),
+            )
+            .map((session) => session.id)
+            .slice(0, 20),
+        },
         totals: {
           sessions: sessions.length,
           memories: memories.length,

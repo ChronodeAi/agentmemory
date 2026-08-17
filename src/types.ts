@@ -70,6 +70,11 @@ export interface CommitTransition {
   previousPath?: string;
 }
 
+export interface CommitProvenanceTransition extends CommitTransition {
+  digest?: string;
+  digestKind?: "git-blob";
+}
+
 export interface CommitLink {
   project?: string;
   sha: string;
@@ -80,6 +85,9 @@ export interface CommitLink {
   author?: string;
   authoredAt?: string;
   files?: string[];
+  baseHeadSha?: string;
+  worktreeId?: string;
+  fileTransitions?: CommitProvenanceTransition[];
   sessionIds: string[];
   linkedAt: string;
 }

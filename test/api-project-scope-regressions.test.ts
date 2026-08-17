@@ -228,6 +228,67 @@ describe("REST project scope regressions", () => {
     ).toEqual(["legacy3333", "bbb2222", "aaa1111"]);
   });
 
+  it("persists rich commit provenance and rejects malformed transitions", async () => {
+    const { functions, kv } = createSurfaces();
+    await kv.set("mem:sessions", "session-a", {
+      id: "session-a",
+      project: PROJECT_A,
+      cwd: "/tmp/project-a",
+      startedAt: "2026-07-25T00:00:00.000Z",
+      status: "active",
+      observationCount: 2,
+    });
+    const commit = functions.get("api::session::commit")!;
+    const sha = "a".repeat(40);
+    const response = await commit({
+      headers: projectHeaders(PROJECT_A),
+      body: {
+        project: PROJECT_A,
+        sessionId: "session-a",
+        sha,
+        baseHeadSha: "b".repeat(40),
+        worktreeId: "wt_1234567890abcdef1234567890abcdef",
+        fileTransitions: [
+          {
+            path: "src/app.ts",
+            operation: "edit",
+            digest: "c".repeat(40),
+            digestKind: "git-blob",
+          },
+          {
+            path: "src/new.ts",
+            previousPath: "src/old.ts",
+            operation: "rename",
+          },
+        ],
+      },
+    });
+
+    expect(response).toMatchObject({
+      status_code: 200,
+      body: {
+        commit: {
+          sha,
+          baseHeadSha: "b".repeat(40),
+          worktreeId: "wt_1234567890abcdef1234567890abcdef",
+          fileTransitions: expect.arrayContaining([
+            expect.objectContaining({ path: "src/app.ts", operation: "edit" }),
+          ]),
+        },
+      },
+    });
+    await expect(
+      commit({
+        headers: projectHeaders(PROJECT_A),
+        body: {
+          project: PROJECT_A,
+          sha: "d".repeat(40),
+          fileTransitions: [{ path: "src/new.ts", operation: "rename" }],
+        },
+      }),
+    ).resolves.toMatchObject({ status_code: 400 });
+  });
+
   it("exports every mesh collection without crossing the project boundary", async () => {
     const { functions, kv } = createSurfaces();
     const now = "2026-07-25T00:00:00.000Z";

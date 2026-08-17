@@ -24,6 +24,8 @@ const SECURITY_RE =
   /\b(security|secret|credential|authentication|authorization|privacy|policy|threat)\b/i;
 const BUSINESS_RE =
   /\b(business|customer|pricing|market|revenue|product policy|commercial)\b/i;
+const TASK_COMPLETION_RE =
+  /\b(complete|completed|implemented|fixed|resolved|finished|delivered|verified)\b/i;
 
 type EvidenceKind =
   | "test"
@@ -403,6 +405,7 @@ function findFreshEvidence(
 function canUseAsPromotionSource(
   observation: CompressedObservation,
 ): boolean {
+  if (observation.recalledOnly === true) return false;
   const metadata = evidenceMetadata(observation);
   if (!metadata.typed) return Boolean(observationText(observation));
   return Boolean(
@@ -544,6 +547,46 @@ export function registerPromotionFunctions(
       const observationSet = await loadCompressedObservations(kv, sessionId);
       const allObservations = observationSet.observations;
       const { nonCompressedObservationsSkipped } = observationSet;
+      const substantiveObservationCount = Math.max(
+        session.observationCount,
+        allObservations.length,
+      );
+      const hasSubstantiveEvidence =
+        substantiveObservationCount >= 3 ||
+        (session.commitShas?.length ?? 0) > 0 ||
+        (allObservations.length >= 2 &&
+          allObservations.some((observation) =>
+            ["error", "decision", "task", "file_write", "file_edit"].includes(
+              observation.type,
+            ),
+          ));
+      if (
+        session.status !== "completed" ||
+        !hasSubstantiveEvidence
+      ) {
+        await safeAudit(kv, "consolidate", "mem::promotion-generate", [], {
+          project,
+          sessionId,
+          candidates: 0,
+          promoted: 0,
+          persistenceFailures: 0,
+          nonCompressedObservationsSkipped,
+          skipped:
+            session.status !== "completed"
+              ? "session_not_completed"
+              : "session_not_substantive",
+        });
+        return {
+          success: true,
+          candidates: [],
+          promoted: 0,
+          nonCompressedObservationsSkipped,
+          skipped:
+            session.status !== "completed"
+              ? "session_not_completed"
+              : "session_not_substantive",
+        };
+      }
       const evidenceGraph = buildEvidenceGraph(allObservations);
       const observations = allObservations.filter(canUseAsPromotionSource);
       if (observations.length === 0) {
@@ -646,6 +689,60 @@ export function registerPromotionFunctions(
           content: text.slice(0, 2000),
           status: "pending",
           requiresExplicitApproval: explicit,
+          freshVerification: Boolean(verification),
+          sourceObservationIds: [
+            observation.id,
+            ...(verification?.trace.observationIds ?? []),
+          ],
+          failureObservationIds: [],
+          verificationObservationIds:
+            verification?.trace.observationIds ?? [],
+          commitSha: session.commitShas?.at(-1),
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+
+      const completedTasks = observations
+        .filter(
+          (observation) =>
+            observation.type === "task" &&
+            observation.importance >= 6 &&
+            TASK_COMPLETION_RE.test(observationText(observation)),
+        )
+        .sort(
+          (a, b) =>
+            new Date(b.timestamp).getTime() -
+            new Date(a.timestamp).getTime(),
+        );
+      for (const observation of completedTasks) {
+        if (drafts.length >= 3) break;
+        const text = observationText(observation);
+        if (
+          ["architecture", "preference", "security", "business"].includes(
+            classify(text),
+          )
+        ) {
+          continue;
+        }
+        const verification = findFreshEvidence(
+          observation,
+          allObservations,
+          evidenceGraph,
+          AUTO_PROMOTION_EVIDENCE_KINDS,
+        );
+        drafts.push({
+          id: fingerprintId(
+            "promo",
+            `${project}:${sessionId}:workflow:${text.toLowerCase()}`,
+          ),
+          project,
+          sessionId,
+          category: "workflow",
+          title: observation.title.slice(0, 160),
+          content: text.slice(0, 2000),
+          status: "pending",
+          requiresExplicitApproval: false,
           freshVerification: Boolean(verification),
           sourceObservationIds: [
             observation.id,

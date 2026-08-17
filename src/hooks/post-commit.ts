@@ -92,6 +92,44 @@ export async function collectCommitLinkage(
   };
 }
 
+function commandText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (Array.isArray(value)) {
+    return value.every((entry) => typeof entry === "string")
+      ? value.join(" ")
+      : "";
+  }
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  for (const key of ["cmd", "command", "script", "shell_command"]) {
+    const candidate = commandText(record[key]);
+    if (candidate) return candidate;
+  }
+  return "";
+}
+
+export function isSuccessfulCommitToolEvent(
+  data: Record<string, unknown>,
+): boolean {
+  const toolName =
+    typeof data.tool_name === "string"
+      ? data.tool_name
+      : typeof data.toolName === "string"
+        ? data.toolName
+        : "";
+  const command = commandText(data.tool_input ?? data.toolArgs);
+  const hasError = [data.error, data.errorMessage].some(
+    (value) => value !== undefined && value !== null && value !== false && value !== "",
+  );
+  return (
+    /(?:bash|shell|exec|command)/i.test(toolName) &&
+    /(?:^|[;&|]\s*|\s)git(?:\s+-C\s+(?:"[^"]+"|'[^']+'|\S+))?\s+commit(?:\s|$)/i.test(
+      command,
+    ) &&
+    !hasError
+  );
+}
+
 async function main() {
   let input = "";
   for await (const chunk of process.stdin) {
@@ -110,28 +148,11 @@ async function main() {
   if (!data || typeof data !== "object") data = {};
   if (isSdkChildContext(data)) return;
 
-  const toolName =
-    typeof data.tool_name === "string"
-      ? data.tool_name
-      : typeof data.toolName === "string"
-        ? data.toolName
-        : "";
-  const rawToolInput = data.tool_input ?? data.toolArgs;
-  const toolInput =
-    typeof rawToolInput === "string"
-      ? rawToolInput
-      : rawToolInput && typeof rawToolInput === "object"
-        ? JSON.stringify(rawToolInput)
-        : "";
   const directGitHook =
     !input.trim() ||
     process.env["AGENTMEMORY_GIT_HOOK"] === "1" ||
     Boolean(process.env["AGENTMEMORY_COMMIT_SHA"]);
-  const successfulCommitTool =
-    /(?:bash|shell|exec|command)/i.test(toolName) &&
-    /(?:^|[;&|]\s*|\s)git(?:\s+-C\s+\S+)?\s+commit(?:\s|$)/i.test(toolInput) &&
-    data.error === undefined &&
-    data.errorMessage === undefined;
+  const successfulCommitTool = isSuccessfulCommitToolEvent(data);
   if (!directGitHook && !successfulCommitTool) return;
 
   const cwd =

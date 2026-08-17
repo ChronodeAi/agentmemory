@@ -270,6 +270,73 @@ describe("evidence-gated promotions", () => {
     ).toBe(false);
   });
 
+  it("rejects untyped recalled-only observations as promotion sources", async () => {
+    const recalled = observation(
+      "legacy-recalled",
+      "decision",
+      "Recalled implementation decision",
+      "2026-01-01T00:04:00.000Z",
+      "A recalled workflow said this implementation was completed",
+    );
+    recalled.recalledOnly = true;
+    await kv.set(KV.observations("session-1"), recalled.id, recalled);
+
+    const result = (await sdk.trigger("mem::promotion-generate", {
+      sessionId: "session-1",
+      project: PROJECT,
+    })) as { candidates: PromotionCandidate[] };
+
+    expect(
+      result.candidates.some((candidate) =>
+        candidate.sourceObservationIds.includes(recalled.id),
+      ),
+    ).toBe(false);
+  });
+
+  it("creates a bounded pending workflow candidate from a completed task", async () => {
+    await kv.set(
+      KV.observations("session-1"),
+      "completed-task",
+      observation(
+        "completed-task",
+        "task",
+        "Implementation completed",
+        "2026-01-01T00:05:00.000Z",
+        "Implemented the bounded coding workflow and completed validation",
+      ),
+    );
+
+    const result = (await sdk.trigger("mem::promotion-generate", {
+      sessionId: "session-1",
+      project: PROJECT,
+    })) as { candidates: PromotionCandidate[] };
+    const workflow = result.candidates.find(
+      (candidate) => candidate.category === "workflow",
+    );
+
+    expect(result.candidates.length).toBeLessThanOrEqual(3);
+    expect(workflow).toMatchObject({
+      status: "pending",
+      sourceObservationIds: ["completed-task"],
+    });
+  });
+
+  it("does not generate candidates before a substantive session completes", async () => {
+    const session = await kv.get<Session>(KV.sessions, "session-1");
+    await kv.set(KV.sessions, "session-1", {
+      ...session!,
+      status: "active",
+    });
+
+    const result = (await sdk.trigger("mem::promotion-generate", {
+      sessionId: "session-1",
+      project: PROJECT,
+    })) as { candidates: PromotionCandidate[]; skipped?: string };
+
+    expect(result.candidates).toEqual([]);
+    expect(result.skipped).toBe("session_not_completed");
+  });
+
   it("rejects multi-hop evidence cycles", async () => {
     await kv.set(
       KV.observations("session-1"),
