@@ -14,6 +14,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 ### Fixed
 
 - Made saved-memory state authoritative during smart search, including for observations linked to a real session. Superseded, deleted, expired, quarantined, and recalled-only memories no longer bypass eligibility checks through their session record.
+- Applied the same shared eligibility and migration-quarantine policy to the standalone MCP local fallback, so reduced-mode recall cannot resurrect memory that the full server would exclude.
+- Validate commit and blob object IDs plus credential-free worktree IDs before persistence. Rich provenance coverage now requires valid identifiers and a Git blob digest for every recorded file transition.
 - Debounced CPU-only health alerts until pressure is observed in two consecutive health samples. Short iii-engine work bursts remain visible as notes without flapping the dashboard between healthy and degraded; sustained CPU pressure and all mixed or non-CPU failures retain their existing severity.
 - Published the existing bounded `memory_sessions.limit` control in the MCP schema and return compact session records by default. Explicit `format: full` preserves forensic detail without forcing child-agent and pipeline metadata into routine agent context.
 - Deferred Git-derived project identity until process, user, and repository configuration layers are checked, so an explicit project ID retains precedence even when a local remote cannot be normalized safely.

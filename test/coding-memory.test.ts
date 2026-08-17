@@ -688,31 +688,57 @@ describe("coding memory lifecycle functions", () => {
       version: 1,
       isLatest: true,
     });
+    const sha = "a".repeat(40);
     const first = await sdk.trigger("mem::commit-link", {
-      sha: "abcdef1234567890",
+      sha,
       sessionId,
       project,
-      baseHeadSha: "1234567890abcdef",
+      baseHeadSha: "b".repeat(40),
       worktreeId: "wt_1234567890abcdef1234567890abcdef",
       fileTransitions: [
         {
           path: "src/index.ts",
           operation: "edit",
-          digest: "fedcba0987654321",
+          digest: "c".repeat(40),
           digestKind: "git-blob",
         },
       ],
     });
     const second = await sdk.trigger("mem::commit-link", {
-      sha: "abcdef1234567890",
+      sha,
       sessionId,
       project,
     });
     const malformed = await sdk.trigger("mem::commit-link", {
-      sha: "bad-provenance",
+      sha: "d".repeat(40),
       sessionId,
       project,
       fileTransitions: [{ path: "src/new.ts", operation: "rename" }],
+    });
+    const invalidBase = await sdk.trigger("mem::commit-link", {
+      sha: "e".repeat(40),
+      sessionId,
+      project,
+      baseHeadSha: "not-a-git-object",
+    });
+    const weakSessionId = "session-weak-provenance";
+    await kv.set(KV.sessions, weakSessionId, {
+      id: weakSessionId,
+      project,
+      cwd: "/tmp/memetics-weak",
+      startedAt: new Date().toISOString(),
+      status: "completed",
+      observationCount: 1,
+    });
+    await kv.set(KV.commits, "f".repeat(40), {
+      sha: "f".repeat(40),
+      shortSha: "fffffff",
+      project,
+      baseHeadSha: "not-a-git-object",
+      worktreeId: "wt_1234567890abcdef1234567890abcdef",
+      fileTransitions: [{ path: "src/weak.ts", operation: "edit" }],
+      sessionIds: [weakSessionId],
+      linkedAt: new Date().toISOString(),
     });
     const health = await sdk.trigger("mem::project-health", {
       project,
@@ -736,16 +762,20 @@ describe("coding memory lifecycle functions", () => {
       success: false,
       error: "fileTransitions must contain valid commit provenance",
     });
+    expect(invalidBase).toMatchObject({
+      success: false,
+      error: "baseHeadSha must be a full Git object ID",
+    });
     expect(health.success).toBe(true);
     expect(health.commitCoverage).toBe(1);
     expect(health.scopeCoverage).toBe(1);
     expect(health.projectUnscopedRecords).toBe(0);
     expect(health.globalUnscopedRecords).toBe(1);
     expect(health.commitCoverageDetails).toMatchObject({
-      eligibleSessions: 1,
-      linkedSessions: 1,
+      eligibleSessions: 2,
+      linkedSessions: 2,
       richProvenanceSessions: 1,
-      missingRichProvenanceSessionIds: [],
+      missingRichProvenanceSessionIds: [weakSessionId],
     });
   });
 });

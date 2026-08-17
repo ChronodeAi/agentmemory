@@ -4,7 +4,12 @@ import { InMemoryKV } from "./in-memory-kv.js";
 import { createStdioTransport } from "./transport.js";
 import { getAllTools } from "./tools-registry.js";
 import { VERSION } from "../version.js";
-import { generateId } from "../state/schema.js";
+import { generateId, KV } from "../state/schema.js";
+import {
+  evaluateContextCandidate,
+  loadRetrievalQuarantine,
+  retrievalQuarantineKey,
+} from "../context-eligibility.js";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
@@ -379,11 +384,29 @@ async function handleLocal(
       const limit = v.limit ?? DEFAULT_LIMIT;
       const all =
         await kvInstance.list<Record<string, unknown>>("mem:memories");
+      const retrievalQuarantine = await loadRetrievalQuarantine(
+        kvInstance,
+        KV.migrationQuarantine,
+      );
       const results = all
         .filter(
           (memory) =>
             v.scope === "global" || memory["project"] === v.project,
         )
+        .filter((memory) => {
+          const id =
+            typeof memory["id"] === "string" ? memory["id"] : undefined;
+          if (!id) return false;
+          return (
+            !retrievalQuarantine.has(
+              retrievalQuarantineKey(KV.memories, id),
+            ) &&
+            evaluateContextCandidate(memory, {
+              contextClass: "advisory",
+              candidateId: id,
+            }).eligible
+          );
+        })
         .filter((m) => {
           const text = [
             typeof m["title"] === "string" ? m["title"] : "",

@@ -6,7 +6,11 @@ import type {
   Session,
   SessionSummary,
 } from "../types.js";
-import { parseCommitProvenanceTransitions } from "../commit-provenance.js";
+import {
+  parseCommitProvenanceTransitions,
+  parseCredentialFreeWorktreeId,
+  parseGitObjectId,
+} from "../commit-provenance.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { KV, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
@@ -1469,11 +1473,18 @@ export function registerApiTriggers(
   sdk.registerFunction("api::session::commit",
     async (req: ApiRequest): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const sha = asNonEmptyString(body.sha);
-      if (!sha) {
+      const rawSha = asNonEmptyString(body.sha);
+      if (!rawSha) {
         return {
           status_code: 400,
           body: { error: "sha is required and must be a non-empty string" },
+        };
+      }
+      const sha = parseGitObjectId(rawSha);
+      if (!sha) {
+        return {
+          status_code: 400,
+          body: { error: "sha must be a full Git object ID" },
         };
       }
       const project = asNonEmptyString(body.project);
@@ -1489,8 +1500,20 @@ export function registerApiTriggers(
       const message = asNonEmptyString(body.message) ?? undefined;
       const author = asNonEmptyString(body.author) ?? undefined;
       const authoredAt = asNonEmptyString(body.authoredAt) ?? undefined;
-      const baseHeadSha = asNonEmptyString(body.baseHeadSha) ?? undefined;
-      const worktreeId = asNonEmptyString(body.worktreeId) ?? undefined;
+      const baseHeadSha = parseGitObjectId(body.baseHeadSha);
+      const worktreeId = parseCredentialFreeWorktreeId(body.worktreeId);
+      if (baseHeadSha === null) {
+        return {
+          status_code: 400,
+          body: { error: "baseHeadSha must be a full Git object ID" },
+        };
+      }
+      if (worktreeId === null) {
+        return {
+          status_code: 400,
+          body: { error: "worktreeId must be a credential-free worktree ID" },
+        };
+      }
       const fileTransitions = parseCommitProvenanceTransitions(
         body.fileTransitions,
       );

@@ -25,7 +25,11 @@ import {
   type ProjectReadScope,
 } from "../project-scope.js";
 import type { HybridSearchProcessingContext } from "../state/hybrid-search.js";
-import { evaluateContextCandidate } from "./coding-memory.js";
+import {
+  evaluateContextCandidate,
+  loadRetrievalQuarantine,
+  retrievalQuarantineKey,
+} from "../context-eligibility.js";
 
 // #771: smart-search followup-rate diagnostic. Stored per session as
 // the most recent search payload, used to detect whether the next
@@ -82,30 +86,6 @@ export function resetFollowupStatsForTests(): void {
 const LESSON_CONTENT_PREVIEW_CHARS = 240;
 const MIN_VECTOR_RELEVANCE = 0.35;
 
-interface RetrievalQuarantineRecord {
-  sourceScope?: string;
-  sourceKey?: string;
-}
-
-function quarantineKey(scope: string, key: string): string {
-  return `${scope}\u0000${key}`;
-}
-
-async function loadRetrievalQuarantine(kv: StateKV): Promise<Set<string>> {
-  const records = await kv.list<RetrievalQuarantineRecord>(
-    KV.migrationQuarantine,
-  );
-  return new Set(
-    records
-      .filter(
-        (record): record is Required<RetrievalQuarantineRecord> =>
-          typeof record.sourceScope === "string" &&
-          typeof record.sourceKey === "string",
-      )
-      .map((record) => quarantineKey(record.sourceScope, record.sourceKey)),
-  );
-}
-
 function hasRetrievalEvidence(result: HybridSearchResult): boolean {
   const hasStreamScore =
     Number.isFinite(result.bm25Score) ||
@@ -152,7 +132,10 @@ export function registerSmartSearchFunction(
     }) => {
 
       const projectScope = requireProjectReadScope(data, "mem::smart-search");
-      const retrievalQuarantine = await loadRetrievalQuarantine(kv);
+      const retrievalQuarantine = await loadRetrievalQuarantine(
+        kv,
+        KV.migrationQuarantine,
+      );
 
       // Compute the agent filter once, up front. Both the expandIds
       // branch and the hybrid-search branch consult it — otherwise
@@ -443,7 +426,9 @@ async function observationMatchesProject(
     .catch(() => null);
   if (memory) {
     if (
-      retrievalQuarantine.has(quarantineKey(KV.memories, item.obsId)) ||
+      retrievalQuarantine.has(
+        retrievalQuarantineKey(KV.memories, item.obsId),
+      ) ||
       !recordMatchesProject(memory.project, scope)
     ) {
       return false;
@@ -459,7 +444,7 @@ async function observationMatchesProject(
   if (session) {
     if (
       retrievalQuarantine.has(
-        quarantineKey(KV.observations(item.sessionId), item.obsId),
+        retrievalQuarantineKey(KV.observations(item.sessionId), item.obsId),
       )
     ) {
       return false;

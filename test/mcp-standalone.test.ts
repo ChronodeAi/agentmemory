@@ -26,6 +26,7 @@ import {
 } from "../src/mcp/tools-registry.js";
 import { InMemoryKV } from "../src/mcp/in-memory-kv.js";
 import { handleToolCall as rawHandleToolCall } from "../src/mcp/standalone.js";
+import { KV } from "../src/state/schema.js";
 import {
   resetHandleForTests,
   setLivezProbe,
@@ -290,6 +291,70 @@ describe("handleToolCall", () => {
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.results).toHaveLength(1);
     expect(parsed.results[0].content).toBe("TypeScript is great");
+  });
+
+  it("applies server-equivalent eligibility and quarantine in local fallback", async () => {
+    const kv = new InMemoryKV();
+    const base = {
+      type: "fact",
+      title: "Fallback eligibility",
+      content: "fallback eligibility marker",
+      concepts: [],
+      files: [],
+      createdAt: "2026-08-17T00:00:00.000Z",
+      updatedAt: "2026-08-17T00:00:00.000Z",
+      strength: 7,
+      version: 1,
+      isLatest: true,
+      sessionIds: [],
+      project: "github.com/example/project",
+    };
+    await kv.set(KV.memories, "eligible", { ...base, id: "eligible" });
+    await kv.set(KV.memories, "deleted", {
+      ...base,
+      id: "deleted",
+      deleted: true,
+    });
+    await kv.set(KV.memories, "superseded", {
+      ...base,
+      id: "superseded",
+      isLatest: false,
+    });
+    await kv.set(KV.memories, "expired", {
+      ...base,
+      id: "expired",
+      forgetAfter: "2020-01-01T00:00:00.000Z",
+    });
+    await kv.set(KV.memories, "contradicted", {
+      ...base,
+      id: "contradicted",
+      contradicted: true,
+    });
+    await kv.set(KV.memories, "recalled-only", {
+      ...base,
+      id: "recalled-only",
+      recalledOnly: true,
+    });
+    await kv.set(KV.memories, "quarantined", {
+      ...base,
+      id: "quarantined",
+    });
+    await kv.set(KV.migrationQuarantine, "quarantine-1", {
+      sourceScope: KV.memories,
+      sourceKey: "quarantined",
+    });
+
+    for (const tool of ["memory_recall", "memory_smart_search"]) {
+      const response = await handleToolCall(
+        tool,
+        { query: "fallback eligibility", limit: 20 },
+        kv,
+      );
+      const parsed = JSON.parse(response.content[0].text);
+      expect(parsed.results.map((memory: { id: string }) => memory.id)).toEqual([
+        "eligible",
+      ]);
+    }
   });
 
   it("memory_save accepts concepts/files as arrays (plugin skill format, #139)", async () => {

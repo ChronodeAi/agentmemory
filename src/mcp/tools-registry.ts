@@ -1168,15 +1168,21 @@ export const CODING_MEMORY_TOOLS: McpToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        sha: { type: "string", description: "Full Git commit SHA" },
+        sha: {
+          type: "string",
+          pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$",
+          description: "Full Git commit SHA",
+        },
         sessionId: { type: "string", description: "Optional coding session ID" },
         project: { type: "string", description: "Canonical project ID" },
         baseHeadSha: {
           type: "string",
+          pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$",
           description: "Optional parent commit SHA for provenance",
         },
         worktreeId: {
           type: "string",
+          pattern: "^wt_[0-9a-f]{32}$",
           description: "Optional credential-free worktree identifier",
         },
         fileTransitions: {
@@ -1191,7 +1197,10 @@ export const CODING_MEMORY_TOOLS: McpToolDef[] = [
                 enum: ["write", "edit", "delete", "rename", "copy"],
               },
               previousPath: { type: "string" },
-              digest: { type: "string" },
+              digest: {
+                type: "string",
+                pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$",
+              },
               digestKind: { type: "string", enum: ["git-blob"] },
             },
             required: ["path", "operation"],

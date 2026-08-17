@@ -287,6 +287,28 @@ describe("REST project scope regressions", () => {
         },
       }),
     ).resolves.toMatchObject({ status_code: 400 });
+    await expect(
+      commit({
+        headers: projectHeaders(PROJECT_A),
+        body: { project: PROJECT_A, sha: "not-a-git-object" },
+      }),
+    ).resolves.toMatchObject({
+      status_code: 400,
+      body: { error: "sha must be a full Git object ID" },
+    });
+    await expect(
+      commit({
+        headers: projectHeaders(PROJECT_A),
+        body: {
+          project: PROJECT_A,
+          sha: "e".repeat(40),
+          baseHeadSha: "not-a-git-object",
+        },
+      }),
+    ).resolves.toMatchObject({
+      status_code: 400,
+      body: { error: "baseHeadSha must be a full Git object ID" },
+    });
   });
 
   it("exports every mesh collection without crossing the project boundary", async () => {

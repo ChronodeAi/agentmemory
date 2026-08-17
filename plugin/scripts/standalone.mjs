@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { n as generateId } from "./schema-Dttua2Zo.mjs";
+import { n as generateId, t as KV } from "./schema-Dttua2Zo.mjs";
 import { i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, r as createProjectCapabilityToken } from "./auth-Evr8deOq.mjs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -1596,6 +1596,7 @@ const CODING_MEMORY_TOOLS = [
 			properties: {
 				sha: {
 					type: "string",
+					pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$",
 					description: "Full Git commit SHA"
 				},
 				sessionId: {
@@ -1608,10 +1609,12 @@ const CODING_MEMORY_TOOLS = [
 				},
 				baseHeadSha: {
 					type: "string",
+					pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$",
 					description: "Optional parent commit SHA for provenance"
 				},
 				worktreeId: {
 					type: "string",
+					pattern: "^wt_[0-9a-f]{32}$",
 					description: "Optional credential-free worktree identifier"
 				},
 				fileTransitions: {
@@ -1632,7 +1635,10 @@ const CODING_MEMORY_TOOLS = [
 								]
 							},
 							previousPath: { type: "string" },
-							digest: { type: "string" },
+							digest: {
+								type: "string",
+								pattern: "^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"
+							},
 							digestKind: {
 								type: "string",
 								enum: ["git-blob"]
@@ -1732,6 +1738,71 @@ function getAllTools() {
 const VERSION = "0.9.28-chronode.10";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
+//#endregion
+//#region src/context-eligibility.ts
+function stringValue(candidate, key) {
+	const value = candidate[key];
+	return typeof value === "string" && value.trim() ? value.trim() : void 0;
+}
+function stringList(candidate, key) {
+	const value = candidate[key];
+	return Array.isArray(value) ? value.filter((entry) => typeof entry === "string" && Boolean(entry.trim())) : [];
+}
+function evaluateContextCandidate(candidate, options) {
+	const status = stringValue(candidate, "status")?.toLowerCase();
+	const now = options.now ?? Date.now();
+	const expiry = stringValue(candidate, "expiresAt") ?? stringValue(candidate, "forgetAfter");
+	if (expiry) {
+		const expiresAt = new Date(expiry).getTime();
+		if (!Number.isFinite(expiresAt) || expiresAt <= now) return {
+			eligible: false,
+			reason: "expired"
+		};
+	}
+	if (candidate["deleted"] === true || status === "deleted") return {
+		eligible: false,
+		reason: "deleted"
+	};
+	if (candidate["isLatest"] === false || status === "superseded" || stringValue(candidate, "supersededBy")) return {
+		eligible: false,
+		reason: "superseded"
+	};
+	if (candidate["contradicted"] === true || status === "contradicted") return {
+		eligible: false,
+		reason: "contradicted"
+	};
+	const gateAuthority = candidate["gateAuthority"] === true || stringValue(candidate, "authority")?.toLowerCase() === "gate";
+	const accepted = candidate["accepted"] === true || status === "accepted" || stringValue(candidate, "authorityStatus")?.toLowerCase() === "accepted";
+	if (options.contextClass === "gate-critical" && gateAuthority && !accepted) return {
+		eligible: false,
+		reason: "unaccepted_gate_authority"
+	};
+	const tags = stringList(candidate, "tags").map((tag) => tag.toLowerCase());
+	if (candidate["recalledOnly"] === true || stringValue(candidate, "source")?.toLowerCase() === "recall" || tags.includes("recalled-only")) return {
+		eligible: false,
+		reason: "recalled_only"
+	};
+	if ([
+		options.candidateId,
+		stringValue(candidate, "id"),
+		stringValue(candidate, "obsId"),
+		...stringList(candidate, "sourceIds"),
+		...stringList(candidate, "sourceObservationIds"),
+		stringValue(candidate, "commitSha"),
+		stringValue(candidate, "receiptId")
+	].filter((value) => Boolean(value)).length === 0) return {
+		eligible: false,
+		reason: "provenance_missing"
+	};
+	return { eligible: true };
+}
+function retrievalQuarantineKey(scope, key) {
+	return `${scope}\u0000${key}`;
+}
+async function loadRetrievalQuarantine(kv, scope) {
+	const records = await kv.list(scope);
+	return new Set(records.filter((record) => typeof record.sourceScope === "string" && typeof record.sourceKey === "string").map((record) => retrievalQuarantineKey(record.sourceScope, record.sourceKey)));
+}
 //#endregion
 //#region src/mcp/rest-proxy.ts
 const DEFAULT_URL = "http://localhost:3111";
@@ -2186,9 +2257,18 @@ async function handleLocal(v, kvInstance) {
 		case "memory_smart_search": {
 			const query = (v.query || "").toLowerCase();
 			const limit = v.limit ?? DEFAULT_LIMIT;
+			const all = await kvInstance.list("mem:memories");
+			const retrievalQuarantine = await loadRetrievalQuarantine(kvInstance, KV.migrationQuarantine);
 			return textResponse({
 				mode: "compact",
-				results: (await kvInstance.list("mem:memories")).filter((memory) => v.scope === "global" || memory["project"] === v.project).filter((m) => {
+				results: all.filter((memory) => v.scope === "global" || memory["project"] === v.project).filter((memory) => {
+					const id = typeof memory["id"] === "string" ? memory["id"] : void 0;
+					if (!id) return false;
+					return !retrievalQuarantine.has(retrievalQuarantineKey(KV.memories, id)) && evaluateContextCandidate(memory, {
+						contextClass: "advisory",
+						candidateId: id
+					}).eligible;
+				}).filter((m) => {
 					const text = [
 						typeof m["title"] === "string" ? m["title"] : "",
 						typeof m["content"] === "string" ? m["content"] : "",
