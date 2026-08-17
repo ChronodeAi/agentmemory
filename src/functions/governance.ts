@@ -122,6 +122,20 @@ export function registerGovernanceFunction(sdk: ISdk, kv: StateKV): void {
       if (!Array.isArray(data.memoryIds) || data.memoryIds.length === 0) {
         return { success: false, error: "memoryIds array is required" };
       }
+      const project =
+        typeof data.project === "string" && data.project.trim()
+          ? data.project.trim()
+          : undefined;
+      const globalScope = data.scope === "global";
+      if (
+        (data.scope !== undefined && !globalScope) ||
+        Boolean(project) === globalScope
+      ) {
+        return {
+          success: false,
+          error: "exactly_one_project_or_global_scope_required",
+        };
+      }
       return withKeyedLock(GOVERNANCE_DELETE_LOCK, async () => {
         const requestedIds = [...new Set(data.memoryIds)];
         const confirmed: Memory[] = [];
@@ -134,8 +148,7 @@ export function registerGovernanceFunction(sdk: ISdk, kv: StateKV): void {
             if (
               memory &&
               (data.scope === "global" ||
-                !data.project ||
-                memory.project === data.project)
+                memory.project === project)
             ) {
               confirmed.push(memory);
             } else if (memory) {

@@ -85,10 +85,30 @@ describe("Governance Functions", () => {
     await kv.set("mem:memories", "mem_3", makeMemory("mem_3", "pattern"));
   });
 
+  it("requires exactly one project or explicit global scope", async () => {
+    await expect(
+      sdk.trigger("mem::governance-delete", { memoryIds: ["mem_1"] }),
+    ).resolves.toEqual({
+      success: false,
+      error: "exactly_one_project_or_global_scope_required",
+    });
+    await expect(
+      sdk.trigger("mem::governance-delete", {
+        memoryIds: ["mem_1"],
+        project: "github.com/example/project",
+        scope: "global",
+      }),
+    ).resolves.toEqual({
+      success: false,
+      error: "exactly_one_project_or_global_scope_required",
+    });
+  });
+
   it("governance-delete removes specified memories", async () => {
     const result = (await sdk.trigger("mem::governance-delete", {
       memoryIds: ["mem_1"],
       reason: "outdated",
+      scope: "global",
     })) as { success: boolean; deleted: number; total: number };
 
     expect(result.success).toBe(true);
@@ -102,6 +122,7 @@ describe("Governance Functions", () => {
   it("governance-delete handles non-existent IDs gracefully", async () => {
     const result = (await sdk.trigger("mem::governance-delete", {
       memoryIds: ["nonexistent_1", "nonexistent_2"],
+      scope: "global",
     })) as { success: boolean; deleted: number; total: number };
 
     expect(result.success).toBe(true);
@@ -153,6 +174,7 @@ describe("Governance Functions", () => {
 
     const result = (await sdk.trigger("mem::governance-delete", {
       memoryIds: ["mem_1", "mem_2"],
+      scope: "global",
     })) as { success: boolean; deleted: number };
     const entries = (await sdk.trigger("mem::audit-query", {})) as AuditEntry[];
     const intent = entries.find((entry) => entry.details.phase === "intent");
@@ -251,6 +273,7 @@ describe("Governance Functions", () => {
     });
     const result = (await sdk.trigger("mem::governance-delete", {
       memoryIds: ["mem_image"],
+      scope: "global",
     })) as { success: boolean; deleted: number; failures?: unknown[] };
 
     expect(result).toMatchObject({ success: false, deleted: 0 });
@@ -415,6 +438,7 @@ describe("Governance Functions", () => {
 
       await sdk.trigger("mem::governance-delete", {
         memoryIds: ["mem_1"],
+        scope: "global",
       });
 
       expect(getSearchIndex().has("mem_1")).toBe(false);
@@ -426,7 +450,10 @@ describe("Governance Functions", () => {
       setIndexPersistence(persistence);
       getSearchIndex().add(indexedObs("mem_1", "alpha"));
 
-      await sdk.trigger("mem::governance-delete", { memoryIds: ["mem_1"] });
+      await sdk.trigger("mem::governance-delete", {
+        memoryIds: ["mem_1"],
+        scope: "global",
+      });
 
       // Delete paths must use the synchronous save (not the debounced
       // scheduleSave) so a process exit immediately after delete can't
@@ -440,6 +467,7 @@ describe("Governance Functions", () => {
 
       await sdk.trigger("mem::governance-delete", {
         memoryIds: ["nonexistent_999"],
+        scope: "global",
       });
 
       expect(persistence.save).not.toHaveBeenCalled();
@@ -473,6 +501,7 @@ describe("Governance Functions", () => {
     await sdk.trigger("mem::governance-delete", {
       memoryIds: ["mem_1"],
       reason: "cleanup",
+      scope: "global",
     });
 
     const entries = (await sdk.trigger("mem::audit-query", {})) as AuditEntry[];

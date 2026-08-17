@@ -2925,7 +2925,12 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::governance-delete", 
     async (
-      req: ApiRequest<{ memoryIds: string[]; reason?: string }>,
+      req: ApiRequest<{
+        memoryIds: string[];
+        reason?: string;
+        project?: string;
+        scope?: "global";
+      }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -2935,7 +2940,25 @@ export function registerApiTriggers(
           body: { error: "memoryIds array is required" },
         };
       }
-      const result = await sdk.trigger({ function_id: "mem::governance-delete", payload: req.body });
+      const project = asNonEmptyString(req.body.project) ?? undefined;
+      const globalScope = req.body.scope === "global";
+      if (
+        (req.body.scope !== undefined && !globalScope) ||
+        Boolean(project) === globalScope
+      ) {
+        return {
+          status_code: 400,
+          body: { error: "exactly_one_project_or_global_scope_required" },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::governance-delete",
+        payload: {
+          memoryIds: req.body.memoryIds,
+          reason: req.body.reason,
+          ...(globalScope ? { scope: "global" as const } : { project }),
+        },
+      });
       return { status_code: 200, body: result };
     },
   );

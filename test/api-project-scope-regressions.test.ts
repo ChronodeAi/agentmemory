@@ -86,6 +86,49 @@ function createSurfaces() {
 }
 
 describe("REST project scope regressions", () => {
+  it("requires explicit delete scope and administrative authority for global deletion", async () => {
+    const { functions } = createSurfaces();
+    const remove = functions.get("api::governance-delete")!;
+
+    await expect(
+      remove({ headers: adminHeaders(), body: { memoryIds: ["memory-a"] } }),
+    ).resolves.toMatchObject({
+      status_code: 400,
+      body: { error: "exactly_one_project_or_global_scope_required" },
+    });
+    await expect(
+      remove({
+        headers: adminHeaders(),
+        body: {
+          memoryIds: ["memory-a"],
+          project: PROJECT_A,
+          scope: "global",
+        },
+      }),
+    ).resolves.toMatchObject({
+      status_code: 400,
+      body: { error: "exactly_one_project_or_global_scope_required" },
+    });
+    await expect(
+      remove({
+        headers: projectHeaders(PROJECT_A),
+        body: { memoryIds: ["memory-a"], scope: "global" },
+      }),
+    ).resolves.toMatchObject({ status_code: 401 });
+    await expect(
+      remove({
+        headers: projectHeaders(PROJECT_A),
+        body: { memoryIds: ["memory-a"], project: PROJECT_A },
+      }),
+    ).resolves.toMatchObject({ status_code: 200 });
+    await expect(
+      remove({
+        headers: adminHeaders(),
+        body: { memoryIds: ["memory-a"], scope: "global" },
+      }),
+    ).resolves.toMatchObject({ status_code: 200 });
+  });
+
   it("limits summaries after selecting the most recent sessions", async () => {
     const { functions, kv } = createSurfaces();
     await kv.set("mem:sessions", "session-old", {

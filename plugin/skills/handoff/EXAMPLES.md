@@ -7,7 +7,7 @@ User: "Where were we?"
 Project cwd: `/Users/dev/app`. Invocation:
 
 ```json
-memory_sessions { "limit": 20 }
+memory_sessions { "project": "github.com/example/repository", "limit": 20 }
 ```
 
 Response:
@@ -26,7 +26,7 @@ Response:
 Pull supporting context:
 
 ```json
-memory_recall { "query": "jwt-refresh-rotation logout", "limit": 10 }
+memory_recall { "project": "github.com/example/repository", "query": "jwt-refresh-rotation logout", "limit": 10 }
 ```
 
 Present:
