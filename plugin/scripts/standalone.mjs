@@ -1644,7 +1644,12 @@ const CODING_MEMORY_TOOLS = [
 								enum: ["git-blob"]
 							}
 						},
-						required: ["path", "operation"]
+						required: [
+							"path",
+							"operation",
+							"digest",
+							"digestKind"
+						]
 					}
 				}
 			},

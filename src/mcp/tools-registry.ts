@@ -1203,7 +1203,7 @@ export const CODING_MEMORY_TOOLS: McpToolDef[] = [
               },
               digestKind: { type: "string", enum: ["git-blob"] },
             },
-            required: ["path", "operation"],
+            required: ["path", "operation", "digest", "digestKind"],
           },
         },
       },

@@ -71,6 +71,14 @@ export async function collectCommitLinkage(
     fileTransitions.length > 0
       ? fileTransitions.map((transition) => transition.path)
       : undefined;
+  const completeFileTransitions =
+    fileTransitions.length > 0 &&
+    fileTransitions.every(
+      (transition) =>
+        Boolean(transition.digest) && transition.digestKind === "git-blob",
+    )
+      ? fileTransitions
+      : undefined;
 
   return {
     sessionId,
@@ -87,8 +95,7 @@ export async function collectCommitLinkage(
     author: author || undefined,
     authoredAt: authoredAt || undefined,
     files,
-    fileTransitions:
-      fileTransitions.length > 0 ? fileTransitions : undefined,
+    fileTransitions: completeFileTransitions,
   };
 }
 

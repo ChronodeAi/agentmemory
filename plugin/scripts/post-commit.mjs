@@ -72,6 +72,7 @@ async function collectCommitLinkage(cwd, sha, sessionId, project = resolveProjec
 		};
 	}));
 	const files = fileTransitions.length > 0 ? fileTransitions.map((transition) => transition.path) : void 0;
+	const completeFileTransitions = fileTransitions.length > 0 && fileTransitions.every((transition) => Boolean(transition.digest) && transition.digestKind === "git-blob") ? fileTransitions : void 0;
 	return {
 		sessionId,
 		project,
@@ -85,7 +86,7 @@ async function collectCommitLinkage(cwd, sha, sessionId, project = resolveProjec
 		author: author || void 0,
 		authoredAt: authoredAt || void 0,
 		files,
-		fileTransitions: fileTransitions.length > 0 ? fileTransitions : void 0
+		fileTransitions: completeFileTransitions
 	};
 }
 function commandText(value) {

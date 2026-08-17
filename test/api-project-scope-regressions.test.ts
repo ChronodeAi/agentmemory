@@ -259,6 +259,8 @@ describe("REST project scope regressions", () => {
             path: "src/new.ts",
             previousPath: "src/old.ts",
             operation: "rename",
+            digest: "d".repeat(40),
+            digestKind: "git-blob",
           },
         ],
       },

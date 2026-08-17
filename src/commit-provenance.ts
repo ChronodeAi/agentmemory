@@ -44,9 +44,8 @@ export function parseCommitProvenanceTransitions(
       !path ||
       !operation ||
       !operations.has(operation) ||
-      digest === null ||
-      Boolean(digest) !== Boolean(digestKind) ||
-      (digestKind !== undefined && digestKind !== "git-blob") ||
+      !digest ||
+      digestKind !== "git-blob" ||
       ((operation === "rename" || operation === "copy") && !previousPath)
     ) {
       return null;
@@ -55,7 +54,8 @@ export function parseCommitProvenanceTransitions(
       path,
       operation: operation as CommitProvenanceTransition["operation"],
       ...(previousPath ? { previousPath } : {}),
-      ...(digest ? { digest, digestKind: "git-blob" } : {}),
+      digest,
+      digestKind: "git-blob",
     });
   }
   return parsed;
