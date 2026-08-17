@@ -1,38 +1,11 @@
 #!/usr/bin/env node
-import { execSync } from "node:child_process";
-import { basename } from "node:path";
-//#region src/hooks/_project.ts
-function resolveProject(cwd) {
-	const explicit = process.env["AGENTMEMORY_PROJECT_NAME"];
-	if (explicit && explicit.trim()) return explicit.trim();
-	const dir = cwd && cwd.trim() ? cwd : process.cwd();
-	try {
-		const top = execSync("git rev-parse --show-toplevel", {
-			cwd: dir,
-			stdio: [
-				"ignore",
-				"pipe",
-				"ignore"
-			],
-			timeout: 500
-		}).toString().trim();
-		if (top) return basename(top);
-	} catch {}
-	return basename(dir);
-}
-//#endregion
+import { t as resolveProject } from "./_project-BNYA1N7W.mjs";
+import { n as reportObservationDeliveryFailure, t as deliverObservation } from "./_observe-delivery-Dp1TkllS.mjs";
 //#region src/hooks/task-completed.ts
 function isSdkChildContext(payload) {
 	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
-}
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-function authHeaders() {
-	const h = { "Content-Type": "application/json" };
-	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-	return h;
 }
 async function main() {
 	let input = "";
@@ -45,30 +18,21 @@ async function main() {
 	}
 	if (!data || typeof data !== "object") return;
 	if (isSdkChildContext(data)) return;
-	const sessionId = data.session_id || "unknown";
-	fetch(`${REST_URL}/agentmemory/observe`, {
-		method: "POST",
-		headers: authHeaders(),
-		body: JSON.stringify({
-			hookType: "task_completed",
-			sessionId,
-			project: resolveProject(data.cwd),
-			cwd: data.cwd || process.cwd(),
-			timestamp: (/* @__PURE__ */ new Date()).toISOString(),
-			data: {
-				task_id: data.task_id,
-				task_subject: data.task_subject,
-				task_description: typeof data.task_description === "string" ? data.task_description.slice(0, 2e3) : "",
-				teammate_name: data.teammate_name,
-				team_name: data.team_name
-			}
-		}),
-		signal: AbortSignal.timeout(2e3)
-	}).catch(() => {});
-	setTimeout(() => process.exit(0), 500).unref();
+	await deliverObservation({
+		hookType: "task_completed",
+		sessionId: data.session_id || "unknown",
+		project: resolveProject(data.cwd),
+		cwd: data.cwd || process.cwd(),
+		timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+		data: {
+			task_id: data.task_id,
+			task_subject: data.task_subject,
+			task_description: typeof data.task_description === "string" ? data.task_description.slice(0, 2e3) : "",
+			teammate_name: data.teammate_name,
+			team_name: data.team_name
+		}
+	});
 }
-main().catch(() => process.exit(0));
+main().catch(reportObservationDeliveryFailure);
 //#endregion
 export {};
-
-//# sourceMappingURL=task-completed.mjs.map

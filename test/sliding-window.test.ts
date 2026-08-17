@@ -30,6 +30,24 @@ function mockKV(observations: CompressedObservation[] = []) {
     obsMap.set(obs.id, obs);
   }
   store.set("mem:obs:ses_1", obsMap);
+  store.set(
+    "mem:sessions",
+    new Map([
+      [
+        "ses_1",
+        {
+          id: "ses_1",
+          project: "test/project",
+          cwd: "/tmp/test-project",
+          startedAt: new Date().toISOString(),
+          status: "active",
+          observationCount: observations.length,
+          privacy: "standard",
+          externalProcessing: true,
+        },
+      ],
+    ]),
+  );
 
   return {
     get: async <T>(scope: string, key: string): Promise<T | null> => {
@@ -191,5 +209,38 @@ describe("SlidingWindow", () => {
 
     expect(result.success).toBe(false);
     expect(result.error).toBe("Observation not found");
+  });
+
+  it("does not send strict-session observations to the provider", async () => {
+    const { registerSlidingWindowFunction } = await import(
+      "../src/functions/sliding-window.js"
+    );
+    const kv = mockKV([
+      makeObs("obs_before", "Before", "Before context"),
+      makeObs("obs_strict", "Strict", "Strict content"),
+    ]);
+    await kv.set("mem:sessions", "ses_1", {
+      id: "ses_1",
+      project: "github.com/example/strict",
+      cwd: "/tmp/strict",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 2,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    const sdk = mockSdk();
+    const provider = mockProvider("<enriched><content>leaked</content></enriched>");
+    registerSlidingWindowFunction(sdk as never, kv as never, provider);
+
+    const result = (await sdk.trigger("mem::enrich-window", {
+      observationId: "obs_strict",
+      sessionId: "ses_1",
+      lookback: 1,
+    })) as { success: boolean; error: string };
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain("external_processing_disabled");
+    expect(provider.compress).not.toHaveBeenCalled();
   });
 });

@@ -1,6 +1,12 @@
 import type { ISdk } from "iii-sdk";
 import type { MemoryProvider, QueryExpansion } from "../types.js";
 import { logger } from "../logger.js";
+import type { StateKV } from "../state/kv.js";
+import { stripPrivateData } from "./privacy.js";
+import {
+  modelProcessingForProject,
+  modelProcessingForSession,
+} from "./model-processing.js";
 
 const QUERY_EXPANSION_SYSTEM = `You are a query expansion engine for a memory retrieval system. Given a user query, generate diverse reformulations to maximize recall.
 
@@ -68,10 +74,17 @@ function parseExpansionXml(xml: string): QueryExpansion | null {
 
 export function registerQueryExpansionFunction(
   sdk: ISdk,
+  kv: StateKV,
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::expand-query", 
-    async (data: { query: string; maxReformulations?: number } | undefined) => {
+    async (data: {
+      query: string;
+      maxReformulations?: number;
+      project?: string;
+      sessionId?: string;
+      scope?: "global";
+    } | undefined) => {
       if (!data || typeof data.query !== "string" || !data.query.trim()) {
         logger.warn("Invalid expand-query payload");
         return { success: false, error: "query must be a non-empty string" };
@@ -80,7 +93,17 @@ export function registerQueryExpansionFunction(
       const maxR = Number.isFinite(rawMaxR)
         ? Math.max(1, Math.min(10, Math.floor(rawMaxR)))
         : 5;
-      const query = data.query.trim();
+      const query = stripPrivateData(data.query.trim());
+      const processing = data.sessionId
+        ? await modelProcessingForSession(kv, data.sessionId)
+        : data.project
+          ? await modelProcessingForProject(kv, data.project)
+          : data.scope === "global"
+            ? { allowed: true as const }
+            : { allowed: false as const, error: "project scope is required unless scope=global" };
+      if (!processing.allowed) {
+        return { success: false, error: processing.error };
+      }
 
       try {
         const response = await provider.compress(

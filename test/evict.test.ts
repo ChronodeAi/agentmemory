@@ -67,6 +67,25 @@ function mockKV(store: Store, listFailures: Set<string> = new Set()) {
     delete: async (scope: string, key: string): Promise<void> => {
       store.get(scope)?.delete(key);
     },
+    update: async (
+      scope: string,
+      key: string,
+      operations: Array<{ type: string; path: string; value: unknown }>,
+    ): Promise<unknown> => {
+      const current = store.get(scope)?.get(key);
+      if (!current || typeof current !== "object") {
+        throw new Error(`missing record: ${scope}/${key}`);
+      }
+      const updated = { ...(current as Record<string, unknown>) };
+      for (const operation of operations) {
+        if (operation.type !== "set") {
+          throw new Error(`unsupported operation: ${operation.type}`);
+        }
+        updated[operation.path] = operation.value;
+      }
+      store.get(scope)!.set(key, updated);
+      return updated;
+    },
     list: async <T>(scope: string): Promise<T[]> => {
       if (listFailures.has(scope)) {
         throw new Error(`list failed for ${scope}`);
@@ -118,7 +137,7 @@ function storeForObservedSession(sessionId: string): Store {
 }
 
 describe("mem::evict stale sessions", () => {
-  it("runs session recovery before deleting a stale observed session", async () => {
+  it("recovers and closes a stale observed session without deleting history", async () => {
     const sessionId = "ses_stale";
     const store = storeForObservedSession(sessionId);
     const kv = mockKV(store);
@@ -126,7 +145,7 @@ describe("mem::evict stale sessions", () => {
 
     registerEvictFunction(sdk as never, kv as never);
     sdk.registerFunction("event::session::stopped", async (payload) => {
-      expect(payload).toEqual({ sessionId });
+      expect(payload).toEqual({ sessionId, project: "agentmemory" });
       expect(await kv.get(KV.sessions, sessionId)).toMatchObject({
         id: sessionId,
       });
@@ -142,12 +161,20 @@ describe("mem::evict stale sessions", () => {
     })) as { staleSessions: number };
 
     expect(result.staleSessions).toBe(1);
-    expect(await kv.get(KV.sessions, sessionId)).toBeNull();
+    expect(await kv.get(KV.sessions, sessionId)).toMatchObject({
+      id: sessionId,
+      status: "abandoned",
+      endedAt: expect.any(String),
+      staleClosedAt: expect.any(String),
+    });
+    expect(
+      await kv.list<CompressedObservation>(KV.observations(sessionId)),
+    ).toHaveLength(1);
     const audits = await kv.list<{
       details: { reason: string };
     }>(KV.audit);
     expect(audits[0].details.reason).toBe(
-      "stale_session_recovered_then_evicted",
+      "stale_session_recovered_then_closed",
     );
     expect(calls.map((call) => call.function_id)).toContain(
       "event::session::stopped",
@@ -155,6 +182,11 @@ describe("mem::evict stale sessions", () => {
     expect(calls.map((call) => call.function_id)).toContain(
       "mem::consolidate-pipeline",
     );
+    expect(
+      calls.find(
+        (call) => call.function_id === "mem::consolidate-pipeline",
+      )?.payload,
+    ).toEqual({ tier: "all", project: "agentmemory" });
   });
 
   it("keeps a stale observed session when recovery fails", async () => {
@@ -211,7 +243,7 @@ describe("mem::evict stale sessions", () => {
     );
   });
 
-  it("keeps a stale session that only has raw observations", async () => {
+  it("closes a stale raw-only session while retaining its observations", async () => {
     const sessionId = "ses_raw_only";
     const store = storeForObservations(sessionId, [
       makeRawObservation(sessionId),
@@ -229,10 +261,14 @@ describe("mem::evict stale sessions", () => {
       payload: {},
     })) as { staleSessions: number };
 
-    expect(result.staleSessions).toBe(0);
+    expect(result.staleSessions).toBe(1);
     expect(await kv.get(KV.sessions, sessionId)).toMatchObject({
       id: sessionId,
+      status: "abandoned",
     });
+    expect(
+      await kv.list<RawObservation>(KV.observations(sessionId)),
+    ).toHaveLength(1);
     expect(calls.map((call) => call.function_id)).not.toContain(
       "event::session::stopped",
     );

@@ -1,6 +1,7 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { FallbackChainProvider } from "../src/providers/fallback-chain.js";
 import type { MemoryProvider } from "../src/types.js";
+import { KV } from "../src/state/schema.js";
 
 function makeProvider(
   name: string,
@@ -10,6 +11,20 @@ function makeProvider(
     name,
     compress: impl?.compress ?? (async () => `compressed by ${name}`),
     summarize: impl?.summarize ?? (async () => `summarized by ${name}`),
+  };
+}
+
+function mockKV() {
+  const sessions = new Map<string, unknown>();
+  return {
+    get: async <T>(scope: string, key: string): Promise<T | null> =>
+      scope === KV.sessions ? ((sessions.get(key) as T) ?? null) : null,
+    list: async <T>(scope: string): Promise<T[]> =>
+      scope === KV.sessions ? (Array.from(sessions.values()) as T[]) : [],
+    set: async <T>(_scope: string, key: string, value: T): Promise<T> => {
+      sessions.set(key, value);
+      return value;
+    },
   };
 }
 
@@ -89,5 +104,44 @@ describe("FallbackChainProvider", () => {
     ]);
     const result = await chain.summarize("sys", "user");
     expect(result).toBe("summarized by backup");
+  });
+
+  it("makes zero external fallback calls for a strict project", async () => {
+    const kv = mockKV();
+    await kv.set(KV.sessions, "strict-session", {
+      id: "strict-session",
+      project: "strict/project",
+      cwd: "/tmp/strict-project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 0,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    const primaryRecorder = vi.fn(async () => "primary");
+    const fallbackRecorder = vi.fn(async () => "fallback");
+    const chain = new FallbackChainProvider(
+      [
+        makeProvider("primary-recorder", { compress: primaryRecorder }),
+        makeProvider("fallback-recorder", { compress: fallbackRecorder }),
+      ],
+      {
+        kv: kv as never,
+        project: "strict/project",
+        sessionId: "strict-session",
+        dataClass: "prompt_text",
+        sourceProvenance: "compression_request",
+        providerLocations: {
+          "primary-recorder": "external",
+          "fallback-recorder": "external",
+        },
+      },
+    );
+
+    await expect(chain.compress("sys", "raw content")).rejects.toThrow(
+      /external_processing_disabled/,
+    );
+    expect(primaryRecorder).not.toHaveBeenCalled();
+    expect(fallbackRecorder).not.toHaveBeenCalled();
   });
 });

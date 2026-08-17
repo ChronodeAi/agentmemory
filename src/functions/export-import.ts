@@ -21,30 +21,51 @@ import type {
   Facet,
   Lesson,
   Insight,
-  ExportPagination,
   AccessLogExport,
 } from "../types.js";
 import { normalizeAccessLog } from "./access-tracker.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
-import { VERSION } from "../version.js";
+import { EXPORT_FORMAT_VERSION } from "../version.js";
 import { recordAudit } from "./audit.js";
 import { logger } from "../logger.js";
 
 export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::export", 
-    async (data?: { maxSessions?: number; offset?: number }) => {
+    async (data?: {
+      maxSessions?: number;
+      offset?: number;
+      sections?: string[];
+    }) => {
       const rawMax = Number(data?.maxSessions);
       const maxSessions = Number.isFinite(rawMax) && rawMax > 0 ? Math.min(Math.floor(rawMax), 1000) : undefined;
       const rawOffset = Number(data?.offset);
       const offset = Number.isFinite(rawOffset) && rawOffset >= 0 ? Math.floor(rawOffset) : 0;
+      const requestedSections = new Set(
+        (data?.sections ?? []).map((section) => section.trim().toLowerCase()),
+      );
+      const includeAll = requestedSections.size === 0 || requestedSections.has("full");
+      const includes = (section: string): boolean =>
+        includeAll || requestedSections.has(section);
+      const includeSessions = includes("core") || includes("sessions");
+      const includeMemories = includes("core") || includes("memories");
+      const includeSummaries = includes("core") || includes("summaries");
 
-      const allSessions = await kv.list<Session>(KV.sessions);
-      const paginatedSessions = maxSessions !== undefined
+      const allSessions =
+        includeSessions || includes("profiles")
+          ? await kv.list<Session>(KV.sessions)
+          : [];
+      const paginatedSessions = includeSessions && maxSessions !== undefined
         ? allSessions.slice(offset, offset + maxSessions)
-        : allSessions;
-      const memories = await kv.list<Memory>(KV.memories);
-      const summaries = await kv.list<SessionSummary>(KV.summaries);
+        : includeSessions
+          ? allSessions
+          : [];
+      const memories = includeMemories
+        ? await kv.list<Memory>(KV.memories)
+        : [];
+      const summaries = includeSummaries
+        ? await kv.list<SessionSummary>(KV.summaries)
+        : [];
 
       const observations: Record<string, CompressedObservation[]> = {};
       const obsResults = await Promise.all(
@@ -62,14 +83,18 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       const profiles: ProjectProfile[] = [];
-      const uniqueProjects = [...new Set(paginatedSessions.map((s) => s.project))];
-      const profileResults = await Promise.all(
-        uniqueProjects.map((project) =>
-          kv.get<ProjectProfile>(KV.profiles, project).catch(() => null),
-        ),
-      );
-      for (const profile of profileResults) {
-        if (profile) profiles.push(profile);
+      if (includes("profiles")) {
+        const uniqueProjects = [
+          ...new Set(allSessions.map((s) => s.project)),
+        ];
+        const profileResults = await Promise.all(
+          uniqueProjects.map((project) =>
+            kv.get<ProjectProfile>(KV.profiles, project).catch(() => null),
+          ),
+        );
+        for (const profile of profileResults) {
+          if (profile) profiles.push(profile);
+        }
       }
 
       const [
@@ -90,27 +115,30 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         checkpoints,
         accessLogs,
       ] = await Promise.all([
-        kv.list<GraphNode>(KV.graphNodes).catch(() => []),
-        kv.list<GraphEdge>(KV.graphEdges).catch(() => []),
-        kv.list<SemanticMemory>(KV.semantic).catch(() => []),
-        kv.list<ProceduralMemory>(KV.procedural).catch(() => []),
-        kv.list<Action>(KV.actions).catch(() => []),
-        kv.list<ActionEdge>(KV.actionEdges).catch(() => []),
-        kv.list<Sentinel>(KV.sentinels).catch(() => []),
-        kv.list<Sketch>(KV.sketches).catch(() => []),
-        kv.list<Crystal>(KV.crystals).catch(() => []),
-        kv.list<Facet>(KV.facets).catch(() => []),
-        kv.list<Lesson>(KV.lessons).catch(() => []),
-        kv.list<Insight>(KV.insights).catch(() => []),
-        kv.list<Routine>(KV.routines).catch(() => []),
-        kv.list<Signal>(KV.signals).catch(() => []),
-        kv.list<Checkpoint>(KV.checkpoints).catch(() => []),
-        kv.list<AccessLogExport>(KV.accessLog).catch(() => []),
+        includes("graph") ? kv.list<GraphNode>(KV.graphNodes).catch(() => []) : [],
+        includes("graph") ? kv.list<GraphEdge>(KV.graphEdges).catch(() => []) : [],
+        includes("semantic") ? kv.list<SemanticMemory>(KV.semantic).catch(() => []) : [],
+        includes("semantic") ? kv.list<ProceduralMemory>(KV.procedural).catch(() => []) : [],
+        includes("actions") ? kv.list<Action>(KV.actions).catch(() => []) : [],
+        includes("actions") ? kv.list<ActionEdge>(KV.actionEdges).catch(() => []) : [],
+        includes("operations") ? kv.list<Sentinel>(KV.sentinels).catch(() => []) : [],
+        includes("operations") ? kv.list<Sketch>(KV.sketches).catch(() => []) : [],
+        includes("operations") ? kv.list<Crystal>(KV.crystals).catch(() => []) : [],
+        includes("operations") ? kv.list<Facet>(KV.facets).catch(() => []) : [],
+        includes("lessons") ? kv.list<Lesson>(KV.lessons).catch(() => []) : [],
+        includes("lessons") ? kv.list<Insight>(KV.insights).catch(() => []) : [],
+        includes("operations") ? kv.list<Routine>(KV.routines).catch(() => []) : [],
+        includes("operations") ? kv.list<Signal>(KV.signals).catch(() => []) : [],
+        includes("operations") ? kv.list<Checkpoint>(KV.checkpoints).catch(() => []) : [],
+        includes("access") ? kv.list<AccessLogExport>(KV.accessLog).catch(() => []) : [],
       ]);
 
       const exportData: ExportData = {
-        version: VERSION,
+        version: EXPORT_FORMAT_VERSION,
         exportedAt: new Date().toISOString(),
+        ...(!includeAll && {
+          sections: [...requestedSections].sort(),
+        }),
         sessions: paginatedSessions,
         observations,
         memories,
@@ -136,7 +164,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         accessLogs: accessLogs.length > 0 ? accessLogs : undefined,
       };
 
-      if (maxSessions !== undefined) {
+      if (includeSessions && maxSessions !== undefined) {
         exportData.pagination = {
           offset,
           limit: maxSessions,

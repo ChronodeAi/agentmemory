@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { afterEach, describe, it, expect, beforeEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -65,6 +65,7 @@ function makeAction(overrides: Partial<Action> & { id: string }): Action {
     createdAt: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString(),
     updatedAt: new Date().toISOString(),
     createdBy: "agent-1",
+    project: "webapp",
     tags: [],
     sourceObservationIds: [],
     sourceMemoryIds: [],
@@ -78,10 +79,15 @@ describe("Crystallize Functions", () => {
   let provider: MemoryProvider;
 
   beforeEach(() => {
+    vi.stubEnv("AGENTMEMORY_LOCAL_PROCESSING", "true");
     sdk = mockSdk();
     kv = mockKV();
     provider = mockProvider();
     registerCrystallizeFunction(sdk as never, kv as never, provider);
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
   });
 
   describe("mem::crystallize", () => {
@@ -267,7 +273,9 @@ describe("Crystallize Functions", () => {
     });
 
     it("returns all crystals sorted by createdAt desc", async () => {
-      const result = (await sdk.trigger("mem::crystal-list", {})) as {
+      const result = (await sdk.trigger("mem::crystal-list", {
+        scope: "global",
+      })) as {
         success: boolean;
         crystals: Crystal[];
       };
@@ -292,6 +300,7 @@ describe("Crystallize Functions", () => {
     it("filters by sessionId", async () => {
       const result = (await sdk.trigger("mem::crystal-list", {
         sessionId: "sess_b",
+        scope: "global",
       })) as { success: boolean; crystals: Crystal[] };
 
       expect(result.success).toBe(true);
@@ -302,6 +311,7 @@ describe("Crystallize Functions", () => {
     it("respects limit", async () => {
       const result = (await sdk.trigger("mem::crystal-list", {
         limit: 1,
+        scope: "global",
       })) as { success: boolean; crystals: Crystal[] };
 
       expect(result.success).toBe(true);
@@ -325,6 +335,7 @@ describe("Crystallize Functions", () => {
 
       const result = (await sdk.trigger("mem::crystal-get", {
         crystalId: "crys_get_1",
+        scope: "global",
       })) as { success: boolean; crystal: Crystal };
 
       expect(result.success).toBe(true);
@@ -335,6 +346,7 @@ describe("Crystallize Functions", () => {
     it("returns error for non-existent crystal", async () => {
       const result = (await sdk.trigger("mem::crystal-get", {
         crystalId: "crys_missing",
+        scope: "global",
       })) as { success: boolean; error: string };
 
       expect(result.success).toBe(false);
@@ -363,6 +375,7 @@ describe("Crystallize Functions", () => {
 
       const result = (await sdk.trigger("mem::auto-crystallize", {
         dryRun: true,
+        scope: "global",
       })) as {
         success: boolean;
         dryRun: boolean;
@@ -400,6 +413,7 @@ describe("Crystallize Functions", () => {
 
       const result = (await sdk.trigger("mem::auto-crystallize", {
         dryRun: true,
+        scope: "global",
       })) as {
         success: boolean;
         groups: { groupKey: string; actionCount: number; actionIds: string[] }[];
@@ -421,6 +435,7 @@ describe("Crystallize Functions", () => {
 
       const result = (await sdk.trigger("mem::auto-crystallize", {
         dryRun: true,
+        scope: "global",
       })) as {
         success: boolean;
         groups: { groupKey: string; actionCount: number }[];
@@ -445,6 +460,7 @@ describe("Crystallize Functions", () => {
 
       const result = (await sdk.trigger("mem::auto-crystallize", {
         dryRun: true,
+        scope: "global",
       })) as { success: boolean; groupCount: number };
 
       expect(result.success).toBe(true);
@@ -462,6 +478,7 @@ describe("Crystallize Functions", () => {
       const result = (await sdk.trigger("mem::auto-crystallize", {
         olderThanDays: 7,
         dryRun: true,
+        scope: "global",
       })) as { success: boolean; groupCount: number };
 
       expect(result.success).toBe(true);
@@ -474,7 +491,9 @@ describe("Crystallize Functions", () => {
       await kv.set("mem:actions", a1.id, a1);
       await kv.set("mem:actions", a2.id, a2);
 
-      const result = (await sdk.trigger("mem::auto-crystallize", {})) as {
+      const result = (await sdk.trigger("mem::auto-crystallize", {
+        scope: "global",
+      })) as {
         success: boolean;
         groupCount: number;
         crystalIds: string[];
@@ -508,7 +527,9 @@ describe("Crystallize Functions", () => {
     });
 
     it("returns empty when no qualifying actions exist", async () => {
-      const result = (await sdk.trigger("mem::auto-crystallize", {})) as {
+      const result = (await sdk.trigger("mem::auto-crystallize", {
+        scope: "global",
+      })) as {
         success: boolean;
         groupCount: number;
         crystalIds: string[];

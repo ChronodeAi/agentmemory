@@ -1,18 +1,14 @@
 #!/usr/bin/env node
+import { resolveProject } from "./_project.js";
+import {
+  deliverProjectRequest,
+  reportHookDeliveryFailure,
+} from "./_delivery.js";
 
 function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
   if (!payload || typeof payload !== "object") return false;
   return (payload as { entrypoint?: unknown }).entrypoint === "sdk-ts";
-}
-
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-  return h;
 }
 
 async function main() {
@@ -32,39 +28,34 @@ async function main() {
   if (isSdkChildContext(data)) return;
 
   const sessionId = ((data.session_id || data.sessionId) as string) || "unknown";
+  const project = resolveProject(data.cwd as string | undefined);
 
-  fetch(`${REST_URL}/agentmemory/session/end`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({ sessionId }),
-    signal: AbortSignal.timeout(30000),
-  }).catch(() => {});
-
-  if (process.env["CONSOLIDATION_ENABLED"] === "true") {
-    fetch(`${REST_URL}/agentmemory/crystals/auto`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ olderThanDays: 0 }),
-      signal: AbortSignal.timeout(60000),
-    }).catch(() => {});
-
-    fetch(`${REST_URL}/agentmemory/consolidate-pipeline`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify({ tier: "all", force: true }),
-      signal: AbortSignal.timeout(120000),
-    }).catch(() => {});
+  try {
+    await deliverProjectRequest(
+      "/agentmemory/session/end",
+      project,
+      { sessionId, project },
+      { attempts: 2, timeoutMs: 1500 },
+    );
+  } catch (error) {
+    reportHookDeliveryFailure("session closure", error);
+    return;
   }
 
   if (process.env["CLAUDE_MEMORY_BRIDGE"] === "true") {
-    fetch(`${REST_URL}/agentmemory/claude-bridge/sync`, {
-      method: "POST",
-      headers: authHeaders(),
-      signal: AbortSignal.timeout(30000),
-    }).catch(() => {});
+    try {
+      await deliverProjectRequest(
+        "/agentmemory/claude-bridge/sync",
+        project,
+        { project },
+        { timeoutMs: 2500 },
+      );
+    } catch (error) {
+      reportHookDeliveryFailure("Claude memory bridge sync", error);
+    }
   }
-
-  setTimeout(() => process.exit(0), 1500).unref();
 }
 
-main().catch(() => process.exit(0));
+main().catch((error) => {
+  reportHookDeliveryFailure("session end", error);
+});

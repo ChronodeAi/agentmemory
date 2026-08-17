@@ -2,6 +2,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { registerSlotsFunctions, DEFAULT_SLOTS, listPinnedSlots, renderPinnedContext } from "../src/functions/slots.js";
 import { KV } from "../src/state/schema.js";
 
+const PROJECT = "github.com/example/slots";
+
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
   return {
@@ -28,16 +30,23 @@ function wire() {
   const handlers: Record<string, (data: Record<string, unknown>) => Promise<Record<string, unknown>>> = {};
   const sdk = {
     registerFunction: vi.fn((id: string, cb) => {
-      handlers[id] = cb;
+      handlers[id] = (data) => cb({ project: PROJECT, ...data });
     }),
   } as unknown as import("iii-sdk").ISdk;
   registerSlotsFunctions(sdk, kv as never);
   return { kv, handlers };
 }
 
-async function waitForSeed(kv: ReturnType<typeof mockKV>) {
+async function waitForSeed(
+  kv: ReturnType<typeof mockKV>,
+  handlers: Record<
+    string,
+    (d: Record<string, unknown>) => Promise<Record<string, unknown>>
+  >,
+) {
+  await handlers["mem::slot-list"]({});
   for (let i = 0; i < 20; i++) {
-    const p = await kv.list(KV.slots);
+    const p = await kv.list(KV.projectSlots(PROJECT));
     const g = await kv.list(KV.globalSlots);
     if (p.length + g.length >= DEFAULT_SLOTS.length) return;
     await new Promise((r) => setTimeout(r, 5));
@@ -50,12 +59,12 @@ describe("slots — primitive", () => {
 
   beforeEach(async () => {
     ({ kv, handlers } = wire());
-    await waitForSeed(kv);
+    await waitForSeed(kv, handlers);
   });
 
   it("seeds default slots into the right scopes on first run", async () => {
     const global = (await kv.list(KV.globalSlots)) as Array<{ label: string }>;
-    const project = (await kv.list(KV.slots)) as Array<{ label: string }>;
+    const project = (await kv.list(KV.projectSlots(PROJECT))) as Array<{ label: string }>;
     expect(global.map((s) => s.label).sort()).toEqual(
       ["persona", "tool_guidelines", "user_preferences"].sort(),
     );
@@ -178,14 +187,14 @@ describe("slots — primitive", () => {
 
   it("listPinnedSlots returns only pinned slots with content", async () => {
     await handlers["mem::slot-append"]({ label: "persona", text: "helpful senior engineer" });
-    const pinned = await listPinnedSlots(kv as never);
+    const pinned = await listPinnedSlots(kv as never, PROJECT);
     expect(pinned.some((s) => s.label === "persona")).toBe(true);
     expect(pinned.every((s) => s.pinned && s.content.trim().length > 0)).toBe(true);
   });
 
   it("renderPinnedContext serialises slots into markdown", async () => {
     await handlers["mem::slot-append"]({ label: "persona", text: "senior eng" });
-    const pinned = await listPinnedSlots(kv as never);
+    const pinned = await listPinnedSlots(kv as never, PROJECT);
     const rendered = renderPinnedContext(pinned);
     expect(rendered).toContain("## persona");
     expect(rendered).toContain("senior eng");
@@ -198,7 +207,7 @@ describe("slots — reflect", () => {
 
   beforeEach(async () => {
     ({ kv, handlers } = wire());
-    await waitForSeed(kv);
+    await waitForSeed(kv, handlers);
   });
 
   it("no-ops when the session has no observations", async () => {

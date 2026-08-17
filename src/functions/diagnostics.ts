@@ -10,7 +10,6 @@ import type {
   Insight,
   Lease,
   Lesson,
-  Checkpoint,
   Crystal,
   ProceduralMemory,
   SemanticMemory,
@@ -292,15 +291,19 @@ export function registerDiagnosticsFunction(sdk: ISdk, kv: StateKV): void {
         let sessionIssues = 0;
 
         for (const session of sessions) {
+          const touchedAt = new Date(
+            session.updatedAt ?? session.resumedAt ?? session.startedAt,
+          ).getTime();
           if (
             session.status === "active" &&
-            now - new Date(session.startedAt).getTime() > TWENTY_FOUR_HOURS_MS
+            Number.isFinite(touchedAt) &&
+            now - touchedAt > TWENTY_FOUR_HOURS_MS
           ) {
             checks.push({
               name: `abandoned-session:${session.id}`,
               category: "sessions",
               status: "warn",
-              message: `Session ${session.id} has been active for over 24 hours`,
+              message: `Session ${session.id} has had no activity for over 24 hours`,
               fixable: false,
             });
             sessionIssues++;

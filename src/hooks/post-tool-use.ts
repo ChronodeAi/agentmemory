@@ -1,19 +1,16 @@
 #!/usr/bin/env node
 import { resolveProject } from "./_project.js";
+import { captureToolEvent } from "./_capture.js";
+import { resolveProjectConfig } from "../project-config.js";
+import {
+  deliverObservation,
+  reportObservationDeliveryFailure,
+} from "./_observe-delivery.js";
 
 function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
   if (!payload || typeof payload !== "object") return false;
   return (payload as { entrypoint?: unknown }).entrypoint === "sdk-ts";
-}
-
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-  return h;
 }
 
 async function main() {
@@ -37,26 +34,33 @@ async function main() {
   const toolInput = data.tool_input ?? data.toolArgs;
 
   const { imageData, cleanOutput } = extractImageData(toolOutput(data));
+  const config = resolveProjectConfig(data.cwd as string | undefined);
+  const captured = captureToolEvent(
+    toolName,
+    toolInput,
+    cleanOutput,
+    config,
+  );
+  if (!captured) return;
 
-  fetch(`${REST_URL}/agentmemory/observe`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({
+  await deliverObservation({
       hookType: "post_tool_use",
       sessionId,
-      project: resolveProject(data.cwd as string | undefined),
+      project: config.project_id,
       cwd: (data.cwd as string | undefined) || process.cwd(),
       timestamp: new Date().toISOString(),
+      privacy: config.privacy,
+      captureProfile: config.capture_profile,
+      externalProcessing: config.external_processing,
       data: {
         tool_name: toolName,
-        tool_input: toolInput,
-        tool_output: truncate(cleanOutput, 8000),
+        tool_input: captured.toolInput,
+        tool_output: captured.toolOutput,
+        capture: captured.capture,
+        ...(captured.provenance ? { provenance: captured.provenance } : {}),
         ...(imageData ? { image_data: imageData } : {}),
       },
-    }),
-    signal: AbortSignal.timeout(3000),
-  }).catch(() => {});
-  setTimeout(() => process.exit(0), 500).unref();
+  });
 }
 
 function toolOutput(data: Record<string, unknown>): unknown {
@@ -103,16 +107,4 @@ function extractImageData(output: unknown): { imageData: string | undefined; cle
   return { imageData: undefined, cleanOutput: output };
 }
 
-function truncate(value: unknown, max: number): unknown {
-  if (typeof value === "string" && value.length > max) {
-    return value.slice(0, max) + "\n[...truncated]";
-  }
-  if (typeof value === "object" && value !== null) {
-    const str = JSON.stringify(value);
-    if (str.length > max) return str.slice(0, max) + "...[truncated]";
-    return value;
-  }
-  return value;
-}
-
-main().catch(() => process.exit(0));
+main().catch(reportObservationDeliveryFailure);

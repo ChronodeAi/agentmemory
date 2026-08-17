@@ -1,20 +1,16 @@
 #!/usr/bin/env node
+import { i as loadAgentmemoryEnvironment, n as projectAuthHeaders } from "./_auth-r09nwS46.mjs";
+import { t as resolveProject } from "./_project-BNYA1N7W.mjs";
 //#region src/hooks/pre-tool-use.ts
 function isSdkChildContext(payload) {
 	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
 }
-const INJECT_CONTEXT = process.env["AGENTMEMORY_INJECT_CONTEXT"] === "true";
 const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-function authHeaders() {
-	const h = { "Content-Type": "application/json" };
-	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-	return h;
-}
 async function main() {
-	if (!INJECT_CONTEXT) return;
+	loadAgentmemoryEnvironment();
+	if (process.env["AGENTMEMORY_INJECT_CONTEXT"] !== "true") return;
 	let input = "";
 	for await (const chunk of process.stdin) input += chunk;
 	let data;
@@ -58,17 +54,17 @@ async function main() {
 	}
 	const rawSessionId = data.session_id || data.sessionId;
 	const sessionId = typeof rawSessionId === "string" && rawSessionId.length > 0 ? rawSessionId : "unknown";
-	const project = typeof data.project === "string" && data.project.trim().length > 0 ? data.project.trim() : void 0;
+	const project = resolveProject(data.cwd);
 	try {
 		const res = await fetch(`${REST_URL}/agentmemory/enrich`, {
 			method: "POST",
-			headers: authHeaders(),
+			headers: projectAuthHeaders(project),
 			body: JSON.stringify({
 				sessionId,
 				files,
 				terms,
 				toolName,
-				...project !== void 0 && { project }
+				project
 			}),
 			signal: AbortSignal.timeout(2e3)
 		});
@@ -81,5 +77,3 @@ async function main() {
 main().catch(() => process.exit(0));
 //#endregion
 export {};
-
-//# sourceMappingURL=pre-tool-use.mjs.map

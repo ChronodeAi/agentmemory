@@ -15,7 +15,9 @@ vi.mock("../src/functions/search.js", () => ({
   getSearchIndex: () => ({
     add: vi.fn(),
   }),
+  scheduleIndexSave: vi.fn(),
   vectorIndexAddGuarded: vi.fn().mockResolvedValue(false),
+  vectorIndexRemove: vi.fn(),
 }));
 
 const mockTrigger = vi.fn().mockResolvedValue(undefined);
@@ -31,6 +33,17 @@ function mockKV() {
       if (!store.has(scope)) store.set(scope, new Map());
       store.get(scope)!.set(key, data);
       return data;
+    },
+    update: async (
+      scope: string,
+      key: string,
+      updates: Array<{ path: string; value: unknown }>,
+    ): Promise<void> => {
+      const value = store.get(scope)?.get(key) as
+        | Record<string, unknown>
+        | undefined;
+      if (!value) return;
+      for (const update of updates) value[update.path] = update.value;
     },
     delete: async (scope: string, key: string): Promise<void> => {
       store.get(scope)?.delete(key);
@@ -80,6 +93,8 @@ describe("End-to-End Multimodal Flow", () => {
     const fakeIncomingData = {
       hookType: "post_tool_use",
       sessionId: "test-session",
+      project: "test/project",
+      cwd: "/tmp/test-project",
       timestamp: new Date().toISOString(),
       data: {
         tool_name: "screenshot",
@@ -112,6 +127,16 @@ describe("End-to-End Multimodal Flow", () => {
   });
 
   it("Step 2 & 3: mem::compress should call the vision model and store compressed observation in KV", async () => {
+    await kv.set("mem:sessions", "test-session", {
+      id: "test-session",
+      project: "test/project",
+      cwd: "/tmp/test-project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 1,
+      privacy: "standard",
+      externalProcessing: true,
+    });
     const mockProvider: MemoryProvider = {
       name: "mock-vision",
       compress: async (_systemPrompt, userPrompt) => {

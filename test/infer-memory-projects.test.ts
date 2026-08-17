@@ -4,7 +4,10 @@ vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
 }));
 
-import { inferMemoryProjects } from "../src/functions/migrate.js";
+import {
+  inferMemoryProjects,
+  normalizeProjectScopes,
+} from "../src/functions/migrate.js";
 import { KV } from "../src/state/schema.js";
 import type { Memory, Session } from "../src/types.js";
 
@@ -237,5 +240,125 @@ describe("inferMemoryProjects", () => {
 
     const stored = await kv.get<Memory>(KV.memories, "mem_a");
     expect(stored?.project).toBe("api");
+  });
+});
+
+describe("normalizeProjectScopes", () => {
+  it("normalizes aliases, quarantines ambiguous records, and preserves evidence", async () => {
+    const kv = makeMockKV();
+    await kv.set(
+      KV.sessions,
+      "session_memetics",
+      makeSession("session_memetics", "Memetics"),
+    );
+    await kv.set(KV.sessions, "session_unknown", {
+      ...makeSession("session_unknown", ""),
+      project: "",
+    });
+    await kv.set(
+      KV.memories,
+      "memory_memetics",
+      makeMemory("memory_memetics", ["session_memetics"], "Memetics"),
+    );
+
+    const result = await normalizeProjectScopes(kv as never, {
+      Memetics: "github.com/chronodeai/memetics",
+    });
+
+    expect(result.normalized).toBe(2);
+    expect(result.quarantined).toBe(1);
+    expect(
+      (await kv.get<Session>(KV.sessions, "session_memetics"))?.project,
+    ).toBe("github.com/chronodeai/memetics");
+    expect(
+      (await kv.get<Memory>(KV.memories, "memory_memetics"))?.project,
+    ).toBe("github.com/chronodeai/memetics");
+    expect(await kv.get<Session>(KV.sessions, "session_unknown")).not.toBeNull();
+    expect(await kv.list(KV.migrationQuarantine)).toHaveLength(1);
+  });
+
+  it("dry-runs without writing and is idempotent after application", async () => {
+    const kv = makeMockKV();
+    await kv.set(
+      KV.sessions,
+      "session_memetics",
+      makeSession("session_memetics", "memetics"),
+    );
+    const aliases = {
+      memetics: "github.com/chronodeai/memetics",
+    };
+
+    const dryRun = await normalizeProjectScopes(kv as never, aliases, true);
+    expect(dryRun.normalized).toBe(1);
+    expect(
+      (await kv.get<Session>(KV.sessions, "session_memetics"))?.project,
+    ).toBe("memetics");
+    expect(await kv.list(KV.migrationReports)).toHaveLength(0);
+
+    const applied = await normalizeProjectScopes(kv as never, aliases);
+    expect(applied.normalized).toBe(1);
+    const repeated = await normalizeProjectScopes(kv as never, aliases);
+    expect(repeated.normalized).toBe(0);
+    expect(repeated.unchanged).toBe(1);
+    expect(await kv.list(KV.migrationReports)).toHaveLength(1);
+  });
+
+  it("retains profile alias keys without repeating normalization", async () => {
+    const kv = makeMockKV();
+    await kv.set(KV.profiles, "Memetics", {
+      project: "Memetics",
+      updatedAt: new Date().toISOString(),
+    });
+    const aliases = {
+      Memetics: "github.com/chronodeai/memetics",
+    };
+
+    const applied = await normalizeProjectScopes(kv as never, aliases);
+    expect(applied.normalized).toBe(1);
+    expect(
+      (await kv.get<{ project: string }>(KV.profiles, "Memetics"))?.project,
+    ).toBe("github.com/chronodeai/memetics");
+    expect(
+      (
+        await kv.get<{ project: string }>(
+          KV.profiles,
+          "github.com/chronodeai/memetics",
+        )
+      )?.project,
+    ).toBe("github.com/chronodeai/memetics");
+
+    const repeated = await normalizeProjectScopes(kv as never, aliases);
+    expect(repeated.normalized).toBe(0);
+  });
+
+  it("supersedes only exact duplicates within the same canonical project", async () => {
+    const kv = makeMockKV();
+    const older = makeMemory("mem_old", [], "Memetics");
+    older.content = "Use scoped retrieval";
+    older.updatedAt = "2026-01-01T00:00:00.000Z";
+    const newer = makeMemory("mem_new", [], "github.com/chronodeai/memetics");
+    newer.content = "  use   scoped RETRIEVAL ";
+    newer.updatedAt = "2026-02-01T00:00:00.000Z";
+    const foreign = makeMemory("mem_foreign", [], "github.com/example/other");
+    foreign.content = "Use scoped retrieval";
+    await kv.set(KV.memories, older.id, older);
+    await kv.set(KV.memories, newer.id, newer);
+    await kv.set(KV.memories, foreign.id, foreign);
+
+    const result = await normalizeProjectScopes(kv as never, {
+      Memetics: "github.com/chronodeai/memetics",
+    });
+
+    expect(result.exactDuplicatesSuperseded).toBe(1);
+    expect((await kv.get<Memory>(KV.memories, older.id))?.isLatest).toBe(false);
+    expect((await kv.get<Memory>(KV.memories, newer.id))?.supersedes).toContain(
+      older.id,
+    );
+    expect((await kv.get<Memory>(KV.memories, foreign.id))?.isLatest).toBe(true);
+
+    const repeated = await normalizeProjectScopes(kv as never, {
+      Memetics: "github.com/chronodeai/memetics",
+    });
+    expect(repeated.exactDuplicatesSuperseded).toBe(0);
   });
 });

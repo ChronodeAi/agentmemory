@@ -1,5 +1,12 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import type { RawObservation } from "../src/types.js";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type {
+  CompressedObservation,
+  RawObservation,
+  Session,
+} from "../src/types.js";
+import { KV } from "../src/state/schema.js";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -15,6 +22,17 @@ function mockKV() {
       if (!store.has(scope)) store.set(scope, new Map());
       store.get(scope)!.set(key, data);
       return data;
+    },
+    update: async (
+      scope: string,
+      key: string,
+      updates: Array<{ path: string; value: unknown }>,
+    ) => {
+      const value = store.get(scope)?.get(key) as
+        | Record<string, unknown>
+        | undefined;
+      if (!value) return;
+      for (const update of updates) value[update.path] = update.value;
     },
     delete: async (scope: string, key: string) => {
       store.get(scope)?.delete(key);
@@ -61,6 +79,8 @@ function mockSdk() {
 function validPayload(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     sessionId: "ses_test",
+    project: "github.com/example/auto-compress",
+    cwd: "/tmp/auto-compress",
     hookType: "post_tool_use",
     timestamp: new Date().toISOString(),
     data: {
@@ -73,7 +93,14 @@ function validPayload(overrides: Partial<Record<string, unknown>> = {}) {
 }
 
 describe("mem::observe auto-compress gate (#138)", () => {
+  const originalHome = process.env["HOME"];
+  const isolatedHome = join(
+    tmpdir(),
+    `agentmemory-auto-compress-test-${process.pid}`,
+  );
+
   beforeEach(() => {
+    process.env["HOME"] = isolatedHome;
     // Reset module cache so observe.js re-imports config.js with the
     // fresh AGENTMEMORY_AUTO_COMPRESS env state. Without this, a later
     // test that sets the env var can be undermined by cached module
@@ -83,6 +110,11 @@ describe("mem::observe auto-compress gate (#138)", () => {
   });
   afterEach(() => {
     delete process.env["AGENTMEMORY_AUTO_COMPRESS"];
+    if (originalHome === undefined) {
+      delete process.env["HOME"];
+    } else {
+      process.env["HOME"] = originalHome;
+    }
   });
 
   it("default (AGENTMEMORY_AUTO_COMPRESS unset): does NOT fire mem::compress", async () => {
@@ -146,6 +178,34 @@ describe("mem::observe auto-compress gate (#138)", () => {
     expect(compressCalls).toHaveLength(1);
   });
 
+  it("strict privacy stays synthetic and reports the actual compression path", async () => {
+    process.env["AGENTMEMORY_AUTO_COMPRESS"] = "true";
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const { logger } = await import("../src/logger.js");
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerObserveFunction(sdk as never, kv as never);
+
+    await sdk.trigger(
+      "mem::observe",
+      validPayload({
+        project: "github.com/example/private-project",
+        cwd: "/tmp/private-project",
+        privacy: "strict",
+        externalProcessing: false,
+      }),
+    );
+
+    const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
+    expect(compressCalls).toHaveLength(0);
+    expect(logger.info).toHaveBeenCalledWith(
+      "Observation captured",
+      expect.objectContaining({ compress: "synthetic" }),
+    );
+  });
+
   it("AGENTMEMORY_AUTO_COMPRESS=false explicitly: does NOT fire mem::compress", async () => {
     process.env["AGENTMEMORY_AUTO_COMPRESS"] = "false";
     const { registerObserveFunction } = await import(
@@ -159,6 +219,68 @@ describe("mem::observe auto-compress gate (#138)", () => {
 
     const compressCalls = sdk.triggered.filter((t) => t.id === "mem::compress");
     expect(compressCalls).toHaveLength(0);
+  });
+
+  it("retains observations when rolling compaction cannot create a summary", async () => {
+    const { registerObserveFunction } = await import(
+      "../src/functions/observe.js"
+    );
+    const sdk = mockSdk();
+    const kv = mockKV();
+    const session: Session = {
+      id: "ses_compaction",
+      project: "github.com/example/project",
+      cwd: "/tmp/project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 99,
+    };
+    await kv.set(KV.sessions, session.id, session);
+    for (let index = 0; index < 99; index += 1) {
+      const observation: CompressedObservation = {
+        id: `obs_${index}`,
+        sessionId: session.id,
+        timestamp: new Date(Date.now() + index).toISOString(),
+        type: "file_edit",
+        title: `Edit ${index}`,
+        facts: [`fact ${index}`],
+        narrative: `narrative ${index}`,
+        concepts: ["compaction"],
+        files: [`src/file-${index}.ts`],
+        importance: 5,
+      };
+      await kv.set(KV.observations(session.id), observation.id, observation);
+    }
+    sdk.registerFunction("mem::summarize", () => ({
+      success: false,
+      error: "no_provider",
+    }));
+    registerObserveFunction(sdk as never, kv as never, undefined, 100);
+
+    const result = (await sdk.trigger(
+      "mem::observe",
+      validPayload({
+        sessionId: session.id,
+        project: session.project,
+        cwd: session.cwd,
+      }),
+    )) as { success: boolean; error: string; retryable: boolean };
+
+    expect(result).toMatchObject({
+      success: false,
+      retryable: true,
+      error: "compaction_summary_failed",
+    });
+    expect(
+      await kv.list<CompressedObservation>(KV.observations(session.id)),
+    ).toHaveLength(99);
+    expect(await kv.list(KV.factLedger(session.id))).toHaveLength(0);
+    expect(
+      sdk.triggered.find((call) => call.id === "mem::summarize")?.data,
+    ).toEqual({
+      sessionId: session.id,
+      project: session.project,
+    });
   });
 });
 
@@ -178,6 +300,7 @@ describe("buildSyntheticCompression", () => {
       ["Read", "file_read"],
       ["Write", "file_write"],
       ["Edit", "file_edit"],
+      ["DeleteFile", "file_edit"],
       ["Bash", "command_run"],
       ["Grep", "search"],
       ["WebFetch", "web_fetch"],
@@ -208,8 +331,90 @@ describe("buildSyntheticCompression", () => {
       raw: {},
     });
     expect(synth.files).toContain("/app/src/bar.ts");
-    expect(synth.files).toContain("foo");
+    expect(synth.files).not.toContain("foo");
     expect(synth.type).toBe("file_edit");
+  });
+
+  it("retains exact mutation paths from redacted worktree provenance", async () => {
+    const { buildSyntheticCompression } = await import(
+      "../src/functions/compress-synthetic.js"
+    );
+    const synth = buildSyntheticCompression({
+      id: "obs_provenance",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "post_tool_use",
+      toolName: "apply_patch",
+      toolInput: "*** Begin Patch\n*** Update File: src/patched.ts",
+      raw: {
+        provenance: {
+          project: "github.com/example/project",
+          worktreeId: `wt_${"1".repeat(32)}`,
+          baseHeadSha: "2".repeat(40),
+          dirty: true,
+          transitions: [
+            {
+              path: "src/patched.ts",
+              operation: "edit",
+              digest: "0".repeat(40),
+              digestKind: "git-blob",
+            },
+          ],
+        },
+      },
+    });
+
+    expect(synth.type).toBe("file_edit");
+    expect(synth.files).toEqual(["src/patched.ts"]);
+    expect(synth.provenance?.transitions).toEqual([
+      {
+        path: "src/patched.ts",
+        operation: "edit",
+        digest: "0".repeat(40),
+        digestKind: "git-blob",
+      },
+    ]);
+  });
+
+  it("does not retain mutation provenance for failed or read-only events", async () => {
+    const { buildSyntheticCompression } = await import(
+      "../src/functions/compress-synthetic.js"
+    );
+    const provenance = {
+      project: "github.com/example/project",
+      worktreeId: `wt_${"1".repeat(32)}`,
+      baseHeadSha: "2".repeat(40),
+      dirty: true,
+      transitions: [
+        {
+          path: "src/forged.ts",
+          operation: "edit",
+          digest: "3".repeat(40),
+          digestKind: "git-blob",
+        },
+      ],
+    };
+    const failed = buildSyntheticCompression({
+      id: "obs_failed",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "post_tool_failure",
+      toolName: "Edit",
+      raw: { provenance },
+    });
+    const read = buildSyntheticCompression({
+      id: "obs_read",
+      sessionId: "ses_1",
+      timestamp: new Date().toISOString(),
+      hookType: "post_tool_use",
+      toolName: "Read",
+      toolInput: { file_path: "src/read.ts" },
+      raw: {},
+    });
+
+    expect(failed.type).toBe("error");
+    expect(failed.provenance).toBeUndefined();
+    expect(read.provenance).toBeUndefined();
   });
 
   it("truncates long narratives so it can't blow up the index", async () => {

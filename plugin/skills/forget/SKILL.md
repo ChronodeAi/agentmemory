@@ -10,13 +10,13 @@ The user wants to remove data from agentmemory: $ARGUMENTS
 ## Quick start
 
 ```json
-memory_smart_search { "query": "old api key in config", "limit": 20 }
+memory_smart_search { "query": "old api key in config", "project": "github.com/example/repository", "limit": 20 }
 ```
 
 Show the matches, get a yes, then:
 
 ```json
-memory_governance_delete { "memoryIds": ["abc12345", "def67890"], "reason": "user privacy request" }
+memory_governance_delete { "memoryIds": "abc12345,def67890", "project": "github.com/example/repository", "reason": "user privacy request" }
 ```
 
 Expected output:
@@ -32,11 +32,14 @@ an explicit yes before calling delete. Delete by memory ID, never a bare session
 
 ## Workflow
 
-1. Search with `memory_smart_search`, the user's text as `query`, `limit: 20`.
+1. Resolve the active repository's canonical project ID. Search with
+   `memory_smart_search`, the user's text as `query`, that `project`, and
+   `limit: 20`.
 2. Show what matched: session ids, memory ids, titles. Ask for explicit
    confirmation. Do not proceed on silence or a vague "sure, whatever".
-3. On confirmation, call `memory_governance_delete` with `memoryIds` (array or
-   comma-separated string) and optional `reason` (default `plugin skill request`).
+3. On confirmation, call `memory_governance_delete` with `memoryIds` as a
+   comma-separated string, the same `project`, and optional `reason` (default
+   `plugin skill request`).
 4. To drop a whole session, collect every memory id in that session from the
    search results and pass them all. The MCP does not accept a bare `sessionId`.
 5. Report the deletion count back.

@@ -1,4 +1,5 @@
-import { watch, promises as fsp, statSync } from "node:fs";
+import { watch, promises as fsp, readdirSync, statSync } from "node:fs";
+import { release } from "node:os";
 import { resolve, relative, join, extname, sep, basename } from "node:path";
 import { randomBytes } from "node:crypto";
 
@@ -28,6 +29,8 @@ const DEFAULT_IGNORE = [
 
 const MAX_PREVIEW_BYTES = 4096;
 const DEBOUNCE_MS = 500;
+const DEFAULT_POLL_INTERVAL_MS = 5000;
+const DEFAULT_MAX_TRACKED_FILES = 20000;
 const REDACTED = "[REDACTED]";
 const PEM_BEGIN_RE = /-----BEGIN [A-Z ]*PRIVATE KEY-----/;
 const PEM_END_RE = /-----END [A-Z ]*PRIVATE KEY-----/;
@@ -116,6 +119,22 @@ function redactSensitivePreview(preview) {
   return redactPemBlocks(preview).split("\n").map(redactSensitiveLine).join("\n");
 }
 
+function positiveInteger(value, fallback, minimum = 1) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed >= minimum ? parsed : fallback;
+}
+
+function requiresPollingFallback() {
+  const nodeMajor = Number(process.versions.node.split(".")[0]);
+  const darwinMajor = Number(release().split(".")[0]);
+  return (
+    process.platform === "darwin" &&
+    Number.isFinite(darwinMajor) &&
+    darwinMajor >= 25 &&
+    nodeMajor < 26
+  );
+}
+
 export class FilesystemWatcher {
   constructor(config = {}) {
     this.roots = (config.roots || []).map((r) => resolve(r));
@@ -129,8 +148,25 @@ export class FilesystemWatcher {
       `fs-watcher-${Date.now().toString(36)}-${randomBytes(3).toString("hex")}`;
     this.ignore = [...DEFAULT_IGNORE, ...(config.ignorePatterns || [])];
     this.allowBinary = Boolean(config.allowBinary);
+    this.watchMode =
+      config.watchMode === "native" || config.watchMode === "poll"
+        ? config.watchMode
+        : requiresPollingFallback()
+          ? "poll"
+          : "native";
+    this.pollIntervalMs = positiveInteger(
+      config.pollIntervalMs,
+      DEFAULT_POLL_INTERVAL_MS,
+      100,
+    );
+    this.maxTrackedFiles = positiveInteger(
+      config.maxTrackedFiles,
+      DEFAULT_MAX_TRACKED_FILES,
+    );
     this.logger = config.logger || console;
     this.watchers = [];
+    this.pollTimers = [];
+    this.pollSnapshots = new Map();
     this.pendingByPath = new Map();
   }
 
@@ -241,6 +277,66 @@ export class FilesystemWatcher {
     return `${head}\n\n${preview}`;
   }
 
+  scanRoot(rootDir) {
+    const snapshot = new Map();
+    const pending = [{ absolute: rootDir, relative: "" }];
+    while (pending.length > 0) {
+      const current = pending.pop();
+      for (const entry of readdirSync(current.absolute, { withFileTypes: true })) {
+        const relPath = current.relative
+          ? `${current.relative}/${entry.name}`
+          : entry.name;
+        if (this.isIgnored(relPath)) continue;
+        const absPath = join(current.absolute, entry.name);
+        if (entry.isDirectory()) {
+          pending.push({ absolute: absPath, relative: relPath });
+          continue;
+        }
+        if (!entry.isFile()) continue;
+        const stat = statSync(absPath);
+        snapshot.set(
+          relPath,
+          `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`,
+        );
+        if (snapshot.size > this.maxTrackedFiles) {
+          throw new Error(
+            `${rootDir} exceeds the polling limit of ${this.maxTrackedFiles} files`,
+          );
+        }
+      }
+    }
+    return snapshot;
+  }
+
+  pollRoot(rootDir) {
+    const previous = this.pollSnapshots.get(rootDir) || new Map();
+    const next = this.scanRoot(rootDir);
+    for (const [relPath, fingerprint] of next) {
+      if (previous.get(relPath) !== fingerprint) this.schedule(rootDir, relPath);
+    }
+    for (const relPath of previous.keys()) {
+      if (!next.has(relPath)) this.schedule(rootDir, relPath);
+    }
+    this.pollSnapshots.set(rootDir, next);
+  }
+
+  startPolling(root) {
+    this.pollSnapshots.set(root, this.scanRoot(root));
+    const timer = setInterval(() => {
+      try {
+        this.pollRoot(root);
+      } catch (err) {
+        this.logger.warn?.(
+          `[fs-watcher] poll failed on ${root}: ${err?.message || err}`,
+        );
+      }
+    }, this.pollIntervalMs);
+    this.pollTimers.push(timer);
+    this.logger.info?.(
+      `[fs-watcher] polling ${root} every ${this.pollIntervalMs}ms`,
+    );
+  }
+
   start() {
     if (this.roots.length === 0) {
       throw new Error("filesystem-watcher: at least one root directory is required");
@@ -248,6 +344,10 @@ export class FilesystemWatcher {
     const failures = [];
     for (const root of this.roots) {
       try {
+        if (this.watchMode === "poll") {
+          this.startPolling(root);
+          continue;
+        }
         const handle = watch(
           root,
           { recursive: true, persistent: true },
@@ -269,7 +369,7 @@ export class FilesystemWatcher {
         this.logger.error?.(`[fs-watcher] failed to watch ${root}: ${msg}`);
       }
     }
-    if (this.watchers.length === 0) {
+    if (this.watchers.length === 0 && this.pollTimers.length === 0) {
       throw new Error(
         `filesystem-watcher: could not watch any of the configured roots. ` +
           `If you are on Node 18 + Linux, recursive fs.watch requires Node >=19.1.0; upgrade to Node 20 LTS or newer. ` +
@@ -285,6 +385,9 @@ export class FilesystemWatcher {
       } catch {}
     }
     this.watchers = [];
+    for (const timer of this.pollTimers) clearInterval(timer);
+    this.pollTimers = [];
+    this.pollSnapshots.clear();
     for (const { timer } of this.pendingByPath.values()) {
       clearTimeout(timer);
     }
@@ -311,6 +414,20 @@ export function configFromEnv(env = process.env) {
     sessionId: env.AGENTMEMORY_SESSION_ID || null,
     ignorePatterns: extraIgnore,
     allowBinary: env.AGENTMEMORY_FS_WATCH_ALLOW_BINARY === "1",
+    watchMode: ["auto", "native", "poll"].includes(
+      env.AGENTMEMORY_FS_WATCH_MODE,
+    )
+      ? env.AGENTMEMORY_FS_WATCH_MODE
+      : "auto",
+    pollIntervalMs: positiveInteger(
+      env.AGENTMEMORY_FS_WATCH_POLL_INTERVAL_MS,
+      DEFAULT_POLL_INTERVAL_MS,
+      100,
+    ),
+    maxTrackedFiles: positiveInteger(
+      env.AGENTMEMORY_FS_WATCH_MAX_FILES,
+      DEFAULT_MAX_TRACKED_FILES,
+    ),
   };
 }
 

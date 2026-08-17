@@ -7,7 +7,7 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 import { getAllTools } from "../src/mcp/tools-registry.js";
-import { VERSION } from "../src/version.js";
+import { EXPORT_FORMAT_VERSION, VERSION } from "../src/version.js";
 
 const ROOT = join(import.meta.dirname, "..");
 
@@ -35,9 +35,17 @@ describe("Consistency checks", () => {
     expect(plugin.version).toBe(pkg.version);
   });
 
-  it("export-import.ts supports current version", () => {
+  it("MCP shim is release-locked to the reviewed fork", () => {
+    const pkg = JSON.parse(readText("package.json"));
+    const shim = JSON.parse(readText("packages/mcp/package.json"));
+    expect(shim.version).toBe(pkg.version);
+    expect(shim.dependencies["@agentmemory/agentmemory"]).toBe(pkg.version);
+  });
+
+  it("export-import.ts supports the stable export format version", () => {
     const src = readText("src/functions/export-import.ts");
-    expect(src).toContain(`"${VERSION}"`);
+    expect(EXPORT_FORMAT_VERSION).toBe("0.9.28");
+    expect(src).toContain(`"${EXPORT_FORMAT_VERSION}"`);
   });
 
   it("README mentions correct MCP tool count", () => {
@@ -72,6 +80,14 @@ describe("Consistency checks", () => {
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe("object");
     }
+  });
+
+  it("publishes the bounded memory_sessions controls used by its skills", () => {
+    const sessions = getAllTools().find((tool) => tool.name === "memory_sessions");
+    expect(sessions?.inputSchema.properties).toMatchObject({
+      limit: { type: "number" },
+      format: { type: "string" },
+    });
   });
 
   it("every host-path bind mount in docker-compose.yml is in the published files list (#136)", () => {

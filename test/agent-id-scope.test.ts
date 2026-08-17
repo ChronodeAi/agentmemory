@@ -90,7 +90,17 @@ describe("mem::remember stamps agentId on the Memory (#554)", () => {
         const id = typeof idOrInput === "string" ? idOrInput : idOrInput.function_id;
         const payload = typeof idOrInput === "string" ? data : idOrInput.payload;
         const fn = fns.get(id);
-        if (fn) return fn(payload);
+        if (fn) {
+          const scopedPayload =
+            id === "mem::remember" &&
+            payload &&
+            typeof payload === "object" &&
+            !("project" in payload) &&
+            !("scope" in payload)
+              ? { scope: "global", ...payload }
+              : payload;
+          return fn(scopedPayload);
+        }
         return null;
       },
     };

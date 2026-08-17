@@ -10,7 +10,7 @@ The user wants a list of agent-linked commits. Filter args: $ARGUMENTS
 ## Quick start
 
 ```json
-memory_commits { "branch": "main", "limit": 20 }
+memory_commits { "project": "github.com/example/repository", "branch": "main", "limit": 20 }
 ```
 
 Expected output:
@@ -30,7 +30,8 @@ the filter matched nothing, not that work is missing.
 1. Parse `$ARGUMENTS` for `branch=<name>`, `repo=<url-or-fragment>`,
    `limit=<n>`. A bare numeric token is the limit. Defaults: no branch, no repo,
    limit 100, max 500.
-2. Call `memory_commits` with the parsed filters.
+2. Resolve the active repository's canonical project ID and call
+   `memory_commits` with that `project` plus the parsed filters.
 3. Render reverse-chronologically: short sha, branch, authored timestamp, first
    line of the message, linked session id(s) (first 8) with observation counts,
    and file count when `files` is present.

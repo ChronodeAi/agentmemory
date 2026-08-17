@@ -1,3 +1,6 @@
+import { sanitizePrivateData, stripPrivateData } from "./functions/privacy.js";
+import { getProcessBootIdentity } from "./runtime-identity.js";
+
 // Thin logging shim for agentmemory.
 //
 // iii-sdk v0.11 dropped `getContext()`, which had been the source of a
@@ -11,12 +14,10 @@
 // `const ctx = getContext();` line, and rename `ctx.logger.*` to
 // `logger.*`. Nothing else changes.
 //
-// Output goes to stderr as `[agentmemory] <level> <msg> <json-fields>`.
-// The iii-engine's `iii-exec` worker runs the agentmemory binary as a
-// child process and forwards stderr into `docker logs
-// agentmemory-iii-engine-1`, so these lines end up next to the engine's
-// own output without needing any OTEL wiring. If we later want
-// structured OTEL logs, this file is the only thing that changes.
+// Output goes to stderr as `[agentmemory] <level> <msg> <json-envelope>`.
+// The CLI-managed worker inherits stderr from its launcher, so these lines
+// remain adjacent to engine output without additional OTEL wiring. If we
+// later want structured OTEL logs, this file is the only thing that changes.
 //
 // See rohitg00/agentmemory#143 follow-up — the #116 migration updated
 // test mocks but left the real `getContext()` imports in place, which
@@ -27,15 +28,22 @@
 type Fields = Record<string, unknown> | undefined;
 
 function fmt(level: string, msg: string, fields: Fields): string {
-  if (!fields || Object.keys(fields).length === 0) {
-    return `[agentmemory] ${level} ${msg}`;
-  }
+  const safeMessage = stripPrivateData(msg);
   try {
-    return `[agentmemory] ${level} ${msg} ${JSON.stringify(fields)}`;
+    const sanitized = fields ? sanitizePrivateData(fields) : {};
+    const boot = getProcessBootIdentity();
+    const envelope = {
+      ...(sanitized && typeof sanitized === "object" ? sanitized : {}),
+      timestamp: new Date().toISOString(),
+      bootId: boot.id,
+      bootStartedAt: boot.startedAt,
+      pid: boot.pid,
+    };
+    return `[agentmemory] ${level} ${safeMessage} ${JSON.stringify(envelope)}`;
   } catch {
     // Fields contained a circular reference or a BigInt — fall back
     // to the plain message so a log line never throws.
-    return `[agentmemory] ${level} ${msg}`;
+    return `[agentmemory] ${level} ${safeMessage}`;
   }
 }
 
@@ -87,11 +95,7 @@ export function isBootVerbose(): boolean {
 
 export function bootLog(msg: string): void {
   if (bootVerbose) {
-    try {
-      process.stderr.write(`[agentmemory] ${msg}\n`);
-    } catch {
-      // stderr unavailable — drop.
-    }
+    emit("info", msg, { phase: "boot" });
     return;
   }
   if (bootBuffer.length < 500) bootBuffer.push(msg);
@@ -100,9 +104,7 @@ export function bootLog(msg: string): void {
 export function bootWarn(msg: string): void {
   // Warnings always surface; they're rare and the user needs to see
   // them even when the rest of the boot log is suppressed.
-  try {
-    process.stderr.write(`[agentmemory] warn ${msg}\n`);
-  } catch {}
+  emit("warn", msg, { phase: "boot" });
 }
 
 export function getBootBuffer(): readonly string[] {

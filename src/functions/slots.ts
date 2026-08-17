@@ -1,5 +1,9 @@
 import type { ISdk } from "iii-sdk";
-import type { MemorySlot, CompressedObservation } from "../types.js";
+import type {
+  MemorySlot,
+  CompressedObservation,
+  Session,
+} from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
@@ -106,8 +110,10 @@ export function isReflectEnabled(): boolean {
   return getEnvVar("AGENTMEMORY_REFLECT") === "true";
 }
 
-function scopeKv(scope: SlotScope): string {
-  return scope === "global" ? KV.globalSlots : KV.slots;
+function scopeKv(scope: SlotScope, project?: string): string {
+  if (scope === "global") return KV.globalSlots;
+  if (!project) throw new Error("project is required for project-scoped slots");
+  return KV.projectSlots(project);
 }
 
 function nowIso(): string {
@@ -125,9 +131,13 @@ function validateLabel(label: unknown): string | null {
 async function readSlot(
   kv: StateKV,
   label: string,
+  project: string,
 ): Promise<{ slot: MemorySlot | null; scope: SlotScope }> {
-  const project = await kv.get<MemorySlot>(KV.slots, label);
-  if (project) return { slot: project, scope: "project" };
+  const projectSlot = await kv.get<MemorySlot>(
+    KV.projectSlots(project),
+    label,
+  );
+  if (projectSlot) return { slot: projectSlot, scope: "project" };
   const global = await kv.get<MemorySlot>(KV.globalSlots, label);
   if (global) return { slot: global, scope: "global" };
   return { slot: null, scope: "project" };
@@ -137,14 +147,19 @@ async function readSlotInScope(
   kv: StateKV,
   label: string,
   scope: SlotScope,
+  project?: string,
 ): Promise<MemorySlot | null> {
-  return kv.get<MemorySlot>(scopeKv(scope), label);
+  return kv.get<MemorySlot>(scopeKv(scope, project), label);
 }
 
 function validateScope(raw: unknown): SlotScope | null {
   if (raw === undefined || raw === null) return "project";
   if (raw === "project" || raw === "global") return raw;
   return null;
+}
+
+function validateProject(raw: unknown): string | null {
+  return typeof raw === "string" && raw.trim() ? raw.trim() : null;
 }
 
 function validateSizeLimit(raw: unknown): number | null | undefined {
@@ -154,10 +169,11 @@ function validateSizeLimit(raw: unknown): number | null | undefined {
   return raw;
 }
 
-async function seedDefaults(kv: StateKV): Promise<void> {
+async function seedDefaults(kv: StateKV, project?: string): Promise<void> {
   const ts = nowIso();
   for (const tmpl of DEFAULT_SLOTS) {
-    const target = scopeKv(tmpl.scope);
+    if (tmpl.scope === "project" && !project) continue;
+    const target = scopeKv(tmpl.scope, project);
     const existing = await kv.get<MemorySlot>(target, tmpl.label);
     if (existing) continue;
     const slot: MemorySlot = {
@@ -169,14 +185,18 @@ async function seedDefaults(kv: StateKV): Promise<void> {
   }
 }
 
-export async function listPinnedSlots(kv: StateKV): Promise<MemorySlot[]> {
-  const [project, global] = await Promise.all([
-    kv.list<MemorySlot>(KV.slots),
+export async function listPinnedSlots(
+  kv: StateKV,
+  project: string,
+): Promise<MemorySlot[]> {
+  await seedDefaults(kv, project);
+  const [projectSlots, global] = await Promise.all([
+    kv.list<MemorySlot>(KV.projectSlots(project)),
     kv.list<MemorySlot>(KV.globalSlots),
   ]);
   const merged = new Map<string, MemorySlot>();
   for (const s of global) merged.set(s.label, s);
-  for (const s of project) merged.set(s.label, s);
+  for (const s of projectSlots) merged.set(s.label, s);
   return Array.from(merged.values())
     .filter((s) => s.pinned && s.content.trim().length > 0)
     .sort((a, b) => a.label.localeCompare(b.label));
@@ -200,14 +220,17 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
     });
   });
 
-  sdk.registerFunction("mem::slot-list", async () => {
-    const [project, global] = await Promise.all([
-      kv.list<MemorySlot>(KV.slots),
+  sdk.registerFunction("mem::slot-list", async (data: { project?: string }) => {
+    const project = validateProject(data?.project);
+    if (!project) return { success: false, error: "project required" };
+    await seedDefaults(kv, project);
+    const [projectSlots, global] = await Promise.all([
+      kv.list<MemorySlot>(KV.projectSlots(project)),
       kv.list<MemorySlot>(KV.globalSlots),
     ]);
     const merged = new Map<string, MemorySlot>();
     for (const s of global) merged.set(s.label, s);
-    for (const s of project) merged.set(s.label, s);
+    for (const s of projectSlots) merged.set(s.label, s);
     const slots = Array.from(merged.values()).sort((a, b) =>
       a.label.localeCompare(b.label),
     );
@@ -216,10 +239,13 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
 
   sdk.registerFunction(
     "mem::slot-get",
-    async (data: { label?: string }) => {
+    async (data: { label?: string; project?: string }) => {
       const label = validateLabel(data?.label);
       if (!label) return { success: false, error: "label required (lowercase, starts with letter, [a-z0-9_])" };
-      const { slot, scope } = await readSlot(kv, label);
+      const project = validateProject(data?.project);
+      if (!project) return { success: false, error: "project required" };
+      await seedDefaults(kv, project);
+      const { slot, scope } = await readSlot(kv, label, project);
       if (!slot) return { success: false, error: "slot not found" };
       return { success: true, slot, scope };
     },
@@ -234,31 +260,38 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
       description?: string;
       pinned?: boolean;
       scope?: SlotScope;
+      project?: string;
     }) => {
       const label = validateLabel(data?.label);
       if (!label) return { success: false, error: "label required (lowercase, starts with letter, [a-z0-9_])" };
       const scope = validateScope(data?.scope);
       if (!scope) return { success: false, error: "scope must be 'project' or 'global'" };
+      const project = validateProject(data?.project);
+      if (scope === "project" && !project) {
+        return { success: false, error: "project required for project scope" };
+      }
+      if (project) await seedDefaults(kv, project);
       const sizeLimit = validateSizeLimit(data?.sizeLimit);
       if (sizeLimit === null) {
         return { success: false, error: "sizeLimit must be an integer between 1 and 20000" };
       }
+      const resolvedSizeLimit = sizeLimit ?? DEFAULT_SIZE_LIMIT;
       const content = typeof data?.content === "string" ? data.content : "";
-      if (content.length > sizeLimit) {
-        return { success: false, error: `content exceeds sizeLimit (${content.length} > ${sizeLimit})` };
+      if (content.length > resolvedSizeLimit) {
+        return { success: false, error: `content exceeds sizeLimit (${content.length} > ${resolvedSizeLimit})` };
       }
       const description = typeof data?.description === "string" ? data.description : "";
       const pinned = typeof data?.pinned === "boolean" ? data.pinned : true;
-      return withKeyedLock(`slot:${label}`, async () => {
+      return withKeyedLock(`slot:${project ?? "global"}:${label}`, async () => {
         // Duplicate check is scope-local so a project slot can shadow a
         // global slot with the same label — matches the read precedence.
-        const existing = await readSlotInScope(kv, label, scope);
+        const existing = await readSlotInScope(kv, label, scope, project ?? undefined);
         if (existing) return { success: false, error: `slot already exists in ${scope} scope` };
         const ts = nowIso();
         const slot: MemorySlot = {
           label,
           content,
-          sizeLimit: sizeLimit as number,
+          sizeLimit: resolvedSizeLimit,
           description,
           pinned,
           readOnly: false,
@@ -266,7 +299,7 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
           createdAt: ts,
           updatedAt: ts,
         };
-        await kv.set(scopeKv(scope), label, slot);
+        await kv.set(scopeKv(scope, project ?? undefined), label, slot);
         await recordAudit(kv, "slot_create", "mem::slot-create", [label], {
           scope,
           sizeLimit: slot.sizeLimit,
@@ -279,13 +312,16 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
 
   sdk.registerFunction(
     "mem::slot-append",
-    async (data: { label?: string; text?: string }) => {
+    async (data: { label?: string; text?: string; project?: string }) => {
       const label = validateLabel(data?.label);
       if (!label) return { success: false, error: "label required" };
+      const project = validateProject(data?.project);
+      if (!project) return { success: false, error: "project required" };
+      await seedDefaults(kv, project);
       const text = typeof data?.text === "string" ? data.text : "";
       if (!text) return { success: false, error: "text required" };
-      return withKeyedLock(`slot:${label}`, async () => {
-        const { slot, scope } = await readSlot(kv, label);
+      return withKeyedLock(`slot:${project}:${label}`, async () => {
+        const { slot, scope } = await readSlot(kv, label, project);
         if (!slot) return { success: false, error: "slot not found (use mem::slot-create first)" };
         if (slot.readOnly) return { success: false, error: "slot is read-only" };
         const sep = slot.content && !slot.content.endsWith("\n") ? "\n" : "";
@@ -299,7 +335,7 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
           };
         }
         const updated: MemorySlot = { ...slot, content: next, updatedAt: nowIso() };
-        await kv.set(scopeKv(scope), label, updated);
+        await kv.set(scopeKv(scope, project), label, updated);
         await recordAudit(kv, "slot_append", "mem::slot-append", [label], {
           scope,
           added: text.length,
@@ -312,43 +348,50 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
 
   sdk.registerFunction(
     "mem::slot-replace",
-    async (data: { label?: string; content?: string }) => {
+    async (data: { label?: string; content?: string; project?: string }) => {
       const label = validateLabel(data?.label);
       if (!label) return { success: false, error: "label required" };
+      const project = validateProject(data?.project);
+      if (!project) return { success: false, error: "project required" };
+      await seedDefaults(kv, project);
       if (typeof data?.content !== "string") return { success: false, error: "content required (string)" };
-      return withKeyedLock(`slot:${label}`, async () => {
-        const { slot, scope } = await readSlot(kv, label);
+      const content = data.content;
+      return withKeyedLock(`slot:${project}:${label}`, async () => {
+        const { slot, scope } = await readSlot(kv, label, project);
         if (!slot) return { success: false, error: "slot not found (use mem::slot-create first)" };
         if (slot.readOnly) return { success: false, error: "slot is read-only" };
-        if (data.content.length > slot.sizeLimit) {
+        if (content.length > slot.sizeLimit) {
           return {
             success: false,
-            error: `content exceeds sizeLimit (${data.content.length} > ${slot.sizeLimit})`,
+            error: `content exceeds sizeLimit (${content.length} > ${slot.sizeLimit})`,
             sizeLimit: slot.sizeLimit,
           };
         }
-        const updated: MemorySlot = { ...slot, content: data.content, updatedAt: nowIso() };
-        await kv.set(scopeKv(scope), label, updated);
+        const updated: MemorySlot = { ...slot, content, updatedAt: nowIso() };
+        await kv.set(scopeKv(scope, project), label, updated);
         await recordAudit(kv, "slot_replace", "mem::slot-replace", [label], {
           scope,
           before: slot.content.length,
-          after: data.content.length,
+          after: content.length,
         });
-        return { success: true, slot: updated, size: data.content.length };
+        return { success: true, slot: updated, size: content.length };
       });
     },
   );
 
   sdk.registerFunction(
     "mem::slot-delete",
-    async (data: { label?: string }) => {
+    async (data: { label?: string; project?: string }) => {
       const label = validateLabel(data?.label);
       if (!label) return { success: false, error: "label required" };
-      return withKeyedLock(`slot:${label}`, async () => {
-        const { slot, scope } = await readSlot(kv, label);
+      const project = validateProject(data?.project);
+      if (!project) return { success: false, error: "project required" };
+      await seedDefaults(kv, project);
+      return withKeyedLock(`slot:${project}:${label}`, async () => {
+        const { slot, scope } = await readSlot(kv, label, project);
         if (!slot) return { success: false, error: "slot not found" };
         if (slot.readOnly) return { success: false, error: "slot is read-only" };
-        await kv.delete(scopeKv(scope), label);
+        await kv.delete(scopeKv(scope, project), label);
         await recordAudit(kv, "slot_delete", "mem::slot-delete", [label], {
           scope,
           size: slot.content.length,
@@ -360,10 +403,21 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
 
   sdk.registerFunction(
     "mem::slot-reflect",
-    async (data: { sessionId?: string; maxObservations?: number }) => {
+    async (data: {
+      sessionId?: string;
+      project?: string;
+      maxObservations?: number;
+    }) => {
       if (!data?.sessionId || typeof data.sessionId !== "string") {
         return { success: false, error: "sessionId required" };
       }
+      const session = await kv.get<Session>(KV.sessions, data.sessionId);
+      const project = validateProject(data.project) ?? session?.project ?? null;
+      if (!project) return { success: false, error: "project required" };
+      if (session && session.project !== project) {
+        return { success: false, error: "session does not belong to project" };
+      }
+      await seedDefaults(kv, project);
       const max =
         typeof data.maxObservations === "number" &&
         Number.isInteger(data.maxObservations) &&
@@ -402,8 +456,8 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
       let applied = 0;
 
       if (pendingLines.length > 0) {
-        const pendingApplied = await withKeyedLock(`slot:pending_items`, async () => {
-          const { slot, scope } = await readSlot(kv, "pending_items");
+        const pendingApplied = await withKeyedLock(`slot:${project}:pending_items`, async () => {
+          const { slot, scope } = await readSlot(kv, "pending_items", project);
           if (!slot) return false;
           const already = new Set(slot.content.split("\n"));
           const fresh = pendingLines.filter((line) => !already.has(line));
@@ -413,7 +467,7 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
           const truncated = next.length > slot.sizeLimit
             ? next.slice(next.length - slot.sizeLimit)
             : next;
-          await kv.set(scopeKv(scope), "pending_items", {
+          await kv.set(scopeKv(scope, project), "pending_items", {
             ...slot,
             content: truncated,
             updatedAt: nowIso(),
@@ -424,8 +478,8 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
       }
 
       if (patternCounts.size > 0) {
-        const patternsApplied = await withKeyedLock(`slot:session_patterns`, async () => {
-          const { slot, scope } = await readSlot(kv, "session_patterns");
+        const patternsApplied = await withKeyedLock(`slot:${project}:session_patterns`, async () => {
+          const { slot, scope } = await readSlot(kv, "session_patterns", project);
           if (!slot) return false;
           const summary = [
             `last reflection: ${nowIso()}`,
@@ -435,7 +489,7 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
           ].join("\n");
           const next =
             summary.length > slot.sizeLimit ? summary.slice(0, slot.sizeLimit) : summary;
-          await kv.set(scopeKv(scope), "session_patterns", {
+          await kv.set(scopeKv(scope, project), "session_patterns", {
             ...slot,
             content: next,
             updatedAt: nowIso(),
@@ -446,8 +500,8 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
       }
 
       if (files.size > 0) {
-        const ctxApplied = await withKeyedLock(`slot:project_context`, async () => {
-          const { slot, scope } = await readSlot(kv, "project_context");
+        const ctxApplied = await withKeyedLock(`slot:${project}:project_context`, async () => {
+          const { slot, scope } = await readSlot(kv, "project_context", project);
           if (!slot) return false;
           const already = slot.content;
           const fresh = Array.from(files)
@@ -464,7 +518,7 @@ export function registerSlotsFunctions(sdk: ISdk, kv: StateKV): void {
             nextRaw.length > slot.sizeLimit
               ? nextRaw.slice(nextRaw.length - slot.sizeLimit)
               : nextRaw;
-          await kv.set(scopeKv(scope), "project_context", {
+          await kv.set(scopeKv(scope, project), "project_context", {
             ...slot,
             content: next,
             updatedAt: nowIso(),

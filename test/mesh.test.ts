@@ -194,7 +194,7 @@ describe("Mesh Functions", () => {
       })) as { success: boolean; error: string };
 
       expect(result.success).toBe(false);
-      expect(result.error).toContain("AGENTMEMORY_SECRET");
+      expect(result.error).toContain("AGENTMEMORY_ADMIN_SECRET");
     });
 
     it("sends authorization headers to peers when syncing", async () => {
@@ -223,7 +223,7 @@ describe("Mesh Functions", () => {
       expect(result.success).toBe(true);
       expect(result.results[0].errors).toEqual([]);
       expect(fetchMock).toHaveBeenCalledWith(
-        "https://peer2.example.com/agentmemory/mesh/receive",
+        "https://peer2.example.com/agentmemory/mesh/receive?scope=global",
         expect.objectContaining({
           headers: expect.objectContaining({
             Authorization: "Bearer mesh-secret",
@@ -231,6 +231,139 @@ describe("Mesh Functions", () => {
         }),
       );
 
+      vi.unstubAllGlobals();
+    });
+
+    it("exports only the configured project across every shared scope", async () => {
+      const authedSdk = mockSdk();
+      const authedKv = mockKV();
+      registerMeshFunction(authedSdk as never, authedKv as never, "admin-secret");
+      const now = "2026-07-25T00:00:00.000Z";
+      const projectA = "github.com/example/a";
+      const projectB = "github.com/example/b";
+
+      await authedKv.set("mem:memories", "mem_a", {
+        id: "mem_a",
+        project: projectA,
+        createdAt: now,
+        updatedAt: now,
+      } as unknown as Memory);
+      await authedKv.set("mem:memories", "mem_b", {
+        id: "mem_b",
+        project: projectB,
+        createdAt: now,
+        updatedAt: now,
+      } as unknown as Memory);
+      await authedKv.set("mem:actions", "action_a", {
+        id: "action_a",
+        project: projectA,
+        createdAt: now,
+        updatedAt: now,
+      } as unknown as Action);
+      await authedKv.set("mem:actions", "action_b", {
+        id: "action_b",
+        project: projectB,
+        createdAt: now,
+        updatedAt: now,
+      } as unknown as Action);
+      await authedKv.set("mem:semantic", "semantic_a", {
+        id: "semantic_a",
+        project: projectA,
+        createdAt: now,
+      } as unknown as SemanticMemory);
+      await authedKv.set("mem:semantic", "semantic_b", {
+        id: "semantic_b",
+        project: projectB,
+        createdAt: now,
+      } as unknown as SemanticMemory);
+      await authedKv.set("mem:procedural", "procedural_a", {
+        id: "procedural_a",
+        project: projectA,
+        createdAt: now,
+      } as unknown as ProceduralMemory);
+      await authedKv.set("mem:procedural", "procedural_b", {
+        id: "procedural_b",
+        project: projectB,
+        createdAt: now,
+      } as unknown as ProceduralMemory);
+      await authedKv.set("mem:relations", "relation_a", {
+        sourceId: "mem_a",
+        targetId: "semantic_a",
+        type: "related",
+        createdAt: now,
+      } as MemoryRelation);
+      await authedKv.set("mem:relations", "relation_cross", {
+        sourceId: "mem_a",
+        targetId: "mem_b",
+        type: "related",
+        createdAt: now,
+      } as MemoryRelation);
+      await authedKv.set("mem:graph:nodes", "node_a_1", {
+        id: "node_a_1",
+        project: projectA,
+        createdAt: now,
+      } as unknown as GraphNode);
+      await authedKv.set("mem:graph:nodes", "node_a_2", {
+        id: "node_a_2",
+        project: projectA,
+        createdAt: now,
+      } as unknown as GraphNode);
+      await authedKv.set("mem:graph:nodes", "node_b", {
+        id: "node_b",
+        project: projectB,
+        createdAt: now,
+      } as unknown as GraphNode);
+      await authedKv.set("mem:graph:edges", "edge_a", {
+        id: "edge_a",
+        project: projectA,
+        sourceNodeId: "node_a_1",
+        targetNodeId: "node_a_2",
+        createdAt: now,
+      } as unknown as GraphEdge);
+      await authedKv.set("mem:graph:edges", "edge_cross", {
+        id: "edge_cross",
+        project: projectA,
+        sourceNodeId: "node_a_1",
+        targetNodeId: "node_b",
+        createdAt: now,
+      } as unknown as GraphEdge);
+
+      const fetchMock = vi.fn(async (_url: string, init?: RequestInit) => {
+        const payload = JSON.parse(String(init?.body)) as Record<
+          string,
+          Array<{ id?: string; sourceId?: string }>
+        >;
+        expect(payload.memories.map(({ id }) => id)).toEqual(["mem_a"]);
+        expect(payload.actions.map(({ id }) => id)).toEqual(["action_a"]);
+        expect(payload.semantic.map(({ id }) => id)).toEqual(["semantic_a"]);
+        expect(payload.procedural.map(({ id }) => id)).toEqual(["procedural_a"]);
+        expect(payload.relations.map(({ sourceId }) => sourceId)).toEqual([
+          "mem_a",
+        ]);
+        expect(payload.graphNodes.map(({ id }) => id)).toEqual([
+          "node_a_1",
+          "node_a_2",
+        ]);
+        expect(payload.graphEdges.map(({ id }) => id)).toEqual(["edge_a"]);
+        return new Response(JSON.stringify({ accepted: 7 }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      });
+      vi.stubGlobal("fetch", fetchMock);
+
+      const registered = (await authedSdk.trigger("mem::mesh-register", {
+        url: "https://project-peer.example.com",
+        name: "project-peer",
+        syncFilter: { project: projectA },
+      })) as { peer: MeshPeer };
+      const result = (await authedSdk.trigger("mem::mesh-sync", {
+        peerId: registered.peer.id,
+        direction: "push",
+      })) as { success: boolean; results: Array<{ pushed: number }> };
+
+      expect(result.success).toBe(true);
+      expect(result.results[0].pushed).toBe(7);
       vi.unstubAllGlobals();
     });
   });

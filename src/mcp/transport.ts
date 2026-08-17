@@ -17,6 +17,12 @@ export type RequestHandler = (
   params: Record<string, unknown>,
 ) => Promise<unknown>;
 
+export interface StdioTransportOptions {
+  input?: NodeJS.ReadableStream;
+  output?: NodeJS.WritableStream;
+  onInputClose?: () => void | Promise<void>;
+}
+
 export interface StdioMessageParser {
   push: (chunk: Buffer | string) => void;
   isFramed: () => boolean;
@@ -221,28 +227,68 @@ export function createMessageParser(
   };
 }
 
-export function createStdioTransport(handler: RequestHandler): {
+export function createStdioTransport(
+  handler: RequestHandler,
+  options: StdioTransportOptions = {},
+): {
   start: () => void;
-  stop: () => void;
+  stop: () => Promise<void>;
 } {
+  const input = options.input ?? process.stdin;
+  const output = options.output ?? process.stdout;
   let parser: StdioMessageParser | null = null;
   let queue = Promise.resolve();
+  let started = false;
+  let stopPromise: Promise<void> | null = null;
+  let closeHandled = false;
 
   const writeResponse = (response: JsonRpcResponse) => {
     const formatted = formatResponse(response, parser?.isFramed() ?? false);
     if (typeof formatted === "string") {
-      process.stdout.write(formatted);
+      output.write(formatted);
       return;
     }
     for (const chunk of formatted) {
-      process.stdout.write(chunk);
+      output.write(chunk);
     }
   };
 
   const onData = (chunk: Buffer) => parser?.push(chunk);
+  const stop = async () => {
+    if (stopPromise) return stopPromise;
+    stopPromise = (async () => {
+      input.off("data", onData);
+      input.off("end", onInputClose);
+      input.off("close", onInputClose);
+      started = false;
+      await queue.catch(() => undefined);
+      if (output.writableNeedDrain) {
+        await new Promise<void>((resolve) => output.once("drain", resolve));
+      }
+      parser = null;
+    })();
+    return stopPromise;
+  };
+  const onInputClose = () => {
+    if (closeHandled) return;
+    closeHandled = true;
+    void stop()
+      .then(() => options.onInputClose?.())
+      .catch((err) => {
+        process.stderr.write(
+          `[mcp-transport] input-close shutdown failed: ${
+            err instanceof Error ? err.message : String(err)
+          }\n`,
+        );
+      });
+  };
 
   return {
     start() {
+      if (started) return;
+      started = true;
+      stopPromise = null;
+      closeHandled = false;
       parser = createMessageParser((message) => {
         queue = queue.then(() => processLine(message, handler, writeResponse));
         void queue.catch((err) => {
@@ -253,11 +299,10 @@ export function createStdioTransport(handler: RequestHandler): {
           );
         });
       });
-      process.stdin.on("data", onData);
+      input.on("data", onData);
+      input.once("end", onInputClose);
+      input.once("close", onInputClose);
     },
-    stop() {
-      process.stdin.off("data", onData);
-      parser = null;
-    },
+    stop,
   };
 }

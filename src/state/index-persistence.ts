@@ -4,8 +4,9 @@ import type { StateKV } from "./kv.js";
 import { KV, generateId } from "./schema.js";
 import { logger } from "../logger.js";
 import { safeAudit } from "../functions/audit.js";
+import type { HealthSnapshot } from "../types.js";
 
-const DEBOUNCE_MS = 5000;
+const CHECKPOINT_INTERVAL_MS = 30_000;
 const FAILURE_LOG_THROTTLE_MS = 60_000;
 const INDEX_PERSISTENCE_FUNCTION_ID = "mem::index-persistence";
 const BM25_KEY = "data";
@@ -17,17 +18,46 @@ const VECTOR_SHARD_SCOPE_PREFIX = `${KV.bm25Index}:vectors:`;
 const INDEX_SHARD_KEY = "data";
 const DEFAULT_INDEX_SHARD_CHARS = 2_000_000;
 
-type IndexShardManifest = {
-  v: 1;
+type IndexShardGeneration = {
   generation?: string;
   shards: Array<{ scope: string; key: string; chars: number }>;
   chars: number;
 };
 
+type IndexShardManifest = IndexShardGeneration & {
+  v: 1;
+  previous?: IndexShardGeneration;
+};
+
 type IndexPersistenceOptions = {
   shardChars?: number;
   createGeneration?: () => string;
+  checkpointIntervalMs?: number;
 };
+
+export type IndexPersistenceHealth = NonNullable<
+  HealthSnapshot["indexPersistence"]
+>;
+
+function createPersistenceHealth(): IndexPersistenceHealth {
+  return {
+    status: "idle",
+    attempts: 0,
+    succeeded: 0,
+    failed: 0,
+    pending: 0,
+    consecutiveFailures: 0,
+  };
+}
+
+function persistenceErrorCode(error: unknown): string {
+  const code = (error as { code?: unknown })?.code;
+  if (typeof code === "string" && code.trim()) return code.trim().slice(0, 96);
+  const message = errorMessage(error);
+  return /timeout|timed out|invocation stopped/i.test(message)
+    ? "TIMEOUT"
+    : "INDEX_PERSISTENCE_FAILED";
+}
 
 function shardChars(options: IndexPersistenceOptions): number {
   const configured = options.shardChars;
@@ -36,6 +66,21 @@ function shardChars(options: IndexPersistenceOptions): number {
   }
   const wholeChars = Math.floor(configured);
   return wholeChars >= 1 ? wholeChars : DEFAULT_INDEX_SHARD_CHARS;
+}
+
+function checkpointIntervalMs(options: IndexPersistenceOptions): number {
+  const configured = options.checkpointIntervalMs;
+  if (configured === undefined) return CHECKPOINT_INTERVAL_MS;
+  if (
+    !Number.isInteger(configured) ||
+    configured < 1000 ||
+    configured > 3_600_000
+  ) {
+    throw new Error(
+      "index checkpoint interval must be an integer from 1000 to 3600000 ms",
+    );
+  }
+  return configured;
 }
 
 function createIndexGeneration(): string {
@@ -60,6 +105,7 @@ function isValidShardDescriptor(
     candidate.scope.length > 0 &&
     typeof candidate.key === "string" &&
     candidate.key.length > 0 &&
+    typeof candidate.chars === "number" &&
     Number.isInteger(candidate.chars) &&
     candidate.chars >= 0
   );
@@ -68,6 +114,14 @@ function isValidShardDescriptor(
 export class IndexPersistence {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private lastFailureLogAt = 0;
+  private saveQueue: Promise<void> = Promise.resolve();
+  private pendingSaves = 0;
+  private stopped = false;
+  private health = createPersistenceHealth();
+  private retainedGenerationOverrides = new Map<
+    string,
+    IndexShardGeneration
+  >();
 
   constructor(
     private kv: StateKV,
@@ -77,14 +131,32 @@ export class IndexPersistence {
   ) {}
 
   scheduleSave(): void {
-    if (this.timer) clearTimeout(this.timer);
+    if (this.stopped) return;
+    // Persisted indexes are rebuildable derivatives of canonical observations.
+    // Keep the first scheduled checkpoint instead of rewriting the complete
+    // corpus after every short pause in an active coding session.
+    if (this.timer) return;
+    const scheduledAt = new Date().toISOString();
+    this.health.status = "scheduled";
+    this.health.scheduledAt = scheduledAt;
+    this.health.pendingSince ??= scheduledAt;
     // setTimeout discards the returned promise, so any rejection inside
     // save() would surface as unhandledRejection and crash the process
     // under sustained iii-engine write timeouts (issue #204). Funnel
     // rejections through logFailure() instead.
     this.timer = setTimeout(() => {
       this.save().catch((err) => this.logFailure(err));
-    }, DEBOUNCE_MS);
+    }, checkpointIntervalMs(this.options));
+  }
+
+  cancelScheduledSave(): void {
+    if (!this.timer) return;
+    clearTimeout(this.timer);
+    this.timer = null;
+    if (this.pendingSaves === 0 && this.health.status === "scheduled") {
+      this.health.status = "idle";
+      this.health.pendingSince = undefined;
+    }
   }
 
   async save(): Promise<void> {
@@ -92,13 +164,48 @@ export class IndexPersistence {
       clearTimeout(this.timer);
       this.timer = null;
     }
+    this.pendingSaves += 1;
+    this.health.pendingSince ??= new Date().toISOString();
+    const queued = this.saveQueue.then(() => this.persistSnapshot());
+    this.saveQueue = queued;
+    await queued;
+  }
+
+  private async persistSnapshot(): Promise<void> {
+    this.health.attempts += 1;
+    this.health.status = "saving";
+    this.health.lastAttemptAt = new Date().toISOString();
     try {
-      await this.saveBm25Index(this.bm25.serialize());
-      if (this.vector) {
-        await this.saveVectorIndex(this.vector.serialize());
+      // Capture both synchronous snapshots before the first write yields.
+      // Otherwise live hook writes can appear only in the later vector snapshot.
+      const bm25Snapshot = this.bm25.serialize();
+      const vectorSnapshot = this.vector?.serialize();
+      await this.saveBm25Index(bm25Snapshot);
+      if (vectorSnapshot !== undefined) {
+        await this.saveVectorIndex(vectorSnapshot);
       }
+      this.health.succeeded += 1;
+      this.health.consecutiveFailures = 0;
+      this.health.status = "ready";
+      this.health.lastSuccessAt = new Date().toISOString();
+      this.health.lastErrorCode = undefined;
     } catch (err) {
+      this.health.failed += 1;
+      this.health.consecutiveFailures += 1;
+      this.health.status = "failed";
+      this.health.lastFailureAt = new Date().toISOString();
+      this.health.lastErrorCode = persistenceErrorCode(err);
       this.logFailure(err);
+    } finally {
+      this.pendingSaves = Math.max(0, this.pendingSaves - 1);
+      if (this.stopped) {
+        this.health.status = "stopped";
+      } else if (this.pendingSaves > 0) {
+        this.health.status = "scheduled";
+      }
+      if (this.pendingSaves === 0 && !this.timer) {
+        this.health.pendingSince = undefined;
+      }
     }
   }
 
@@ -123,10 +230,20 @@ export class IndexPersistence {
   }
 
   stop(): void {
-    if (this.timer) {
-      clearTimeout(this.timer);
-      this.timer = null;
-    }
+    this.stopped = true;
+    this.cancelScheduledSave();
+    this.health.status = "stopped";
+  }
+
+  getHealthStatus(): IndexPersistenceHealth {
+    return {
+      ...this.health,
+      pending: this.pendingSaves + (this.timer ? 1 : 0),
+    };
+  }
+
+  needsRepair(): boolean {
+    return this.retainedGenerationOverrides.size > 0;
   }
 
   private logFailure(err: unknown): void {
@@ -193,33 +310,39 @@ export class IndexPersistence {
     }
 
     const writeResults = await Promise.allSettled(
-      shards.map(async (shard, index) => {
+      shards.map((shard, index) => {
         const chunk = chunks[index] ?? "";
-        await this.kv.set(shard.scope, shard.key, chunk);
-        await this.auditIndexPersistence("shard_write", [
-          statePath(shard.scope, shard.key),
-        ], {
-          scope: shard.scope,
-          key: shard.key,
-          manifestKey,
-          generation,
-          chars: chunk.length,
-        });
+        return this.kv.set(shard.scope, shard.key, chunk);
       }),
     );
     const failedWrite = writeResults.find(
       (result): result is PromiseRejectedResult => result.status === "rejected",
     );
     if (failedWrite) {
+      await this.auditIndexPersistence(
+        "shard_write_batch",
+        shards.map((shard) => statePath(shard.scope, shard.key)),
+        {
+          manifestKey,
+          generation,
+          chars: serialized.length,
+          shards: shards.length,
+          result: "failed",
+          error: errorMessage(failedWrite.reason),
+        },
+      );
       await this.deleteShards(shards, "shard_write_rollback");
       throw failedWrite.reason;
     }
-
+    const previousGeneration =
+      this.retainedGenerationOverrides.get(manifestKey) ??
+      this.asGeneration(previous);
     const nextManifest: IndexShardManifest = {
       v: 1,
       generation,
       shards,
       chars: serialized.length,
+      ...(previousGeneration ? { previous: previousGeneration } : {}),
     };
     try {
       await this.kv.set<IndexShardManifest>(
@@ -227,15 +350,6 @@ export class IndexPersistence {
         manifestKey,
         nextManifest,
       );
-      await this.auditIndexPersistence("manifest_publish", [
-        statePath(KV.bm25Index, manifestKey),
-      ], {
-        manifestKey,
-        generation,
-        chars: serialized.length,
-        shards: shards.length,
-        result: "committed",
-      });
     } catch (err) {
       if (await this.isManifestPublished(manifestKey, nextManifest)) {
         await this.auditIndexPersistence("manifest_publish", [
@@ -255,15 +369,12 @@ export class IndexPersistence {
     }
 
     await this.deleteKey(KV.bm25Index, legacyKey, "legacy_cleanup");
-    if (previous?.v === 1 && Array.isArray(previous.shards)) {
-      const currentShardIds = new Set(
-        shards.map((shard) => `${shard.scope}\0${shard.key}`),
-      );
-      for (const shard of previous.shards) {
-        if (currentShardIds.has(`${shard.scope}\0${shard.key}`)) continue;
-        await this.deleteShards([shard], "previous_generation_cleanup");
-      }
-    }
+    await this.deleteSupersededGenerations(
+      previous,
+      previousGeneration,
+      shards,
+    );
+    this.retainedGenerationOverrides.delete(manifestKey);
   }
 
   private async auditIndexPersistence(
@@ -271,13 +382,23 @@ export class IndexPersistence {
     targetIds: string[],
     details: Record<string, unknown>,
   ): Promise<void> {
-    await safeAudit(
-      this.kv,
-      "index_persist",
-      INDEX_PERSISTENCE_FUNCTION_ID,
-      targetIds,
-      { action, ...details },
-    );
+    try {
+      await safeAudit(
+        this.kv,
+        "index_persist",
+        INDEX_PERSISTENCE_FUNCTION_ID,
+        targetIds,
+        { action, ...details },
+      );
+    } catch (error) {
+      // Index snapshots are rebuildable derivatives. Preserve the primary
+      // storage error for health/retry classification when the audit sink is
+      // also unavailable; canonical memories are not mutated on this path.
+      logger.warn("index persistence: audit evidence unavailable", {
+        action,
+        error: errorMessage(error),
+      });
+    }
   }
 
   private async deleteKey(
@@ -285,30 +406,80 @@ export class IndexPersistence {
     key: string,
     reason: string,
   ): Promise<void> {
-    let result = "deleted";
-    let error: string | undefined;
     try {
       await this.kv.delete(scope, key);
     } catch (err) {
-      result = "failed";
-      error = errorMessage(err);
+      await this.auditIndexPersistence("delete", [statePath(scope, key)], {
+        scope,
+        key,
+        reason,
+        result: "failed",
+        error: errorMessage(err),
+      });
     }
-    await this.auditIndexPersistence("delete", [statePath(scope, key)], {
-      scope,
-      key,
-      reason,
-      result,
-      error,
-    });
   }
 
   private async deleteShards(
     shards: IndexShardManifest["shards"],
     reason: string,
   ): Promise<void> {
+    if (shards.length === 0) return;
+    let deleted = 0;
+    const failures: Array<{ target: string; error: string }> = [];
     for (const shard of shards) {
-      await this.deleteKey(shard.scope, shard.key, reason);
+      const target = statePath(shard.scope, shard.key);
+      try {
+        await this.kv.delete(shard.scope, shard.key);
+        deleted += 1;
+      } catch (err) {
+        failures.push({ target, error: errorMessage(err) });
+      }
     }
+    if (failures.length > 0) {
+      await this.auditIndexPersistence(
+        "shard_delete_batch",
+        shards.map((shard) => statePath(shard.scope, shard.key)),
+        {
+          reason,
+          requested: shards.length,
+          deleted,
+          failed: failures.length,
+          failures: failures.slice(0, 10),
+        },
+      );
+    }
+    // Once a manifest is published, cleanup must not abort the paired BM25 and
+    // vector save. Failed deletions leave recoverable orphan shards and are
+    // audited above for later maintenance. Successful derived-index maintenance
+    // stays out of the governance audit log to prevent unbounded amplification.
+  }
+
+  private async deleteSupersededGenerations(
+    previousManifest: IndexShardManifest | null,
+    retained: IndexShardGeneration | null,
+    currentShards: IndexShardGeneration["shards"],
+  ): Promise<void> {
+    const retainedShardIds = new Set(
+      [...currentShards, ...(retained?.shards ?? [])].map(
+        (shard) => `${shard.scope}\0${shard.key}`,
+      ),
+    );
+    const candidates = [
+      this.asGeneration(previousManifest),
+      this.asGeneration(previousManifest?.previous),
+    ];
+    const seen = new Set<string>();
+    const superseded: IndexShardGeneration["shards"] = [];
+    for (const generation of candidates) {
+      if (!generation) continue;
+      for (const shard of generation.shards) {
+        const id = `${shard.scope}\0${shard.key}`;
+        if (retainedShardIds.has(id) || seen.has(id)) continue;
+        seen.add(id);
+        superseded.push(shard);
+      }
+    }
+    await this.deleteShards(superseded, "previous_generation_cleanup");
   }
 
   private async isManifestPublished(
@@ -368,7 +539,28 @@ export class IndexPersistence {
       manifest.value != null &&
       typeof manifest.value === "object"
     ) {
-      return this.loadManifestData(manifest.value, label);
+      const current = await this.loadManifestData(manifest.value, label);
+      if (current !== null) {
+        this.retainedGenerationOverrides.delete(manifestKey);
+        return current;
+      }
+      if (this.asGeneration(manifest.value.previous)) {
+        const fallback = await this.loadGenerationData(
+          manifest.value.previous!,
+          `${label} previous`,
+        );
+        if (fallback !== null) {
+          this.retainedGenerationOverrides.set(
+            manifestKey,
+            this.asGeneration(manifest.value.previous)!,
+          );
+          logger.warn(`index persistence: ${label} using previous generation`, {
+            generation: manifest.value.previous?.generation,
+          });
+          return fallback;
+        }
+      }
+      return null;
     }
 
     const legacy = await this.readIndexValue<string>(
@@ -404,22 +596,41 @@ export class IndexPersistence {
     manifest: IndexShardManifest,
     label: string,
   ): Promise<string | null> {
-    if (
-      manifest.v !== 1 ||
-      !Array.isArray(manifest.shards) ||
-      manifest.shards.length === 0 ||
-      !Number.isInteger(manifest.chars) ||
-      manifest.chars < 0
-    ) {
+    const generation = this.asGeneration(manifest);
+    if (manifest.v !== 1 || !generation) {
       logger.warn(`index persistence: ${label} shard manifest invalid`);
       return null;
     }
-    for (const shard of manifest.shards) {
-      if (!isValidShardDescriptor(shard)) {
-        logger.warn(`index persistence: ${label} shard manifest invalid`);
-        return null;
-      }
+    return this.loadGenerationData(generation, label);
+  }
+
+  private asGeneration(value: unknown): IndexShardGeneration | null {
+    if (!value || typeof value !== "object") return null;
+    const generation = value as Partial<IndexShardGeneration>;
+    if (
+      !Array.isArray(generation.shards) ||
+      generation.shards.length === 0 ||
+      !Number.isInteger(generation.chars) ||
+      (generation.chars ?? -1) < 0 ||
+      (generation.generation !== undefined &&
+        typeof generation.generation !== "string") ||
+      !generation.shards.every(isValidShardDescriptor)
+    ) {
+      return null;
     }
+    return {
+      ...(generation.generation
+        ? { generation: generation.generation }
+        : {}),
+      shards: generation.shards.map((shard) => ({ ...shard })),
+      chars: generation.chars!,
+    };
+  }
+
+  private async loadGenerationData(
+    manifest: IndexShardGeneration,
+    label: string,
+  ): Promise<string | null> {
     const loadedShards = await Promise.all(
       manifest.shards.map(async (shard) => ({
         shard,

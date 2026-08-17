@@ -51,6 +51,13 @@ export class SearchIndex {
     return this.entries.has(id);
   }
 
+  entriesSnapshot(): Array<{ obsId: string; sessionId: string }> {
+    return Array.from(this.entries.values(), ({ obsId, sessionId }) => ({
+      obsId,
+      sessionId,
+    }));
+  }
+
   remove(id: string): void {
     const entry = this.entries.get(id);
     if (!entry) return;

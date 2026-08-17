@@ -14,7 +14,7 @@ git blame -L 40,52 src/auth/refresh.ts   # -> SHA 9a1b2c3d
 ```
 
 ```json
-memory_commit_lookup { "sha": "9a1b2c3d4e5f60718293a4b5c6d7e8f901234567" }
+memory_commit_lookup { "sha": "9a1b2c3d4e5f60718293a4b5c6d7e8f901234567", "project": "github.com/example/repository" }
 ```
 
 Expected output:
@@ -34,10 +34,11 @@ the commit predates session linking; do not invent intent.
 1. Find the SHA: `git blame -L <start>,<end> <file>` for a line range;
    `git log -L :<function>:<file>` for a function; `git log -n 1 -- <file>` for a
    bare path.
-2. Look it up: `memory_commit_lookup { "sha": "<full-sha>" }`.
+2. Resolve the active repository's canonical project ID, then look it up:
+   `memory_commit_lookup { "sha": "<full-sha>", "project": "<canonical-id>" }`.
 3. Present the commit (sha, short sha, branch, author, message), the linked
    session(s) (id, project, started/ended, observation count, summary), and the
-   importance >= 7 observations via `memory_recall` when available.
+   importance >= 7 observations via project-scoped `memory_recall` when available.
 
 ## Anti-patterns
 

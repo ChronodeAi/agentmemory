@@ -1,19 +1,14 @@
 #!/usr/bin/env node
 import { resolveProject } from "./_project.js";
+import {
+  deliverObservation,
+  reportObservationDeliveryFailure,
+} from "./_observe-delivery.js";
 
 function isSdkChildContext(payload: unknown): boolean {
   if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
   if (!payload || typeof payload !== "object") return false;
   return (payload as { entrypoint?: unknown }).entrypoint === "sdk-ts";
-}
-
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-  return h;
 }
 
 async function main() {
@@ -40,10 +35,7 @@ async function main() {
       ? rawSessionId
       : "unknown";
 
-  fetch(`${REST_URL}/agentmemory/observe`, {
-    method: "POST",
-    headers: authHeaders(),
-    body: JSON.stringify({
+  await deliverObservation({
       hookType: "notification",
       sessionId,
       project: resolveProject(data.cwd as string | undefined),
@@ -54,10 +46,7 @@ async function main() {
         title: data.title,
         message: data.message,
       },
-    }),
-    signal: AbortSignal.timeout(2000),
-  }).catch(() => {});
-  setTimeout(() => process.exit(0), 500).unref();
+  });
 }
 
-main().catch(() => process.exit(0));
+main().catch(reportObservationDeliveryFailure);

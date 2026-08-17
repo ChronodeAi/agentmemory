@@ -1,12 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { evaluateHealth } from "../src/health/thresholds.js";
+import { registerHealthMonitor } from "../src/health/monitor.js";
+import {
+  evaluateHealth,
+  healthStatusAllowsDoctor,
+  healthStatusExitCode,
+  stabilizeCpuPressure,
+} from "../src/health/thresholds.js";
 import type { HealthSnapshot } from "../src/types.js";
+import { mockKV, mockSdk } from "./helpers/mocks.js";
 
 function snap(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
+  const now = Date.now();
   return {
+    collectedAt: new Date(now).toISOString(),
+    expiresAt: new Date(now + 60_000).toISOString(),
     connectionState: "connected",
-    workers: [],
-    memory: { heapUsed: 0, heapTotal: 1, rss: 0, external: 0 },
+    workers: [{ id: "worker-1", name: "worker", status: "running" }],
+    workerProbeStatus: "ok",
+    slotBackend: { status: "ok" },
+    memory: {
+      heapUsed: 0,
+      heapTotal: 1,
+      rss: 0,
+      external: 0,
+      systemTotal: 16 * 1024 * 1024 * 1024,
+    },
     cpu: { userMicros: 0, systemMicros: 0, percent: 0 },
     eventLoopLagMs: 0,
     uptimeSeconds: 1,
@@ -18,6 +36,295 @@ function snap(over: Partial<HealthSnapshot> = {}): HealthSnapshot {
 }
 
 describe("evaluateHealth memory severity", () => {
+  it("returns a failing automation exit code unless health is explicit", () => {
+    expect(healthStatusExitCode("healthy")).toBe(0);
+    expect(healthStatusExitCode("degraded")).toBe(1);
+    expect(healthStatusExitCode("critical")).toBe(1);
+    expect(healthStatusExitCode("unknown")).toBe(1);
+    expect(healthStatusExitCode(undefined)).toBe(1);
+  });
+
+  it("keeps transient performance warnings advisory in doctor only", () => {
+    expect(healthStatusAllowsDoctor("healthy", [])).toBe(true);
+    expect(healthStatusAllowsDoctor("degraded", ["cpu_warn_83%"]))
+      .toBe(true);
+    expect(healthStatusAllowsDoctor("degraded", ["engine_cpu_warn_72%"]))
+      .toBe(true);
+    expect(
+      healthStatusAllowsDoctor("degraded", [
+        "event_loop_lag_warn_272ms",
+        "recovery_window",
+      ]),
+    ).toBe(true);
+    expect(
+      healthStatusAllowsDoctor("degraded", ["search_index_partial"]),
+    ).toBe(false);
+    expect(healthStatusAllowsDoctor("critical", ["cpu_warn_83%"]))
+      .toBe(false);
+    expect(healthStatusAllowsDoctor("unknown", [])).toBe(false);
+  });
+
+  it("requires consecutive CPU-only pressure samples before changing health", () => {
+    const evaluated = evaluateHealth(
+      snap({
+        engineResources: {
+          status: "ok",
+          pid: 42,
+          cpuPercent: 90,
+          rssBytes: 0,
+        },
+      }),
+    );
+
+    const first = stabilizeCpuPressure(evaluated, 0);
+    expect(first).toEqual({
+      evaluation: {
+        status: "healthy",
+        alerts: [],
+        notes: ["engine_cpu_transient_90%"],
+      },
+      consecutiveSamples: 1,
+    });
+
+    const second = stabilizeCpuPressure(evaluated, first.consecutiveSamples);
+    expect(second.evaluation).toMatchObject({
+      status: "critical",
+      alerts: ["engine_cpu_critical_90%"],
+    });
+    expect(second.consecutiveSamples).toBe(2);
+  });
+
+  it("does not debounce CPU pressure when another health failure is present", () => {
+    const evaluated = evaluateHealth(
+      snap({
+        kvConnectivity: { status: "error", error: "synthetic" },
+        engineResources: {
+          status: "ok",
+          pid: 42,
+          cpuPercent: 90,
+          rssBytes: 0,
+        },
+      }),
+    );
+
+    expect(stabilizeCpuPressure(evaluated, 0)).toEqual({
+      evaluation: evaluated,
+      consecutiveSamples: 0,
+    });
+  });
+
+  it("classifies iii engine CPU and RSS independently from Node", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          engineResources: {
+            status: "ok",
+            pid: 42,
+            cpuPercent: 90,
+            rssBytes: 3 * 1024 * 1024 * 1024,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: "critical",
+      alerts: expect.arrayContaining([
+        "engine_cpu_critical_90%",
+        "engine_rss_critical_3072mb",
+      ]),
+    });
+  });
+
+  it("keeps large iii RSS advisory when host-relative pressure is low", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          memory: {
+            heapUsed: 100 * 1024 * 1024,
+            heapTotal: 200 * 1024 * 1024,
+            rss: 1024 * 1024 * 1024,
+            external: 0,
+            systemTotal: 128 * 1024 * 1024 * 1024,
+          },
+          engineResources: {
+            status: "ok",
+            pid: 42,
+            cpuPercent: 1,
+            rssBytes: 1843 * 1024 * 1024,
+          },
+        }),
+      ),
+    ).toEqual({
+      status: "healthy",
+      alerts: [],
+      notes: ["engine_rss_elevated_1843mb_1.4%"],
+    });
+  });
+
+  it("falls back to absolute iii RSS thresholds without host capacity", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          memory: {
+            heapUsed: 0,
+            heapTotal: 1,
+            rss: 0,
+            external: 0,
+          },
+          engineResources: {
+            status: "ok",
+            pid: 42,
+            cpuPercent: 1,
+            rssBytes: 3 * 1024 * 1024 * 1024,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: "critical",
+      alerts: ["engine_rss_critical_3072mb"],
+    });
+  });
+
+  it("degrades on unbounded iii store growth", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          engineResources: {
+            status: "ok",
+            stateStore: {
+              bytes: 100,
+              files: 1,
+              partial: false,
+              growthBytesPerMinute: 64 * 1024 * 1024,
+            },
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: "degraded",
+      alerts: ["engine_store_growth_warn"],
+    });
+  });
+
+  it("fails health when KV or worker probing is unavailable", () => {
+    expect(
+      evaluateHealth(
+        snap({ kvConnectivity: { status: "error", error: "synthetic" } }),
+      ),
+    ).toMatchObject({ status: "critical", alerts: ["kv_unavailable"] });
+    expect(
+      evaluateHealth(snap({ workerProbeStatus: "error" })),
+    ).toMatchObject({ status: "critical", alerts: ["worker_probe_failed"] });
+  });
+
+  it.each([
+    ["empty", "workers_missing"],
+    ["invalid", "worker_probe_invalid"],
+  ] as const)("fails closed for a %s worker result", (workerProbeStatus, alert) => {
+    expect(
+      evaluateHealth(snap({ workers: [], workerProbeStatus })),
+    ).toMatchObject({ status: "critical", alerts: [alert] });
+  });
+
+  it("fails closed when slots are unavailable or the snapshot expired", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          slotBackend: { status: "error", error: "synthetic" },
+        }),
+      ),
+    ).toMatchObject({
+      status: "critical",
+      alerts: ["slot_backend_unavailable"],
+    });
+
+    expect(
+      evaluateHealth(
+        snap({ expiresAt: new Date(Date.now() - 1).toISOString() }),
+      ),
+    ).toMatchObject({
+      status: "critical",
+      alerts: ["health_snapshot_stale"],
+    });
+  });
+
+  it.each([
+    ["initializing", "search_index_initializing"],
+    ["rebuilding", "search_index_rebuilding"],
+    ["partial", "search_index_partial"],
+  ] as const)("reports a %s search index as degraded", (status, alert) => {
+    expect(
+      evaluateHealth(
+        snap({
+          searchIndex: {
+            status,
+            keywordEntries: 10,
+            vectorEntries: status === "partial" ? 8 : 10,
+          },
+        }),
+      ),
+    ).toMatchObject({ status: "degraded", alerts: [alert] });
+  });
+
+  it("treats vector work covered by active captures as bounded catch-up", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          captureAdmission: {
+            active: 0,
+            limit: 256,
+            rejected: 0,
+          },
+          searchIndex: {
+            status: "partial",
+            keywordEntries: 10,
+            vectorEntries: 9,
+          },
+        }),
+      ),
+    ).toEqual({
+      status: "healthy",
+      alerts: [],
+      notes: ["search_index_catching_up_1"],
+    });
+  });
+
+  it("degrades when partial drift exceeds active capture work", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          captureAdmission: {
+            active: 1,
+            limit: 256,
+            rejected: 0,
+          },
+          searchIndex: {
+            status: "partial",
+            keywordEntries: 10,
+            vectorEntries: 8,
+          },
+        }),
+      ),
+    ).toMatchObject({
+      status: "degraded",
+      alerts: ["search_index_partial"],
+    });
+  });
+
+  it("reports a failed search index as critical", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          searchIndex: {
+            status: "failed",
+            keywordEntries: 10,
+            vectorEntries: 3,
+            error: "search_index_rebuild_failed",
+          },
+        }),
+      ),
+    ).toMatchObject({ status: "critical", alerts: ["search_index_failed"] });
+  });
+
   it("stays healthy when heap fills a tiny steady-state process (issue #158)", () => {
     const s = snap({
       memory: {
@@ -33,6 +340,24 @@ describe("evaluateHealth memory severity", () => {
     expect(alerts.find((a) => a.startsWith("memory_warn_"))).toBeUndefined();
     expect(alerts.find((a) => a.startsWith("memory_heap_tight_"))).toBeUndefined();
     expect(notes.find((n) => n.startsWith("memory_heap_tight_"))).toBeDefined();
+  });
+
+  it("does not treat a small adaptive heap plus a native index as heap pressure", () => {
+    const s = snap({
+      memory: {
+        heapUsed: 87 * 1024 * 1024,
+        heapTotal: 90 * 1024 * 1024,
+        rss: 675 * 1024 * 1024,
+        external: 72 * 1024 * 1024,
+        systemTotal: 128 * 1024 * 1024 * 1024,
+      },
+    });
+    const { status, alerts, notes } = evaluateHealth(s);
+    expect(status).toBe("healthy");
+    expect(alerts.some((alert) => alert.startsWith("memory_"))).toBe(false);
+    expect(notes.some((note) => note.startsWith("memory_heap_tight_"))).toBe(
+      true,
+    );
   });
 
   it("goes critical when heap ratio is high AND RSS is above the floor", () => {
@@ -83,15 +408,344 @@ describe("evaluateHealth memory severity", () => {
   it("respects caller-supplied memoryRssFloorBytes", () => {
     const s = snap({
       memory: {
-        heapUsed: 98,
-        heapTotal: 100,
+        heapUsed: 98 * 1024 * 1024,
+        heapTotal: 100 * 1024 * 1024,
         rss: 50 * 1024 * 1024,
         external: 0,
       },
     });
-    const loose = evaluateHealth(s, { memoryRssFloorBytes: 10 * 1024 * 1024 });
+    const loose = evaluateHealth(s, {
+      memoryHeapFloorBytes: 10 * 1024 * 1024,
+      memoryRssFloorBytes: 10 * 1024 * 1024,
+    });
     expect(loose.status).toBe("critical");
-    const strict = evaluateHealth(s, { memoryRssFloorBytes: 1024 * 1024 * 1024 });
+    const strict = evaluateHealth(s, {
+      memoryHeapFloorBytes: 10 * 1024 * 1024,
+      memoryRssFloorBytes: 1024 * 1024 * 1024,
+    });
     expect(strict.status).toBe("healthy");
+  });
+
+  it("accounts for RSS and external memory even when heap usage is low", () => {
+    const rss = evaluateHealth(
+      snap({
+        memory: {
+          heapUsed: 10,
+          heapTotal: 100,
+          rss: 9 * 1024 * 1024 * 1024,
+          external: 0,
+          systemTotal: 16 * 1024 * 1024 * 1024,
+        },
+      }),
+    );
+    expect(rss.status).toBe("critical");
+    expect(
+      rss.alerts.some((alert) => alert.startsWith("memory_rss_critical_")),
+    ).toBe(true);
+
+    const external = evaluateHealth(
+      snap({
+        memory: {
+          heapUsed: 10,
+          heapTotal: 100,
+          rss: 100 * 1024 * 1024,
+          external: 2 * 1024 * 1024 * 1024,
+          systemTotal: 16 * 1024 * 1024 * 1024,
+        },
+      }),
+    );
+    expect(external.status).toBe("critical");
+    expect(
+      external.alerts.some((alert) =>
+        alert.startsWith("memory_external_critical_"),
+      ),
+    ).toBe(true);
+  });
+
+  it("reports capture capacity and recent delivery failures", () => {
+    const exhausted = evaluateHealth(
+      snap({
+        captureAdmission: {
+          active: 10,
+          limit: 10,
+          rejected: 1,
+          rejectedSinceLastCollection: 1,
+          failedSinceLastCollection: 2,
+        },
+      }),
+    );
+    expect(exhausted.status).toBe("critical");
+    expect(exhausted.alerts).toEqual(
+      expect.arrayContaining([
+        "capture_capacity_exhausted",
+        "capture_rejected_1",
+        "capture_failed_2",
+      ]),
+    );
+  });
+
+  it("reports cross-project capture denial without degrading service health", () => {
+    expect(
+      evaluateHealth(
+        snap({
+          captureAdmission: {
+            active: 0,
+            limit: 256,
+            rejected: 0,
+            scopeDenied: 4,
+            scopeDeniedSinceLastCollection: 2,
+            scopeDenialReasons: { project_scope_mismatch: 4 },
+          },
+        }),
+      ),
+    ).toEqual({
+      status: "healthy",
+      alerts: [],
+      notes: ["capture_scope_denied_2"],
+    });
+  });
+});
+
+describe("boot-local background and persistence health", () => {
+  const idlePipeline: NonNullable<HealthSnapshot["backgroundPipeline"]> = {
+    status: "idle",
+    accepted: 0,
+    started: 0,
+    succeeded: 0,
+    failed: 0,
+    activeAccepted: 0,
+    activeRunning: 0,
+    candidates: 0,
+    promoted: 0,
+    unresolvedFailed: 0,
+    failedProjects: [],
+  };
+
+  it("keeps idle unproven paths healthy and explicit in notes", () => {
+    const result = evaluateHealth(
+      snap({
+        backgroundPipeline: idlePipeline,
+        indexPersistence: {
+          status: "idle",
+          attempts: 0,
+          succeeded: 0,
+          failed: 0,
+          pending: 0,
+          consecutiveFailures: 0,
+        },
+        auditPersistence: {
+          status: "idle",
+          attempts: 0,
+          succeeded: 0,
+          failed: 0,
+        },
+      }),
+    );
+    expect(result.status).toBe("healthy");
+    expect(result.notes).toEqual(
+      expect.arrayContaining([
+        "background_pipeline_unproven_this_boot",
+        "index_persistence_unproven_this_boot",
+        "audit_persistence_unproven_this_boot",
+      ]),
+    );
+  });
+
+  it("degrades for a current-boot pipeline failure", () => {
+    const result = evaluateHealth(
+      snap({
+        backgroundPipeline: {
+          ...idlePipeline,
+          status: "failed",
+          accepted: 1,
+          started: 1,
+          failed: 1,
+          unresolvedFailed: 1,
+          failedProjects: ["github.com/example/project"],
+          lastOutcome: "failed",
+          lastStage: "promotion",
+          lastFailureStage: "promotion",
+          lastErrorCode: "PROMOTION_PERSISTENCE_FAILED",
+        },
+      }),
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.alerts).toContain("background_pipeline_failed_promotion");
+  });
+
+  it("degrades accepted and running work only after bounded budgets", () => {
+    const accepted = evaluateHealth(
+      snap({
+        backgroundPipeline: {
+          ...idlePipeline,
+          status: "active",
+          accepted: 1,
+          activeAccepted: 1,
+          oldestAcceptedAt: new Date(Date.now() - 31_000).toISOString(),
+        },
+      }),
+    );
+    expect(accepted.alerts).toContain("background_pipeline_dispatch_stalled");
+
+    const running = evaluateHealth(
+      snap({
+        backgroundPipeline: {
+          ...idlePipeline,
+          status: "active",
+          accepted: 1,
+          started: 1,
+          activeRunning: 1,
+          oldestRunningAt: new Date(Date.now() - 211_000).toISOString(),
+        },
+      }),
+    );
+    expect(running.alerts).toContain("background_pipeline_running_stalled");
+  });
+
+  it("does not let an unrelated success hide an unresolved pipeline failure", () => {
+    const result = evaluateHealth(
+      snap({
+        backgroundPipeline: {
+          ...idlePipeline,
+          status: "succeeded",
+          accepted: 2,
+          started: 2,
+          succeeded: 1,
+          failed: 1,
+          unresolvedFailed: 1,
+          failedProjects: ["github.com/example/failed-project"],
+          lastOutcome: "succeeded",
+          lastStage: "promotion",
+          lastFailureStage: "summary",
+          lastSucceededAt: new Date().toISOString(),
+        },
+      }),
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.alerts).toContain("background_pipeline_failed_summary");
+  });
+
+  it("reports current index and audit persistence failures independently", () => {
+    const result = evaluateHealth(
+      snap({
+        indexPersistence: {
+          status: "failed",
+          attempts: 1,
+          succeeded: 0,
+          failed: 1,
+          pending: 0,
+          consecutiveFailures: 1,
+          lastErrorCode: "TIMEOUT",
+        },
+        auditPersistence: {
+          status: "failed",
+          attempts: 1,
+          succeeded: 0,
+          failed: 1,
+          lastErrorCode: "AUDIT_PERSISTENCE_FAILED",
+        },
+      }),
+    );
+    expect(result.status).toBe("degraded");
+    expect(result.alerts).toEqual(
+      expect.arrayContaining([
+        "index_persistence_failed_TIMEOUT",
+        "audit_persistence_failed_AUDIT_PERSISTENCE_FAILED",
+      ]),
+    );
+  });
+});
+
+describe("health dependency probing", () => {
+  it("includes the live search-index state in collected health", async () => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    sdk.registerFunction("engine::workers::list", async () => ({
+      workers: [{ id: "worker-1", name: "worker", status: "running" }],
+    }));
+    const monitor = registerHealthMonitor(sdk as never, kv as never, {
+      getSearchIndexStatus: () => ({
+        status: "rebuilding",
+        keywordEntries: 12,
+        vectorEntries: 8,
+      }),
+      getIndexPersistenceStatus: () => ({
+        status: "ready",
+        attempts: 1,
+        succeeded: 1,
+        failed: 0,
+        pending: 0,
+        consecutiveFailures: 0,
+      }),
+      collectEngineResources: () => ({
+        status: "ok",
+        cpuPercent: 0,
+        rssBytes: 0,
+        stateStore: { bytes: 0, files: 0, partial: false },
+        streamStore: { bytes: 0, files: 0, partial: false },
+      }),
+    });
+    try {
+      const snapshot = await monitor.collectNow();
+      expect(snapshot.searchIndex).toEqual({
+        status: "rebuilding",
+        keywordEntries: 12,
+        vectorEntries: 8,
+      });
+      expect(snapshot.boot).toMatchObject({
+        id: expect.any(String),
+        startedAt: expect.any(String),
+        pid: process.pid,
+      });
+      expect(snapshot.backgroundPipeline).toBeDefined();
+      expect(snapshot.indexPersistence).toMatchObject({
+        status: "ready",
+        attempts: 1,
+      });
+      expect(snapshot.auditPersistence).toBeDefined();
+      expect(snapshot.status).toBe("degraded");
+      expect(snapshot.alerts).toContain("search_index_rebuilding");
+    } finally {
+      monitor.stop();
+    }
+  });
+
+  it.each([
+    [{ workers: [] }, "workers_missing"],
+    [{ workers: "not-an-array" }, "worker_probe_invalid"],
+  ])("fails closed for malformed engine worker output", async (result, alert) => {
+    const sdk = mockSdk();
+    const kv = mockKV();
+    sdk.registerFunction("engine::workers::list", async () => result);
+    const monitor = registerHealthMonitor(sdk as never, kv as never);
+    try {
+      const snapshot = await monitor.collectNow();
+      expect(snapshot.status).toBe("critical");
+      expect(snapshot.alerts).toContain(alert);
+    } finally {
+      monitor.stop();
+    }
+  });
+
+  it("fails closed when the slot backend cannot be listed", async () => {
+    const sdk = mockSdk();
+    sdk.registerFunction("engine::workers::list", async () => ({
+      workers: [{ id: "worker-1", name: "worker", status: "running" }],
+    }));
+    const base = mockKV();
+    const kv = {
+      ...base,
+      list: async () => {
+        throw new Error("synthetic slot failure");
+      },
+    };
+    const monitor = registerHealthMonitor(sdk as never, kv as never);
+    try {
+      const snapshot = await monitor.collectNow();
+      expect(snapshot.status).toBe("critical");
+      expect(snapshot.alerts).toContain("slot_backend_unavailable");
+    } finally {
+      monitor.stop();
+    }
   });
 });

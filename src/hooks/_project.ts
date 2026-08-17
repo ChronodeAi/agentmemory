@@ -1,20 +1,14 @@
-import { execSync } from "node:child_process";
-import { basename } from "node:path";
+import {
+  loadAgentmemoryEnvironment,
+  resolveProjectConfig,
+} from "../project-config.js";
 
-// Resolution order: AGENTMEMORY_PROJECT_NAME env → git toplevel basename → cwd basename.
+// Hooks are standalone processes. Load the user configuration before any hook
+// reads process.env, while preserving variables explicitly set by the caller.
+loadAgentmemoryEnvironment();
+
 export function resolveProject(cwd?: string): string {
-  const explicit = process.env["AGENTMEMORY_PROJECT_NAME"];
-  if (explicit && explicit.trim()) return explicit.trim();
-  const dir = cwd && cwd.trim() ? cwd : process.cwd();
-  try {
-    const top = execSync("git rev-parse --show-toplevel", {
-      cwd: dir,
-      stdio: ["ignore", "pipe", "ignore"],
-      timeout: 500,
-    })
-      .toString()
-      .trim();
-    if (top) return basename(top);
-  } catch {}
-  return basename(dir);
+  const target =
+    typeof cwd === "string" && cwd.trim() ? cwd : process.cwd();
+  return resolveProjectConfig(target).project_id;
 }

@@ -10,11 +10,11 @@ The user wants to resume work. Optional cwd override: $ARGUMENTS
 ## Quick start
 
 ```json
-memory_sessions { "limit": 20 }
+memory_sessions { "project": "github.com/example/repository", "limit": 20 }
 ```
 
 Pick the most recent session whose `cwd` matches this project, then:
-`memory_recall { "query": "<session top concepts>", "limit": 10 }`.
+`memory_recall { "query": "<session top concepts>", "project": "github.com/example/repository", "limit": 10 }`.
 
 Expected output:
 
@@ -31,17 +31,15 @@ gets mistaken for this one. Never invent observations for an empty session.
 
 ## Workflow
 
-1. Resolve the project path: if `$ARGUMENTS` is given, normalize it to absolute
-   (`path.resolve(process.cwd(), $ARGUMENTS)`); else use the cwd.
-2. Call `memory_sessions`. Pick the most recent session whose normalized `cwd`
-   matches by directory boundary: equality, OR `cwd.startsWith(projectPath + sep)`,
-   OR `projectPath.startsWith(cwd + sep)`. Prefer `completed` over `abandoned`.
-   No match: fall back to the single most recent session overall.
+1. Resolve the active repository's canonical project ID. If `$ARGUMENTS`
+   names another repository, resolve that repository's canonical ID explicitly.
+2. Call `memory_sessions` with that `project`. Pick its most recent session,
+   preferring `completed` over `abandoned`. Do not fall back across projects.
 3. If the session ended on an unanswered user-facing question, surface it FIRST.
    Look in `summary` or recent `conversation` observations whose `narrative`
    ends in `?`.
 4. Summarize: title/summary, key files, key decisions or errors, using
-   `memory_recall` on the top concepts, limit 10.
+   `memory_recall` on the top concepts with the same `project`, limit 10.
 5. End with one concrete "next step?" pointer.
 
 ## Anti-patterns

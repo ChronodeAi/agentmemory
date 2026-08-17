@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,6 +9,10 @@ vi.mock("../src/logger.js", () => ({
 
 import { registerReplayFunctions } from "../src/functions/replay.js";
 import { KV } from "../src/state/schema.js";
+import {
+  getSearchIndex,
+  setIndexPersistence,
+} from "../src/functions/search.js";
 
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
@@ -62,6 +66,10 @@ describe("import-jsonl re-key on parsed.sessionId (#775)", () => {
 
   beforeEach(() => {
     tmpRoot = mkdtempSync(join(tmpdir(), "replay-import-key-"));
+  });
+
+  afterEach(() => {
+    setIndexPersistence(null);
   });
 
   function writeFixture(sessionId: string, ts = "2026-04-17T10:00:00.000Z") {
@@ -150,5 +158,53 @@ describe("import-jsonl re-key on parsed.sessionId (#775)", () => {
       .getSetCalls()
       .filter((c) => c.scope === KV.sessions && c.key === "sess-fresh");
     expect(sessionWrites.length).toBe(1);
+  });
+
+  it("keeps replayed Agentmemory retrieval calls out of the search index", async () => {
+    const sessionId = "sess-retrieval-output";
+    const dir = join(tmpRoot, "proj");
+    require("node:fs").mkdirSync(dir, { recursive: true });
+    writeFileSync(
+      join(dir, `${sessionId}.jsonl`),
+      JSON.stringify({
+        type: "assistant",
+        uuid: "a-retrieval",
+        sessionId,
+        timestamp: "2026-04-17T10:00:00.000Z",
+        cwd: tmpRoot,
+        message: {
+          role: "assistant",
+          content: [
+            {
+              type: "tool_use",
+              id: "tool-retrieval",
+              name: "mcp__agentmemory__memory_context_packet",
+              input: { query: "auth middleware" },
+            },
+          ],
+        },
+      }) + "\n",
+    );
+
+    const kv = mockKV();
+    const sdk = mockSdk(kv);
+    const scheduleSave = vi.fn();
+    setIndexPersistence({ scheduleSave, save: vi.fn(async () => undefined) });
+    registerReplayFunctions(sdk, kv as never);
+    const indexSizeBefore = getSearchIndex().size;
+
+    const result = (await sdk.trigger("mem::replay::import-jsonl", {
+      path: tmpRoot,
+    })) as { success: boolean; imported?: number };
+
+    expect(result.success).toBe(true);
+    expect(result.imported).toBe(1);
+    const observationWrites = kv
+      .getSetCalls()
+      .filter((call) => call.scope === KV.observations(sessionId));
+    expect(observationWrites).toHaveLength(1);
+    expect(observationWrites[0]?.value.recalledOnly).toBe(true);
+    expect(getSearchIndex().size).toBe(indexSizeBefore);
+    expect(scheduleSave).not.toHaveBeenCalled();
   });
 });

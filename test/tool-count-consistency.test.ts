@@ -9,7 +9,7 @@ vi.mock("../src/logger.js", () => ({
 import { getAllTools, ESSENTIAL_TOOLS } from "../src/mcp/tools-registry.js";
 
 const ROOT = join(import.meta.dirname, "..");
-const EXPECTED_TOOL_COUNT = 53;
+const EXPECTED_TOOL_COUNT = 59;
 
 function readText(relativePath: string): string {
   return readFileSync(join(ROOT, relativePath), "utf-8");
@@ -49,6 +49,29 @@ describe("Tool count consistency", () => {
     expect(readText("README.md")).toContain(`${skillCount} skills`);
     expect(readText("AGENTS.md")).toContain(`12 hooks, ${skillCount} skills`);
     expect(readText("plugin/plugin.json")).toContain(`${skillCount} skills`);
+  });
+
+  it("project-scoped skill examples include canonical project IDs", () => {
+    const scopedSkills = [
+      "recall",
+      "remember",
+      "session-history",
+      "recap",
+      "forget",
+      "handoff",
+      "commit-context",
+      "commit-history",
+    ];
+    for (const skill of scopedSkills) {
+      expect(readText(`plugin/skills/${skill}/SKILL.md`), skill).toContain(
+        '"project": "github.com/example/repository"',
+      );
+    }
+    for (const skill of scopedSkills) {
+      expect(readText(`plugin/skills/${skill}/EXAMPLES.md`), skill).toContain(
+        '"project": "github.com/example/repository"',
+      );
+    }
   });
 
   it("INSTALL_FOR_AGENTS.md names the real core tool set", () => {

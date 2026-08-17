@@ -166,7 +166,7 @@ function loadViewerSandbox() {
   };
 
   const scriptWithoutAutoStart = scriptMatch[1].replace(
-    /\n\s*loadTab\('dashboard'\);\n\s*connectWs\(\);\n\s*startDashboardAutoRefresh\(\);\s*$/,
+    /\n\s*switchTab\(tabFromRoute\(\), \{ replaceRoute: true \}\);\n\s*connectWs\(\);\n\s*startDashboardAutoRefresh\(\);\s*$/,
     "\n",
   );
 
@@ -206,11 +206,51 @@ describe("viewer session rendering", () => {
     expect(prompt.innerHTML).not.toContain("/data/.hmac");
   });
 
+  it("renders a structured critical health snapshot returned with HTTP 503", async () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    sandbox.fetch = async () => ({
+      ok: false,
+      status: 503,
+      json: async () => ({
+        status: "critical",
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+        health: { status: "critical", connectionState: "connected" },
+      }),
+    });
+
+    const result = await sandbox.apiGet("health");
+    expect(result.status).toBe("critical");
+
+    sandbox.state.dashboard = {
+      loaded: true,
+      health: result,
+      sessions: [],
+      memories: [],
+      graphStats: null,
+      recentAudit: [],
+      lessons: [],
+      crystals: [],
+    };
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("critical");
+    expect(getElement("view-dashboard").innerHTML).not.toContain("unknown");
+  });
+
   it("does not throw when dashboard sessions are missing ids", () => {
     const { sandbox, getElement } = loadViewerSandbox();
     sandbox.state.dashboard = {
       loaded: true,
-      health: { status: "healthy", health: {} },
+      health: {
+        status: "healthy",
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+        health: {},
+      },
       sessions: [{ status: "active", observationCount: 3, startedAt: "2026-05-13T12:00:00Z" }],
       memories: [],
       graphStats: null,
@@ -221,6 +261,195 @@ describe("viewer session rendering", () => {
 
     expect(() => sandbox.renderDashboard()).not.toThrow();
     expect(getElement("view-dashboard").innerHTML).toContain("Unknown session");
+  });
+
+  it("uses explicit global scope for aggregate dashboard data", async () => {
+    const { sandbox } = loadViewerSandbox();
+    const requests: string[] = [];
+    sandbox.fetch = async (url: string) => {
+      requests.push(url);
+      return { ok: true, json: async () => ({}) };
+    };
+
+    await sandbox.loadDashboard();
+
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/sessions?scope=global&limit=200",
+    );
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/lessons?scope=global",
+    );
+    expect(requests).toContain(
+      "http://localhost:3113/agentmemory/crystals?scope=global",
+    );
+    expect(requests.some((url) => url.includes("/agentmemory/audit?"))).toBe(
+      false,
+    );
+    expect(requests).not.toContain(
+      "http://localhost:3113/agentmemory/sessions",
+    );
+  });
+
+  it("renders global totals while labeling metrics derived from the bounded sample", async () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    let request = 0;
+    const responses = [
+      {
+        status: "healthy",
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+        health: {},
+      },
+      {
+        total: 756,
+        sessions: [
+          { id: "ses-1", status: "active", observationCount: 20 },
+          { id: "ses-2", status: "completed", observationCount: 10 },
+        ],
+      },
+      { total: 687, memories: [{ id: "mem-1" }] },
+      {},
+      {},
+      {},
+      {},
+      {},
+      {},
+    ];
+    sandbox.fetch = async () => ({
+      ok: true,
+      json: async () => responses[request++],
+    });
+
+    await sandbox.loadDashboard();
+    const html = getElement("view-dashboard").innerHTML;
+    expect(html).toContain('<div class="value">756</div>');
+    expect(html).toContain('<div class="value">687</div>');
+    expect(html).toContain("1 active in recent 2");
+    expect(html).toContain("recent 2-session sample");
+  });
+
+  it("does not schedule a full dashboard reload for each live observation", () => {
+    const { sandbox } = loadViewerSandbox();
+    let scheduled = 0;
+    sandbox.setTimeout = () => {
+      scheduled += 1;
+      return 1;
+    };
+    sandbox.state.activeTab = "dashboard";
+
+    sandbox.routeWsMessage({
+      observation: { id: "obs-1", sessionId: "session-1" },
+    });
+
+    expect(scheduled).toBe(0);
+  });
+
+  it("coalesces dashboard loads and preserves rendered content during refresh", async () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    const pending: Array<(value: unknown) => void> = [];
+    let requests = 0;
+    sandbox.state.dashboard.loaded = true;
+    getElement("view-dashboard").innerHTML = "stable dashboard";
+    sandbox.fetch = async () => {
+      requests += 1;
+      return await new Promise((resolve) => pending.push(resolve));
+    };
+
+    const first = sandbox.loadDashboard();
+    const second = sandbox.loadDashboard();
+
+    expect(requests).toBe(9);
+    expect(getElement("view-dashboard").innerHTML).toBe("stable dashboard");
+
+    pending.forEach((resolve) =>
+      resolve({ ok: true, json: async () => ({}) }),
+    );
+    await Promise.all([first, second]);
+    expect(requests).toBe(9);
+  });
+
+  it("debounces live observations instead of refreshing immediately", () => {
+    const { sandbox } = loadViewerSandbox();
+    let requests = 0;
+    sandbox.state.activeTab = "dashboard";
+    sandbox.state.dashboard.loaded = true;
+    sandbox.fetch = async () => {
+      requests += 1;
+      return { ok: true, json: async () => ({}) };
+    };
+
+    sandbox.routeWsMessage({
+      observation: { id: "obs-live", timestamp: "2026-08-10T00:00:00Z" },
+    });
+
+    expect(requests).toBe(0);
+  });
+
+  it("falls back to nested health and reports failed health as unavailable", () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    const dashboard = {
+      loaded: true,
+      sessions: [],
+      memories: [],
+      graphStats: null,
+      recentAudit: [],
+      lessons: [],
+      crystals: [],
+    };
+
+    sandbox.state.dashboard = {
+      ...dashboard,
+      health: {
+        build: {
+          viewer: sandbox.VIEWER_BUILD_ID,
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+        health: { status: "degraded", connectionState: "connected" },
+      },
+    };
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("degraded");
+    expect(getElement("view-dashboard").innerHTML).toContain("connected");
+
+    sandbox.state.dashboard = { ...dashboard, health: null };
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("unavailable");
+    expect(getElement("view-dashboard").innerHTML).not.toContain(
+      "health-dot \"></span> unknown",
+    );
+  });
+
+  it("fails closed when the API omits or mismatches build identity", () => {
+    const { sandbox, getElement } = loadViewerSandbox();
+    const dashboard = {
+      loaded: true,
+      sessions: [],
+      memories: [],
+      graphStats: null,
+      recentAudit: [],
+      lessons: [],
+      crystals: [],
+      health: { status: "healthy", health: {} },
+    };
+
+    sandbox.state.dashboard = dashboard;
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("incompatible");
+
+    sandbox.state.dashboard = {
+      ...dashboard,
+      health: {
+        ...dashboard.health,
+        build: {
+          viewer: "unexpected-viewer",
+          apiContract: sandbox.VIEWER_API_CONTRACT,
+        },
+      },
+    };
+    sandbox.renderDashboard();
+    expect(getElement("view-dashboard").innerHTML).toContain("incompatible");
   });
 
   it("does not throw when timeline and sessions tabs receive sessions missing ids", () => {

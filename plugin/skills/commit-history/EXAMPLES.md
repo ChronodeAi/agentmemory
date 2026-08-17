@@ -7,7 +7,7 @@ User: "Show agent commits on main."
 Invocation:
 
 ```json
-memory_commits { "branch": "main", "limit": 100 }
+memory_commits { "project": "github.com/example/repository", "branch": "main", "limit": 100 }
 ```
 
 Response:
@@ -37,7 +37,7 @@ User: "commit-history 5"
 Treat `5` as the limit:
 
 ```json
-memory_commits { "limit": 5 }
+memory_commits { "project": "github.com/example/repository", "limit": 5 }
 ```
 
 Render the five newest linked commits in the same format.
@@ -47,7 +47,7 @@ Render the five newest linked commits in the same format.
 User: "Show agent commits on release-2.0."
 
 ```json
-memory_commits { "branch": "release-2.0", "limit": 100 }
+memory_commits { "project": "github.com/example/repository", "branch": "release-2.0", "limit": 100 }
 ```
 
 Response:
@@ -64,7 +64,7 @@ Present:
 REST fallback for this same call, with encoding:
 
 ```http
-GET /agentmemory/commits?branch=release-2.0&limit=100
+GET /agentmemory/commits?project=github.com%2Fexample%2Frepository&branch=release-2.0&limit=100
 ```
 
 Build it with `URLSearchParams` so a branch like `feat/a&b` becomes

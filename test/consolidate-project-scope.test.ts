@@ -186,7 +186,7 @@ describe("mem::consolidate — cross-project existingMatch guard", () => {
     expect(latestApi[0].parentId).toBe(apiMemory.id);
   });
 
-  it("unscoped consolidation may evolve any existing memory regardless of project (background cron behavior)", async () => {
+  it("explicit global consolidation may evolve existing memories across projects", async () => {
     const sdk = makeMockSdk();
     const kv = makeMockKV();
     const provider = makeProvider("synthesized memory title");
@@ -195,7 +195,7 @@ describe("mem::consolidate — cross-project existingMatch guard", () => {
     const scopedMemory = makeExistingMemory("mem_api_old", "synthesized memory title", "api");
     await kv.set(KV.memories, scopedMemory.id, scopedMemory);
 
-    // Session with no project restriction — unscoped consolidation
+    // Session included only because this call explicitly requests global scope.
     const session = makeSession("sess_any", "any");
     await kv.set(KV.sessions, session.id, session);
     for (let i = 0; i < 3; i++) {
@@ -207,10 +207,12 @@ describe("mem::consolidate — cross-project existingMatch guard", () => {
     }
 
     registerConsolidateFunction(sdk as never, kv as never, provider as never);
-    // No project passed — unscoped consolidation
-    await sdk.trigger("mem::consolidate", { minObservations: 1 });
+    await sdk.trigger("mem::consolidate", {
+      scope: "global",
+      minObservations: 1,
+    });
 
-    // The existing scoped memory should have been evolved (unscoped run is unrestricted)
+    // The existing scoped memory can be evolved by an explicit global run.
     const old = await kv.get<Memory>(KV.memories, scopedMemory.id);
     expect(old?.isLatest).toBe(false);
 
@@ -245,7 +247,7 @@ describe("mem::consolidate — cross-project existingMatch guard", () => {
     expect(memories[0].project).toBe("api");
   });
 
-  it("leaves project undefined on memories when consolidate is called without a project", async () => {
+  it("leaves project undefined on memories for explicit global consolidation", async () => {
     const sdk = makeMockSdk();
     const kv = makeMockKV();
     const provider = makeProvider("unscoped memory");
@@ -261,10 +263,26 @@ describe("mem::consolidate — cross-project existingMatch guard", () => {
     }
 
     registerConsolidateFunction(sdk as never, kv as never, provider as never);
-    await sdk.trigger("mem::consolidate", { minObservations: 1 });
+    await sdk.trigger("mem::consolidate", {
+      scope: "global",
+      minObservations: 1,
+    });
 
     const memories = await kv.list<Memory>(KV.memories);
     expect(memories).toHaveLength(1);
     expect(memories[0].project).toBeUndefined();
+  });
+
+  it("rejects consolidation when project scope is omitted", async () => {
+    const sdk = makeMockSdk();
+    const kv = makeMockKV();
+    registerConsolidateFunction(
+      sdk as never,
+      kv as never,
+      makeProvider() as never,
+    );
+    await expect(
+      sdk.trigger("mem::consolidate", { minObservations: 1 }),
+    ).rejects.toThrow(/project is required/);
   });
 });

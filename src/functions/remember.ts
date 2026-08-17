@@ -6,9 +6,17 @@ import { withKeyedLock } from "../state/keyed-mutex.js";
 import { memoryToObservation } from "../state/memory-utils.js";
 import { deleteAccessLog } from "./access-tracker.js";
 import { recordAudit } from "./audit.js";
-import { getSearchIndex, vectorIndexAddGuarded, vectorIndexRemove, flushIndexSave } from "./search.js";
+import {
+  flushIndexSave,
+  getSearchIndex,
+  scheduleIndexSave,
+  vectorIndexAddGuarded,
+  vectorIndexRemove,
+} from "./search.js";
 import { getAgentId } from "../config.js";
+import { stripPrivateData } from "./privacy.js";
 import { logger } from "../logger.js";
+import { requireProjectReadScope } from "../project-scope.js";
 
 export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::remember", 
@@ -21,6 +29,7 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       sourceObservationIds?: string[];
       agentId?: string;
       project?: string;
+      scope?: "project" | "global";
     }) => {
       if (
         !data.content ||
@@ -49,29 +58,27 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
       const memType = validTypes.has(data.type || "")
         ? (data.type as Memory["type"])
         : "fact";
+      const content = stripPrivateData(data.content);
 
       const now = new Date().toISOString();
       // Normalize project early so every subsequent comparison and storage
       // operation uses the same cleaned value. Raw data.project must not be
       // referenced below this point.
+      const projectScope = requireProjectReadScope(data, "mem::remember");
       const project =
-        typeof data.project === "string" && data.project.trim().length > 0
-          ? data.project.trim()
-          : undefined;
+        projectScope.kind === "project" ? projectScope.project : undefined;
 
-      return withKeyedLock("mem:remember", async () => {
+      return withKeyedLock(`mem:remember:${project ?? "global"}`, async () => {
         const existingMemories = await kv.list<Memory>(KV.memories);
         let supersededId: string | undefined;
         let supersededVersion = 1;
         let supersededMemory: Memory | undefined;
-        const lowerContent = data.content.toLowerCase();
+        const lowerContent = content.toLowerCase();
         for (const existing of existingMemories) {
           if (existing.isLatest === false) continue;
-          // Never supersede a memory that belongs to a different project.
-          // Both sides must have an explicit project for the guard to engage;
-          // an unscoped memory (legacy, no project field) is treated as a
-          // wildcard so pre-existing data is not stranded.
-          if (project && existing.project && existing.project !== project) {
+          // Supersession and semantic reinforcement are scope-local. Legacy
+          // unscoped rows never compete with project records.
+          if (existing.project !== project) {
             continue;
           }
           const similarity = jaccardSimilarity(
@@ -100,8 +107,8 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           createdAt: now,
           updatedAt: now,
           type: memType,
-          title: data.content.slice(0, 80),
-          content: data.content,
+          title: content.slice(0, 80),
+          content,
           concepts: data.concepts || [],
           files: data.files || [],
           sessionIds: [],
@@ -145,7 +152,9 @@ export function registerRememberFunction(sdk: ISdk, kv: StateKV): void {
           memory.sessionIds?.[0] ?? "memory",
           memory.title + " " + memory.content,
           { kind: "memory", logId: memory.id },
+          { externalProcessing: project === undefined },
         );
+        scheduleIndexSave();
 
         if (supersededId) {
           await sdk.trigger({

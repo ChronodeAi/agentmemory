@@ -1,0 +1,71 @@
+metadata:
+  schema_version: "1.0.0"
+  created_at: "2026-07-25T15:12:20Z"
+  description: "Provenance record for the SDLC Accelerate final brief"
+
+entity:
+  id: "urn:aiwg:artifact:.aiwg/reports/construction-ready-brief.md"
+  type: document
+  created_at: "2026-07-25T15:12:20Z"
+  checksum: "sha256:18ddb39bc571c499a7c631796af4be1a171a566bd4a4c553f4fb5da3e395013c"
+  size_bytes: 2945
+  attributes:
+    status: "NOT CONSTRUCTION READY"
+    repository_revision: "ae4f5e144d1c340f7c949580df94392b77979ad1"
+
+activity:
+  id: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+  type: derivation
+  started_at: "2026-07-25T14:53:14Z"
+  ended_at: "2026-07-25T15:12:20Z"
+  duration_seconds: 1146
+  description: "Derive a non-authorizing construction readiness brief from live repository analysis and planning artifacts"
+
+agent:
+  id: "urn:aiwg:agent:codex-gpt-5.6-sol"
+  type: ai_assistant
+  name: "Codex"
+  version: "gpt-5.6-sol"
+
+relationships:
+  wasGeneratedBy:
+    entity: "urn:aiwg:artifact:.aiwg/reports/construction-ready-brief.md"
+    activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+    time: "2026-07-25T15:12:20Z"
+  used:
+    - activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+      entity: "urn:aiwg:artifact:.aiwg/reports/codebase-analysis-report.md"
+      role: "repository_evidence"
+    - activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+      entity: "urn:aiwg:artifact:.aiwg/architecture/software-architecture-doc.md"
+      role: "draft_architecture"
+    - activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+      entity: "urn:aiwg:artifact:.aiwg/testing/master-test-plan.md"
+      role: "verification_plan"
+    - activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+      entity: "urn:aiwg:artifact:.aiwg/reports/abm-report.md"
+      role: "gate_evaluation"
+  wasDerivedFrom:
+    - entity: "urn:aiwg:artifact:.aiwg/reports/construction-ready-brief.md"
+      source: "urn:aiwg:artifact:.aiwg/reports/codebase-analysis-report.md"
+      derivation_type: "derives_from"
+      activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+    - entity: "urn:aiwg:artifact:.aiwg/reports/construction-ready-brief.md"
+      source: "urn:aiwg:artifact:.aiwg/architecture/software-architecture-doc.md"
+      derivation_type: "derives_from"
+      activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+    - entity: "urn:aiwg:artifact:.aiwg/reports/construction-ready-brief.md"
+      source: "urn:aiwg:artifact:.aiwg/testing/master-test-plan.md"
+      derivation_type: "derives_from"
+      activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+    - entity: "urn:aiwg:artifact:.aiwg/reports/construction-ready-brief.md"
+      source: "urn:aiwg:artifact:.aiwg/reports/abm-report.md"
+      derivation_type: "derives_from"
+      activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+  wasAssociatedWith:
+    activity: "urn:aiwg:activity:derivation:construction-ready-brief:001"
+    agent: "urn:aiwg:agent:codex-gpt-5.6-sol"
+    role: "primary_author"
+  wasAttributedTo:
+    entity: "urn:aiwg:artifact:.aiwg/reports/construction-ready-brief.md"
+    agent: "urn:aiwg:agent:codex-gpt-5.6-sol"

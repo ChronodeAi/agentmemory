@@ -63,8 +63,22 @@ describe("vision-search", () => {
     await kv.set(KV.imageRefs, ref, 1);
   }
 
-  beforeEach(() => {
+  beforeEach(async () => {
     kv = mockKV();
+    for (const [id, project] of [
+      ["sess_a", "test/project"],
+      ["sess_b", "test/project"],
+      ["sess_other", "other/project"],
+    ]) {
+      await kv.set(KV.sessions, id, {
+        id,
+        project,
+        cwd: "/tmp/test-project",
+        startedAt: new Date().toISOString(),
+        status: "active",
+        observationCount: 0,
+      });
+    }
     const handlers: Record<string, (data: Record<string, unknown>) => Promise<Record<string, unknown>>> = {};
     const sdk = {
       registerFunction: vi.fn((id: string, cb) => {
@@ -78,7 +92,10 @@ describe("vision-search", () => {
 
   it("embeds and stores image vectors in KV.imageEmbeddings", async () => {
     await seedRef(LOGIN_REF);
-    const res = (await visionEmbed({ imageRef: LOGIN_REF })) as { success: boolean; dimensions: number };
+    const res = (await visionEmbed({
+      imageRef: LOGIN_REF,
+      project: "test/project",
+    })) as { success: boolean; dimensions: number };
     expect(res.success).toBe(true);
     expect(res.dimensions).toBe(3);
     const stored = await kv.list(KV.imageEmbeddings);
@@ -99,11 +116,15 @@ describe("vision-search", () => {
 
   it("text query ranks the matching image first", async () => {
     for (const r of [LOGIN_REF, DASH_REF, OTHER_REF]) await seedRef(r);
-    await visionEmbed({ imageRef: LOGIN_REF });
-    await visionEmbed({ imageRef: DASH_REF });
-    await visionEmbed({ imageRef: OTHER_REF });
+    await visionEmbed({ imageRef: LOGIN_REF, project: "test/project" });
+    await visionEmbed({ imageRef: DASH_REF, project: "test/project" });
+    await visionEmbed({ imageRef: OTHER_REF, project: "test/project" });
 
-    const res = (await visionSearch({ queryText: "the login form", topK: 3 })) as {
+    const res = (await visionSearch({
+      queryText: "the login form",
+      topK: 3,
+      project: "test/project",
+    })) as {
       success: boolean;
       results: Array<{ imageRef: string; score: number }>;
     };
@@ -115,10 +136,14 @@ describe("vision-search", () => {
   it("image-to-image query finds the same image first", async () => {
     await seedRef(LOGIN_REF);
     await seedRef(DASH_REF);
-    await visionEmbed({ imageRef: LOGIN_REF });
-    await visionEmbed({ imageRef: DASH_REF });
+    await visionEmbed({ imageRef: LOGIN_REF, project: "test/project" });
+    await visionEmbed({ imageRef: DASH_REF, project: "test/project" });
 
-    const res = (await visionSearch({ queryImageRef: LOGIN_REF, topK: 2 })) as {
+    const res = (await visionSearch({
+      queryImageRef: LOGIN_REF,
+      topK: 2,
+      project: "test/project",
+    })) as {
       success: boolean;
       results: Array<{ imageRef: string; score: number }>;
     };
@@ -127,7 +152,10 @@ describe("vision-search", () => {
   });
 
   it("queryImageRef outside managed store is rejected", async () => {
-    const res = (await visionSearch({ queryImageRef: "/etc/passwd" })) as { success: boolean; error: string };
+    const res = (await visionSearch({
+      queryImageRef: "/etc/passwd",
+      project: "test/project",
+    })) as { success: boolean; error: string };
     expect(res.success).toBe(false);
     expect(res.error).toMatch(/managed/);
   });
@@ -135,10 +163,23 @@ describe("vision-search", () => {
   it("sessionId filters out embeddings from other sessions", async () => {
     await seedRef(LOGIN_REF);
     await seedRef(DASH_REF);
-    await visionEmbed({ imageRef: LOGIN_REF, sessionId: "sess_a" });
-    await visionEmbed({ imageRef: DASH_REF, sessionId: "sess_b" });
+    await visionEmbed({
+      imageRef: LOGIN_REF,
+      project: "test/project",
+      sessionId: "sess_a",
+    });
+    await visionEmbed({
+      imageRef: DASH_REF,
+      project: "test/project",
+      sessionId: "sess_b",
+    });
 
-    const res = (await visionSearch({ queryText: "anything", sessionId: "sess_a", topK: 5 })) as {
+    const res = (await visionSearch({
+      queryText: "anything",
+      project: "test/project",
+      sessionId: "sess_a",
+      topK: 5,
+    })) as {
       success: boolean;
       results: Array<{ sessionId?: string }>;
     };
@@ -148,14 +189,22 @@ describe("vision-search", () => {
 
   it("clamps NaN/fractional topK to a valid integer", async () => {
     await seedRef(LOGIN_REF);
-    await visionEmbed({ imageRef: LOGIN_REF });
-    const resNan = (await visionSearch({ queryText: "x", topK: Number.NaN })) as {
+    await visionEmbed({ imageRef: LOGIN_REF, project: "test/project" });
+    const resNan = (await visionSearch({
+      queryText: "x",
+      topK: Number.NaN,
+      project: "test/project",
+    })) as {
       success: boolean;
       results: unknown[];
     };
     expect(resNan.success).toBe(true);
     expect(resNan.results.length).toBe(1);
-    const resFrac = (await visionSearch({ queryText: "x", topK: 3.7 })) as { success: boolean; results: unknown[] };
+    const resFrac = (await visionSearch({
+      queryText: "x",
+      topK: 3.7,
+      project: "test/project",
+    })) as { success: boolean; results: unknown[] };
     expect(resFrac.success).toBe(true);
     expect(resFrac.results.length).toBe(1);
   });
@@ -168,7 +217,10 @@ describe("vision-search", () => {
       }),
     } as unknown as import("iii-sdk").ISdk;
     registerVisionSearchFunctions(sdk, kv as never, null);
-    const res = (await handlers["mem::vision-search"]!({ queryText: "login" })) as {
+    const res = (await handlers["mem::vision-search"]!({
+      queryText: "login",
+      project: "test/project",
+    })) as {
       success: boolean;
       error: string;
     };
@@ -180,5 +232,53 @@ describe("vision-search", () => {
     const res = (await visionSearch({})) as { success: boolean; error: string };
     expect(res.success).toBe(false);
     expect(res.error).toMatch(/required/);
+  });
+
+  it("makes zero external vision calls for a strict project", async () => {
+    await kv.set(KV.sessions, "strict-session", {
+      id: "strict-session",
+      project: "strict/project",
+      cwd: "/tmp/strict-project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 0,
+      privacy: "strict",
+      externalProcessing: false,
+    });
+    await seedRef(LOGIN_REF);
+    const textRecorder = vi.spyOn(fakeProvider, "embed");
+    const imageRecorder = vi.spyOn(fakeProvider, "embedImage");
+
+    const searchResult = await visionSearch({
+      queryText: "raw strict query",
+      project: "strict/project",
+      sessionId: "strict-session",
+    });
+    const embedResult = await visionEmbed({
+      imageRef: LOGIN_REF,
+      project: "strict/project",
+      sessionId: "strict-session",
+    });
+
+    expect(searchResult).toMatchObject({
+      success: false,
+      processing: {
+        provider: "fake-clip",
+        purpose: "vision_query_embedding",
+        policyDecision: "deny",
+        processingLocation: "external",
+      },
+    });
+    expect(embedResult).toMatchObject({
+      success: false,
+      processing: {
+        provider: "fake-clip",
+        purpose: "vision_embedding",
+        policyDecision: "deny",
+        processingLocation: "external",
+      },
+    });
+    expect(textRecorder).not.toHaveBeenCalled();
+    expect(imageRecorder).not.toHaveBeenCalled();
   });
 });

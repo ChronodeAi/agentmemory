@@ -139,7 +139,7 @@ async function lwwMergeGraphNodes(
 export function registerMeshFunction(
   sdk: ISdk,
   kv: StateKV,
-  meshAuthToken?: string,
+  meshAdminToken?: string,
 ): void {
   sdk.registerFunction("mem::mesh-register",
     async (data: {
@@ -195,10 +195,10 @@ export function registerMeshFunction(
 
   sdk.registerFunction("mem::mesh-sync",
     async (data: { peerId?: string; scopes?: string[]; direction?: "push" | "pull" | "both" }) => {
-      if (!meshAuthToken) {
+      if (!meshAdminToken) {
         return {
           success: false,
-          error: "mesh sync requires AGENTMEMORY_SECRET",
+          error: "mesh sync requires AGENTMEMORY_ADMIN_SECRET",
         };
       }
       if (!data || typeof data !== "object") {
@@ -259,11 +259,11 @@ export function registerMeshFunction(
           if (direction === "push" || direction === "both") {
             const pushData = await collectSyncData(kv, scopes, peer.lastSyncAt, peer.syncFilter);
             try {
-              const response = await fetch(`${peer.url}/agentmemory/mesh/receive`, {
+              const response = await fetch(`${peer.url}/agentmemory/mesh/receive?scope=global`, {
                 method: "POST",
                 headers: {
                   "Content-Type": "application/json",
-                  Authorization: `Bearer ${meshAuthToken}`,
+                  Authorization: `Bearer ${meshAdminToken}`,
                 },
                 body: JSON.stringify(pushData),
                 signal: AbortSignal.timeout(30000),
@@ -282,11 +282,14 @@ export function registerMeshFunction(
 
           if (direction === "pull" || direction === "both") {
             try {
+              const exportScope = peer.syncFilter?.project
+                ? `project=${encodeURIComponent(peer.syncFilter.project)}`
+                : "scope=global";
               const response = await fetch(
-                `${peer.url}/agentmemory/mesh/export?since=${peer.lastSyncAt || ""}`,
+                `${peer.url}/agentmemory/mesh/export?since=${encodeURIComponent(peer.lastSyncAt || "")}&${exportScope}`,
                 {
                   headers: {
-                    Authorization: `Bearer ${meshAuthToken}`,
+                    Authorization: `Bearer ${meshAdminToken}`,
                   },
                   signal: AbortSignal.timeout(30000),
                   redirect: "error",
@@ -388,11 +391,15 @@ export function registerMeshFunction(
 function deltaFilter<T>(
   items: T[],
   sinceTime: number,
-  tsField: "updatedAt" | "createdAt",
 ): T[] {
-  return items.filter(
-    (item) => new Date((item as Record<string, unknown>)[tsField] as string).getTime() > sinceTime,
-  );
+  return items.filter((item) => {
+    const record = item as Record<string, unknown>;
+    const timestamp = record["updatedAt"] ?? record["createdAt"];
+    return (
+      typeof timestamp === "string" &&
+      new Date(timestamp).getTime() > sinceTime
+    );
+  });
 }
 
 async function collectSyncData(
@@ -404,47 +411,79 @@ async function collectSyncData(
   const result: MeshSyncPayload = {};
   const parsed = since ? new Date(since).getTime() : 0;
   const sinceTime = Number.isNaN(parsed) ? 0 : parsed;
+  const project = syncFilter?.project;
+  const scoped = <T extends { project?: string }>(items: T[]) =>
+    project ? items.filter((item) => item.project === project) : items;
+  const projectMemoryIds = new Set<string>();
+  if (project && scopes.includes("relations")) {
+    const relatedSources = await Promise.all([
+      kv.list<Memory>(KV.memories),
+      kv.list<SemanticMemory>(KV.semantic),
+      kv.list<ProceduralMemory>(KV.procedural),
+    ]);
+    for (const item of relatedSources.flat()) {
+      if (item.project === project) projectMemoryIds.add(item.id);
+    }
+  }
 
   if (scopes.includes("memories")) {
-    const all = await kv.list<Memory>(KV.memories);
-    result.memories = deltaFilter(all, sinceTime, "updatedAt");
+    const all = scoped(await kv.list<Memory>(KV.memories));
+    for (const memory of all) projectMemoryIds.add(memory.id);
+    result.memories = deltaFilter(all, sinceTime);
   }
 
   if (scopes.includes("actions")) {
-    let all = await kv.list<Action>(KV.actions);
-    if (syncFilter?.project) {
-      all = all.filter((a) => a.project === syncFilter.project);
-    }
-    result.actions = deltaFilter(all, sinceTime, "updatedAt");
+    const all = scoped(await kv.list<Action>(KV.actions));
+    result.actions = deltaFilter(all, sinceTime);
   }
 
-  const projectScoped = !!syncFilter?.project;
-
-  if (scopes.includes("semantic") && !projectScoped) {
-    const all = await kv.list<SemanticMemory>(KV.semantic);
-    result.semantic = deltaFilter(all, sinceTime, "updatedAt");
+  if (scopes.includes("semantic")) {
+    const all = scoped(await kv.list<SemanticMemory>(KV.semantic));
+    for (const memory of all) projectMemoryIds.add(memory.id);
+    result.semantic = deltaFilter(all, sinceTime);
   }
 
-  if (scopes.includes("procedural") && !projectScoped) {
-    const all = await kv.list<ProceduralMemory>(KV.procedural);
-    result.procedural = deltaFilter(all, sinceTime, "updatedAt");
+  if (scopes.includes("procedural")) {
+    const all = scoped(await kv.list<ProceduralMemory>(KV.procedural));
+    for (const memory of all) projectMemoryIds.add(memory.id);
+    result.procedural = deltaFilter(all, sinceTime);
   }
 
-  if (scopes.includes("relations") && !projectScoped) {
+  if (scopes.includes("relations")) {
     const all = await kv.list<MemoryRelation>(KV.relations);
-    result.relations = deltaFilter(all, sinceTime, "createdAt");
-  }
-
-  if (scopes.includes("graph:nodes") && !projectScoped) {
-    const all = await kv.list<GraphNode>(KV.graphNodes);
-    result.graphNodes = all.filter(
-      (n) => new Date(graphNodeTs(n)).getTime() > sinceTime,
+    result.relations = deltaFilter(
+      project
+        ? all.filter(
+            (relation) =>
+              projectMemoryIds.has(relation.sourceId) &&
+              projectMemoryIds.has(relation.targetId),
+          )
+        : all,
+      sinceTime,
     );
   }
 
-  if (scopes.includes("graph:edges") && !projectScoped) {
-    const all = await kv.list<GraphEdge>(KV.graphEdges);
-    result.graphEdges = deltaFilter(all, sinceTime, "createdAt");
+  let graphNodeIds: Set<string> | undefined;
+  if (scopes.includes("graph:nodes") || scopes.includes("graph:edges")) {
+    const all = scoped(await kv.list<GraphNode>(KV.graphNodes));
+    graphNodeIds = new Set(all.map(({ id }) => id));
+    if (scopes.includes("graph:nodes")) {
+      result.graphNodes = all.filter(
+        (node) => new Date(graphNodeTs(node)).getTime() > sinceTime,
+      );
+    }
+  }
+
+  if (scopes.includes("graph:edges")) {
+    let all = scoped(await kv.list<GraphEdge>(KV.graphEdges));
+    if (project && graphNodeIds) {
+      all = all.filter(
+        (edge) =>
+          graphNodeIds.has(edge.sourceNodeId) &&
+          graphNodeIds.has(edge.targetNodeId),
+      );
+    }
+    result.graphEdges = deltaFilter(all, sinceTime);
   }
 
   return result;

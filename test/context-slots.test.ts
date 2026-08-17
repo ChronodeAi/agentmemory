@@ -47,7 +47,8 @@ async function seedPinnedSlot(
   content: string,
   scope: "project" | "global" = "global",
 ) {
-  const target = scope === "global" ? KV.globalSlots : KV.slots;
+  const target =
+    scope === "global" ? KV.globalSlots : KV.projectSlots("/tmp/proj");
   await kv.set(target, label, {
     label,
     content,
@@ -159,7 +160,7 @@ describe("mem::context — pinned slot injection", () => {
 
   describe("when AGENTMEMORY_SLOTS is off", () => {
     it("does not include any slot content", async () => {
-      delete process.env["AGENTMEMORY_SLOTS"];
+      process.env["AGENTMEMORY_SLOTS"] = "false";
       const kv = mockKV();
       const handler = wireContext(kv);
 

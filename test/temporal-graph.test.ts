@@ -19,6 +19,24 @@ function mockKV(
   store.set("mem:graph:edges", edgesMap);
 
   store.set("mem:graph:edge-history", new Map());
+  store.set(
+    "mem:sessions",
+    new Map([
+      [
+        "ses_1",
+        {
+          id: "ses_1",
+          project: "test/project",
+          cwd: "/tmp/test-project",
+          startedAt: new Date().toISOString(),
+          status: "active",
+          observationCount: 1,
+          privacy: "standard",
+          externalProcessing: true,
+        },
+      ],
+    ]),
+  );
 
   return {
     get: async <T>(scope: string, key: string): Promise<T | null> => {
@@ -113,6 +131,7 @@ describe("TemporalGraph", () => {
     registerTemporalGraphFunctions(sdk as never, kv as never, provider);
 
     const result = (await sdk.trigger("mem::temporal-graph-extract", {
+      sessionId: "ses_1",
       observations: [
         {
           id: "obs_1",
@@ -204,6 +223,7 @@ describe("TemporalGraph", () => {
     registerTemporalGraphFunctions(sdk as never, kv as never, provider);
 
     const result = (await sdk.trigger("mem::temporal-graph-extract", {
+      sessionId: "ses_1",
       observations: [
         {
           id: "obs_1",

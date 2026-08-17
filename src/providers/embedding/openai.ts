@@ -24,6 +24,11 @@ const MODEL_DIMENSIONS: Record<string, number> = {
 
 const DEFAULT_DIMENSIONS = MODEL_DIMENSIONS[DEFAULT_MODEL] ?? 1536;
 
+function isLoopbackBaseUrl(baseUrl: string): boolean {
+  const hostname = new URL(baseUrl).hostname.toLowerCase();
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "[::1]";
+}
+
 function resolveDimensions(model: string, override: string | undefined): number {
   if (override !== undefined && override.trim().length > 0) {
     const parsed = parseInt(override, 10);
@@ -75,6 +80,7 @@ function resolveDimensions(model: string, override: string | undefined): number 
  */
 export class OpenAIEmbeddingProvider implements EmbeddingProvider {
   readonly name = "openai";
+  readonly processingLocation: "local" | "external";
   readonly dimensions: number;
   private apiKey: string;
   private baseUrl: string;
@@ -103,6 +109,9 @@ export class OpenAIEmbeddingProvider implements EmbeddingProvider {
     this.baseUrl = normalizeBaseUrl(
       getEnvVar("OPENAI_EMBEDDING_BASE_URL") || getEnvVar("OPENAI_BASE_URL"),
     );
+    this.processingLocation = isLoopbackBaseUrl(this.baseUrl)
+      ? "local"
+      : "external";
     this.model = getEnvVar("OPENAI_EMBEDDING_MODEL") || DEFAULT_MODEL;
     this.dimensions = resolveDimensions(
       this.model,

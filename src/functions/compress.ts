@@ -15,13 +15,20 @@ import {
 } from "../prompts/compression.js";
 import { VISION_DESCRIPTION_PROMPT } from "../prompts/vision.js";
 import { getXmlTag, getXmlChildren } from "../prompts/xml.js";
-import { getSearchIndex, vectorIndexAddGuarded } from "./search.js";
+import {
+  getSearchIndex,
+  scheduleIndexSave,
+  vectorIndexAddGuarded,
+} from "./search.js";
 import { CompressOutputSchema } from "../eval/schemas.js";
 import { validateOutput } from "../eval/validator.js";
 import { scoreCompression } from "../eval/quality.js";
 import { compressWithRetry } from "../eval/self-correct.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import { logger } from "../logger.js";
+import { modelProcessingForSession } from "./model-processing.js";
+import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
+import { observationWorktreeProvenance } from "./compress-synthetic.js";
 
 const VALID_TYPES = new Set<string>([
   "file_read",
@@ -77,6 +84,10 @@ export function registerCompressFunction(
       raw: RawObservation;
     }) => {
       const startMs = Date.now();
+      const processing = await modelProcessingForSession(kv, data.sessionId);
+      if (!processing.allowed) {
+        return { success: false, error: processing.error };
+      }
 
       let imageDescription: string | undefined;
       const hasImage = data.raw.modality === "image" || data.raw.modality === "mixed";
@@ -155,6 +166,7 @@ export function registerCompressFunction(
         }
 
         const qualityScore = scoreCompression(parsed);
+        const provenance = observationWorktreeProvenance(data.raw);
 
         const compressed: CompressedObservation = {
           id: data.observationId,
@@ -166,7 +178,9 @@ export function registerCompressFunction(
           ...(imageDescription ? { imageDescription } : {}),
           ...(data.raw.imageData ? { imageRef: data.raw.imageData } : {}),
           ...(data.raw.agentId ? { agentId: data.raw.agentId } : {}),
+          ...(provenance ? { provenance } : {}),
         };
+        compressed.recalledOnly = isRetrievalGeneratedObservation(compressed);
 
         await kv.set(
           KV.observations(data.sessionId),
@@ -174,23 +188,26 @@ export function registerCompressFunction(
           compressed,
         );
 
-        try {
-          getSearchIndex().add(compressed);
-        } catch (err) {
-          logger.warn("Failed to index compressed observation into BM25", {
-            obsId: compressed.id,
-            sessionId: compressed.sessionId,
-            title: compressed.title,
-            error: err instanceof Error ? err.message : String(err),
-          });
-        }
+        if (!compressed.recalledOnly) {
+          try {
+            getSearchIndex().add(compressed);
+          } catch (err) {
+            logger.warn("Failed to index compressed observation into BM25", {
+              obsId: compressed.id,
+              sessionId: compressed.sessionId,
+              title: compressed.title,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
 
-        await vectorIndexAddGuarded(
-          compressed.id,
-          compressed.sessionId,
-          compressed.title + " " + (compressed.narrative || ""),
-          { kind: "observation", logId: compressed.id },
-        );
+          await vectorIndexAddGuarded(
+            compressed.id,
+            compressed.sessionId,
+            compressed.title + " " + (compressed.narrative || ""),
+            { kind: "observation", logId: compressed.id },
+          );
+          scheduleIndexSave();
+        }
 
         const streamResults = await Promise.allSettled([
           sdk.trigger({

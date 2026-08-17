@@ -4,8 +4,9 @@ import type {
   Memory,
   Session,
   MemoryProvider,
+  PromotionCandidate,
 } from "../types.js";
-import { KV, generateId } from "../state/schema.js";
+import { KV, fingerprintId, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 
@@ -27,6 +28,14 @@ Output XML:
 
 import { getXmlTag, getXmlChildren } from "../prompts/xml.js";
 import { logger } from "../logger.js";
+import { getEnvVar } from "../config.js";
+import {
+  recordMatchesProject,
+  requireProjectReadScope,
+} from "../project-scope.js";
+
+const VERIFIED_RE =
+  /\b(pass(?:ed|ing)?|success(?:ful)?|verified|fixed|exit(?:ed)?\s+(?:code\s+)?0|tests?\s+(?:pass|green))\b/i;
 
 function parseMemoryXml(
   xml: string,
@@ -68,13 +77,34 @@ export function registerConsolidateFunction(
   provider: MemoryProvider,
 ): void {
   sdk.registerFunction("mem::consolidate", 
-    async (data: { project?: string; minObservations?: number }) => {
+    async (data: {
+      project?: string;
+      scope?: "project" | "global";
+      minObservations?: number;
+    }) => {
+      const projectScope = requireProjectReadScope(data, "mem::consolidate");
+      const project =
+        projectScope.kind === "project" ? projectScope.project : undefined;
       const minObs = data.minObservations ?? 10;
 
       const sessions = await kv.list<Session>(KV.sessions);
-      const filtered = data.project
-        ? sessions.filter((s) => s.project === data.project)
-        : sessions;
+      const filtered = sessions.filter((session) =>
+        recordMatchesProject(session.project, projectScope),
+      );
+      if (
+        getEnvVar("AGENTMEMORY_LOCAL_PROCESSING") !== "true" &&
+        filtered.some(
+          (session) =>
+            session.privacy === "strict" ||
+            session.externalProcessing === false,
+        )
+      ) {
+        return {
+          consolidated: 0,
+          error:
+            "external_processing_disabled_for_strict_project; configure a local provider and AGENTMEMORY_LOCAL_PROCESSING=true",
+        };
+      }
 
       const allObs: Array<CompressedObservation & { sid: string }> = [];
       const obsPerSession: CompressedObservation[][] = [];
@@ -111,13 +141,16 @@ export function registerConsolidateFunction(
       }
 
       let consolidated = 0;
-      const existingMemories = await kv.list<Memory>(KV.memories);
+      const existingMemories = (await kv.list<Memory>(KV.memories)).filter(
+        (memory) => recordMatchesProject(memory.project, projectScope),
+      );
       const existingTitles = new Set(
         existingMemories.map((m) => m.title.toLowerCase()),
       );
 
       const MAX_LLM_CALLS = 10;
       let llmCallCount = 0;
+      let promotionCandidates = 0;
 
       const sortedGroups = [...conceptGroups.entries()]
         .filter(([, g]) => g.length >= 3)
@@ -154,22 +187,106 @@ export function registerConsolidateFunction(
 
           const now = new Date().toISOString();
           const obsIds = [...new Set(top.map((o) => o.id))];
-          const scopedProject =
-            typeof data.project === "string" && data.project.trim().length > 0
-              ? data.project.trim()
-              : undefined;
+          if (
+            parsed.type === "architecture" ||
+            parsed.type === "preference"
+          ) {
+            if (project && promotionCandidates < 3) {
+              const category =
+                parsed.type === "architecture"
+                  ? "architecture"
+                  : "preference";
+              const candidate: PromotionCandidate = {
+                id: fingerprintId(
+                  "promo",
+                  `${project}:${sessionIds[0] ?? "consolidation"}:${category}:${parsed.content.toLowerCase()}`,
+                ),
+                project,
+                sessionId: sessionIds[0] ?? "consolidation",
+                category,
+                title: parsed.title,
+                content: parsed.content,
+                status: "pending",
+                requiresExplicitApproval: true,
+                freshVerification: false,
+                sourceObservationIds: obsIds,
+                failureObservationIds: [],
+                verificationObservationIds: [],
+                createdAt: now,
+                updatedAt: now,
+              };
+              await kv.set(
+                KV.promotionCandidates(project),
+                candidate.id,
+                candidate,
+              );
+              promotionCandidates++;
+            }
+            continue;
+          }
 
-          // A scoped consolidation run must only evolve memories that belong
-          // to the same project. Without this guard, two projects that happen
-          // to consolidate observations into an identically-titled memory would
-          // cause one project's memory to silently evolve the other's — the
-          // exact class of cross-project corruption this fix is designed to
-          // prevent. An unscoped run (no data.project, background cron path)
-          // preserves the pre-existing behavior and may evolve any memory.
+          if (parsed.type === "bug" || parsed.type === "workflow") {
+            const failures = top.filter(
+              (observation) => observation.type === "error",
+            );
+            const verification = top.find(
+              (observation) =>
+                (observation.type === "command_run" ||
+                  observation.type === "task") &&
+                VERIFIED_RE.test(
+                  `${observation.title} ${observation.narrative} ${observation.facts.join(" ")}`,
+                ),
+            );
+            if (project && failures.length > 0 && verification) {
+              await sdk.trigger({
+                function_id: "mem::lesson-save",
+                payload: {
+                  content: parsed.content,
+                  context: parsed.title,
+                  confidence: Math.min(1, parsed.strength / 10),
+                  project,
+                  tags: [parsed.type, "verified"],
+                  source: "consolidation",
+                  sourceIds: obsIds,
+                },
+              });
+              consolidated++;
+            } else if (project && promotionCandidates < 3) {
+              const candidate: PromotionCandidate = {
+                id: fingerprintId(
+                  "promo",
+                  `${project}:${sessionIds[0] ?? "consolidation"}:${parsed.type}:${parsed.content.toLowerCase()}`,
+                ),
+                project,
+                sessionId: sessionIds[0] ?? "consolidation",
+                category: parsed.type,
+                title: parsed.title,
+                content: parsed.content,
+                status: "pending",
+                requiresExplicitApproval: false,
+                freshVerification: false,
+                sourceObservationIds: obsIds,
+                failureObservationIds: failures.map(
+                  (observation) => observation.id,
+                ),
+                verificationObservationIds: [],
+                createdAt: now,
+                updatedAt: now,
+              };
+              await kv.set(
+                KV.promotionCandidates(project),
+                candidate.id,
+                candidate,
+              );
+              promotionCandidates++;
+            }
+            continue;
+          }
+
           const existingMatch = existingMemories.find(
             (m) =>
               m.title.toLowerCase() === parsed.title.toLowerCase() &&
-              (!scopedProject || !m.project || m.project === scopedProject),
+              recordMatchesProject(m.project, projectScope),
           );
 
           if (existingMatch) {
@@ -193,7 +310,7 @@ export function registerConsolidateFunction(
               ],
               sourceObservationIds: obsIds,
               isLatest: true,
-              ...(scopedProject !== undefined && { project: scopedProject }),
+              ...(project !== undefined && { project }),
             };
             await kv.set(KV.memories, evolved.id, evolved);
             await recordAudit(kv, "evolve", "mem::consolidate", [evolved.id], {
@@ -213,7 +330,7 @@ export function registerConsolidateFunction(
               sourceObservationIds: obsIds,
               version: 1,
               isLatest: true,
-              ...(scopedProject !== undefined && { project: scopedProject }),
+              ...(project !== undefined && { project }),
             };
             await kv.set(KV.memories, memory.id, memory);
             await recordAudit(kv, "remember", "mem::consolidate", [memory.id], {
@@ -233,9 +350,16 @@ export function registerConsolidateFunction(
 
       logger.info("Consolidation complete", {
         consolidated,
+        promotionCandidates,
+        project,
+        scope: projectScope.kind,
         totalObs: allObs.length,
       });
-      return { consolidated, totalObservations: allObs.length };
+      return {
+        consolidated,
+        promotionCandidates,
+        totalObservations: allObs.length,
+      };
     },
   );
 }

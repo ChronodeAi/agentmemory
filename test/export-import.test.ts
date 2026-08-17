@@ -128,6 +128,41 @@ describe("Export/Import Functions", () => {
     expect(result.summaries.length).toBe(1);
   });
 
+  it("supports bounded section exports without enumerating unrelated stores", async () => {
+    await kv.set("mem:graph:nodes", "node_1", {
+      id: "node_1",
+      type: "concept",
+      name: "scoped export",
+      properties: {},
+      sourceObservationIds: [],
+      createdAt: new Date().toISOString(),
+    });
+
+    const core = (await sdk.trigger("mem::export", {
+      sections: ["core"],
+    })) as ExportData;
+    expect(core.sections).toEqual(["core"]);
+    expect(core.sessions).toHaveLength(1);
+    expect(core.graphNodes).toBeUndefined();
+
+    const graph = (await sdk.trigger("mem::export", {
+      sections: ["graph"],
+    })) as ExportData;
+    expect(graph.sections).toEqual(["graph"]);
+    expect(graph.graphNodes).toHaveLength(1);
+    expect(graph.sessions).toEqual([]);
+    expect(graph.observations).toEqual({});
+    expect(graph.memories).toEqual([]);
+    expect(graph.summaries).toEqual([]);
+
+    const memories = (await sdk.trigger("mem::export", {
+      sections: ["memories"],
+    })) as ExportData;
+    expect(memories.memories).toHaveLength(1);
+    expect(memories.sessions).toEqual([]);
+    expect(memories.summaries).toEqual([]);
+  });
+
   it("import with merge strategy adds data", async () => {
     const exportData: ExportData = {
       version: "0.3.0",

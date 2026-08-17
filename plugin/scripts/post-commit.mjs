@@ -1,5 +1,10 @@
 #!/usr/bin/env node
+import { t as resolveProject } from "./_project-BNYA1N7W.mjs";
+import { n as reportHookDeliveryFailure, t as deliverProjectRequest } from "./_delivery--9SDKTY7.mjs";
+import { n as credentialFreeWorktreeId, r as parseCommitTransitions } from "./_capture-CalTsfGN.mjs";
+import { resolve } from "node:path";
 import { execFile } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 //#region src/hooks/post-commit.ts
 const exec = promisify(execFile);
@@ -8,14 +13,7 @@ function isSdkChildContext(payload) {
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
 }
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 const TIMEOUT_MS = 1500;
-function authHeaders() {
-	const h = { "Content-Type": "application/json" };
-	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-	return h;
-}
 async function git(args, cwd) {
 	try {
 		const { stdout } = await exec("git", args, {
@@ -27,28 +25,11 @@ async function git(args, cwd) {
 		return null;
 	}
 }
-async function main() {
-	let input = "";
-	for await (const chunk of process.stdin) input += chunk;
-	let data = {};
-	if (input.trim()) try {
-		data = JSON.parse(input);
-	} catch {}
-	if (!data || typeof data !== "object") data = {};
-	if (isSdkChildContext(data)) return;
-	const cwd = data.cwd || process.env["AGENTMEMORY_CWD"] || process.cwd();
-	const sessionId = data.session_id || process.env["AGENTMEMORY_SESSION_ID"] || void 0;
-	const sha = process.env["AGENTMEMORY_COMMIT_SHA"] || await git(["rev-parse", "HEAD"], cwd);
-	if (!sha) return;
+async function collectCommitLinkage(cwd, sha, sessionId, project = resolveProject(cwd)) {
 	const branch = await git([
 		"rev-parse",
 		"--abbrev-ref",
 		"HEAD"
-	], cwd);
-	const repo = await git([
-		"config",
-		"--get",
-		"remote.origin.url"
 	], cwd);
 	const message = await git([
 		"log",
@@ -68,35 +49,74 @@ async function main() {
 		"--pretty=%aI",
 		sha
 	], cwd);
-	const filesRaw = await git([
+	const worktreeRoot = await git(["rev-parse", "--show-toplevel"], cwd);
+	const baseHeadSha = await git(["rev-parse", `${sha}^`], cwd);
+	const parsedTransitions = parseCommitTransitions(await git([
 		"diff-tree",
+		"--root",
 		"--no-commit-id",
-		"--name-only",
+		"--name-status",
 		"-r",
+		"-M",
 		sha
-	], cwd);
-	const files = filesRaw ? filesRaw.split("\n").filter(Boolean) : void 0;
-	const body = {
+	], cwd) || "");
+	const fileTransitions = await Promise.all(parsedTransitions.map(async (transition) => {
+		const blobPath = transition.operation === "delete" ? transition.previousPath || transition.path : transition.path;
+		const digest = await git(["rev-parse", transition.operation === "delete" ? `${sha}^:${blobPath}` : `${sha}:${blobPath}`], cwd);
+		return {
+			...transition,
+			...digest ? {
+				digest,
+				digestKind: "git-blob"
+			} : {}
+		};
+	}));
+	const files = fileTransitions.length > 0 ? fileTransitions.map((transition) => transition.path) : void 0;
+	return {
 		sessionId,
+		project,
 		sha,
+		commitSha: sha,
+		baseHeadSha: baseHeadSha || void 0,
+		worktreeId: worktreeRoot ? credentialFreeWorktreeId(project, worktreeRoot) : void 0,
 		branch: branch || void 0,
-		repo: repo || void 0,
+		repo: project,
 		message: message || void 0,
 		author: author || void 0,
 		authoredAt: authoredAt || void 0,
-		files
+		files,
+		fileTransitions: fileTransitions.length > 0 ? fileTransitions : void 0
 	};
-	try {
-		await fetch(`${REST_URL}/agentmemory/session/commit`, {
-			method: "POST",
-			headers: authHeaders(),
-			body: JSON.stringify(body),
-			signal: AbortSignal.timeout(TIMEOUT_MS)
-		});
-	} catch {}
 }
-main().catch(() => process.exit(0));
+async function main() {
+	let input = "";
+	for await (const chunk of process.stdin) input += chunk;
+	let data = {};
+	if (input.trim()) try {
+		data = JSON.parse(input);
+	} catch {}
+	if (!data || typeof data !== "object") data = {};
+	if (isSdkChildContext(data)) return;
+	const toolName = typeof data.tool_name === "string" ? data.tool_name : typeof data.toolName === "string" ? data.toolName : "";
+	const rawToolInput = data.tool_input ?? data.toolArgs;
+	const toolInput = typeof rawToolInput === "string" ? rawToolInput : rawToolInput && typeof rawToolInput === "object" ? JSON.stringify(rawToolInput) : "";
+	const directGitHook = !input.trim() || process.env["AGENTMEMORY_GIT_HOOK"] === "1" || Boolean(process.env["AGENTMEMORY_COMMIT_SHA"]);
+	const successfulCommitTool = /(?:bash|shell|exec|command)/i.test(toolName) && /(?:^|[;&|]\s*|\s)git(?:\s+-C\s+\S+)?\s+commit(?:\s|$)/i.test(toolInput) && data.error === void 0 && data.errorMessage === void 0;
+	if (!directGitHook && !successfulCommitTool) return;
+	const cwd = data.cwd || process.env["AGENTMEMORY_CWD"] || process.cwd();
+	const sessionId = data.session_id || data.sessionId || process.env["AGENTMEMORY_SESSION_ID"] || void 0;
+	const project = resolveProject(cwd);
+	const sha = process.env["AGENTMEMORY_COMMIT_SHA"] || await git(["rev-parse", "HEAD"], cwd);
+	if (!sha) return;
+	await deliverProjectRequest("/agentmemory/session/commit", project, await collectCommitLinkage(cwd, sha, sessionId, project), {
+		attempts: 2,
+		timeoutMs: TIMEOUT_MS
+	});
+}
+const invokedPath = process.argv[1] ? pathToFileURL(resolve(process.argv[1])).href : "";
+if (import.meta.url === invokedPath) main().catch((error) => {
+	reportHookDeliveryFailure("commit linkage", error);
+	process.exitCode = 1;
+});
 //#endregion
-export {};
-
-//# sourceMappingURL=post-commit.mjs.map
+export { collectCommitLinkage };

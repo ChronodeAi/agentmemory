@@ -76,13 +76,22 @@ function mockSdk() {
 }
 
 describe("Enrich Function", () => {
+  const project = "test-project";
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     sdk = mockSdk();
     kv = mockKV();
     registerEnrichFunction(sdk as never, kv as never);
+    await kv.set("mem:sessions", "ses_1", {
+      id: "ses_1",
+      project,
+      cwd: "/tmp/test-project",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 0,
+    });
   });
 
   it("returns file context and relevant memories", async () => {
@@ -100,12 +109,14 @@ describe("Enrich Function", () => {
       id: "bug_1",
       files: ["src/handler.ts"],
       type: "bug",
+      project,
     });
     await kv.set("mem:memories", "bug_1", bugMem);
 
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/handler.ts"],
+      project,
     })) as { context: string; truncated: boolean };
 
     expect(result.context).toContain("File was edited in session ses_1");
@@ -127,6 +138,7 @@ describe("Enrich Function", () => {
       files: ["src/utils.ts"],
       terms: ["handleError"],
       toolName: "Grep",
+      project,
     });
 
     expect(capturedQuery).toContain("handleError");
@@ -143,6 +155,7 @@ describe("Enrich Function", () => {
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/big.ts"],
+      project,
     })) as { context: string; truncated: boolean };
 
     expect(result.context.length).toBe(4000);
@@ -156,6 +169,7 @@ describe("Enrich Function", () => {
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/new-file.ts"],
+      project,
     })) as { context: string; truncated: boolean };
 
     expect(result.context).toBe("");
@@ -173,6 +187,7 @@ describe("Enrich Function", () => {
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/handler.ts"],
+      project,
     })) as { context: string; truncated: boolean };
 
     expect(result.context).toBeDefined();
@@ -190,6 +205,7 @@ describe("Enrich Function", () => {
       content: "Race condition in worker pool",
       files: ["src/worker.ts"],
       isLatest: true,
+      project,
     });
     const nonBugMem = makeMemory({
       id: "pattern_1",
@@ -198,6 +214,7 @@ describe("Enrich Function", () => {
       content: "Singleton pattern used",
       files: ["src/worker.ts"],
       isLatest: true,
+      project,
     });
     await kv.set("mem:memories", "bug_match", bugMem);
     await kv.set("mem:memories", "pattern_1", nonBugMem);
@@ -205,6 +222,7 @@ describe("Enrich Function", () => {
     const result = (await sdk.trigger("mem::enrich", {
       sessionId: "ses_1",
       files: ["src/worker.ts"],
+      project,
     })) as { context: string; truncated: boolean };
 
     expect(result.context).toContain("Race condition");

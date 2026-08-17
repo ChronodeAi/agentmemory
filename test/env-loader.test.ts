@@ -30,6 +30,10 @@ describe("loadEnvFile", () => {
     delete process.env["GRAPH_EXTRACTION_ENABLED"];
     delete process.env["TOKEN"];
     delete process.env["HASHVAL"];
+    delete process.env["AGENTMEMORY_SECRET"];
+    delete process.env["AGENTMEMORY_SECRET_FILE"];
+    delete process.env["AGENTMEMORY_ADMIN_SECRET"];
+    delete process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
   });
 
   afterEach(() => {
@@ -37,6 +41,10 @@ describe("loadEnvFile", () => {
     else process.env["HOME"] = ORIGINAL_HOME;
     if (ORIGINAL_USERPROFILE === undefined) delete process.env["USERPROFILE"];
     else process.env["USERPROFILE"] = ORIGINAL_USERPROFILE;
+    delete process.env["AGENTMEMORY_SECRET"];
+    delete process.env["AGENTMEMORY_SECRET_FILE"];
+    delete process.env["AGENTMEMORY_ADMIN_SECRET"];
+    delete process.env["AGENTMEMORY_ADMIN_SECRET_FILE"];
     rmSync(sandboxHome, { recursive: true, force: true });
   });
 
@@ -88,5 +96,37 @@ describe("loadEnvFile", () => {
     writeEnv("AGENTMEMORY_DROP_STALE_INDEX=true");
     const cfg = await freshConfig();
     expect(cfg.isDropStaleIndexEnabled()).toBe(true);
+  });
+
+  it("reads supported REST credentials from a secret file", async () => {
+    const secretPath = join(sandboxHome, "agentmemory.secret");
+    writeFileSync(secretPath, "secret-from-file\n");
+    writeEnv(`AGENTMEMORY_SECRET_FILE=${secretPath}`);
+
+    const cfg = await freshConfig();
+    expect(cfg.getEnvVar("AGENTMEMORY_SECRET")).toBe("secret-from-file");
+  });
+
+  it("reads the administrative credential from its secret file", async () => {
+    const secretPath = join(sandboxHome, "agentmemory-admin.secret");
+    writeFileSync(secretPath, "admin-secret-from-file\n");
+    writeEnv(`AGENTMEMORY_ADMIN_SECRET_FILE=${secretPath}`);
+
+    const cfg = await freshConfig();
+    expect(cfg.getEnvVar("AGENTMEMORY_ADMIN_SECRET")).toBe(
+      "admin-secret-from-file",
+    );
+  });
+
+  it("preserves direct process-environment precedence over a secret file", async () => {
+    const secretPath = join(sandboxHome, "agentmemory.secret");
+    writeFileSync(secretPath, "secret-from-file\n");
+    writeEnv(`AGENTMEMORY_SECRET_FILE=${secretPath}`);
+    process.env["AGENTMEMORY_SECRET"] = "secret-from-process";
+
+    const cfg = await freshConfig();
+    expect(cfg.getEnvVar("AGENTMEMORY_SECRET")).toBe(
+      "secret-from-process",
+    );
   });
 });

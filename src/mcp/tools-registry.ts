@@ -3,10 +3,27 @@ export type McpToolDef = {
   description: string;
   inputSchema: {
     type: "object";
-    properties: Record<string, { type: string; description: string }>;
+    properties: Record<
+      string,
+      { type: string; description: string; enum?: string[] }
+    >;
     required?: string[];
+    oneOf?: Array<{
+      required: string[];
+      properties?: Record<string, { const: string }>;
+    }>;
   };
 };
+
+const PROJECT_SCOPE_ONE_OF: NonNullable<
+  McpToolDef["inputSchema"]["oneOf"]
+> = [
+  { required: ["project"] },
+  {
+    required: ["scope"],
+    properties: { scope: { const: "global" } },
+  },
+];
 
 export const CORE_TOOLS: McpToolDef[] = [
   {
@@ -32,8 +49,19 @@ export const CORE_TOOLS: McpToolDef[] = [
           type: "number",
           description: "Optional token budget to trim returned results",
         },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+        },
       },
       required: ["query"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -47,8 +75,12 @@ export const CORE_TOOLS: McpToolDef[] = [
           type: "string",
           description: "Path to the markdown file to compress",
         },
+        project: {
+          type: "string",
+          description: "Canonical project ID owning the file",
+        },
       },
-      required: ["filePath"],
+      required: ["filePath", "project"],
     },
   },
   {
@@ -83,8 +115,14 @@ export const CORE_TOOLS: McpToolDef[] = [
             "started. Do not use filesystem paths or ad-hoc display names — those " +
             "change across machines and will silently break project scoping.",
         },
+        scope: {
+          type: "string",
+          description:
+            "Use 'global' only for an explicitly global memory.",
+        },
       },
       required: ["content"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -98,8 +136,19 @@ export const CORE_TOOLS: McpToolDef[] = [
           type: "string",
           description: "Current session ID to exclude",
         },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+        },
       },
       required: ["files"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -115,8 +164,32 @@ export const CORE_TOOLS: McpToolDef[] = [
   {
     name: "memory_sessions",
     description:
-      "List recent sessions with their status and observation counts.",
-    inputSchema: { type: "object", properties: {} },
+      "List recent sessions with their status and observation counts. Returns a compact response by default.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        limit: {
+          type: "number",
+          description: "Max sessions to return (default 20, max 100).",
+        },
+        format: {
+          type: "string",
+          description:
+            "Response detail: compact (default) or full for forensic inspection.",
+        },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+        },
+      },
+      oneOf: PROJECT_SCOPE_ONE_OF,
+    },
   },
   {
     name: "memory_smart_search",
@@ -130,8 +203,19 @@ export const CORE_TOOLS: McpToolDef[] = [
           description: "Comma-separated observation IDs to expand",
         },
         limit: { type: "number", description: "Max results (default 10)" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+        },
       },
       required: ["query"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -145,8 +229,10 @@ export const CORE_TOOLS: McpToolDef[] = [
         queryImageRef: { type: "string", description: "Absolute path to a stored image to match against" },
         queryImageBase64: { type: "string", description: "Raw base64 image bytes or data URL" },
         topK: { type: "number", description: "Max results (default 10, max 50)" },
+        project: { type: "string", description: "Canonical project ID" },
         sessionId: { type: "string", description: "Filter to a single session" },
       },
+      required: ["project"],
     },
   },
   {
@@ -222,8 +308,19 @@ export const CORE_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         sha: { type: "string", description: "Full git commit SHA" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+        },
       },
       required: ["sha"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -233,10 +330,21 @@ export const CORE_TOOLS: McpToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+        },
         branch: { type: "string", description: "Filter by branch name" },
         repo: { type: "string", description: "Filter by remote URL" },
         limit: { type: "number", description: "Max results (default 100, max 500)" },
       },
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
 ];
@@ -264,6 +372,16 @@ export const V040_TOOLS: McpToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        project: {
+          type: "string",
+          description: "Canonical project ID for a project-scoped query",
+        },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description:
+            "Explicit administrative cross-project scope; requires admin authorization",
+        },
         startNodeId: {
           type: "string",
           description: "Starting node ID for traversal",
@@ -274,7 +392,10 @@ export const V040_TOOLS: McpToolDef[] = [
           description: "Max BFS depth (default 3, max 5)",
         },
         query: { type: "string", description: "Search nodes by name" },
+        limit: { type: "number", description: "Maximum nodes to return" },
+        offset: { type: "number", description: "Pagination offset" },
       },
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -284,11 +405,21 @@ export const V040_TOOLS: McpToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
+        project: {
+          type: "string",
+          description: "Canonical project ID",
+        },
+        scope: {
+          type: "string",
+          description:
+            "Use global only for an explicit cross-project consolidation",
+        },
         tier: {
           type: "string",
           description: "Target tier: episodic, semantic, or procedural",
         },
       },
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -341,8 +472,19 @@ export const V040_TOOLS: McpToolDef[] = [
           description: "Comma-separated memory IDs to delete",
         },
         reason: { type: "string", description: "Reason for deletion" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
       },
       required: ["memoryIds"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -421,6 +563,10 @@ export const V050_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         project: { type: "string", description: "Filter by project" },
+        scope: {
+          type: "string",
+          description: "Use 'global' only for explicit cross-project reflection",
+        },
         agentId: {
           type: "string",
           description: "Agent ID to check lease conflicts",
@@ -437,6 +583,10 @@ export const V050_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         project: { type: "string", description: "Filter by project" },
+        scope: {
+          type: "string",
+          description: "Use 'global' only for explicit cross-project listing",
+        },
         agentId: { type: "string", description: "Current agent ID" },
       },
     },
@@ -660,7 +810,7 @@ export const V051_TOOLS: McpToolDef[] = [
         project: { type: "string", description: "Project context" },
         sessionId: { type: "string", description: "Session context" },
       },
-      required: ["actionIds"],
+      required: ["actionIds", "project"],
     },
   },
   {
@@ -776,9 +926,15 @@ export const V070_TOOLS: McpToolDef[] = [
           description: "Initial confidence 0.0-1.0 (default 0.5)",
         },
         project: { type: "string", description: "Project this lesson is about" },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
         tags: { type: "string", description: "Comma-separated tags" },
       },
       required: ["content"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -790,6 +946,11 @@ export const V070_TOOLS: McpToolDef[] = [
       properties: {
         query: { type: "string", description: "Search query" },
         project: { type: "string", description: "Filter by project" },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
         minConfidence: {
           type: "number",
           description: "Minimum confidence threshold (default 0.1)",
@@ -797,6 +958,7 @@ export const V070_TOOLS: McpToolDef[] = [
         limit: { type: "number", description: "Max results (default 10)" },
       },
       required: ["query"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -828,11 +990,17 @@ export const V073_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         project: { type: "string", description: "Filter by project" },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
         maxClusters: {
           type: "number",
           description: "Max concept clusters to process (default 10, max 20)",
         },
       },
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -843,12 +1011,18 @@ export const V073_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         project: { type: "string", description: "Filter by project" },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
         minConfidence: {
           type: "number",
           description: "Minimum confidence threshold (default 0)",
         },
         limit: { type: "number", description: "Max results (default 50)" },
       },
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
 ];
@@ -858,7 +1032,13 @@ export const V010_SLOTS_TOOLS: McpToolDef[] = [
     name: "memory_slot_list",
     description:
       "List all memory slots (pinned + project + global). Slots are editable, size-limited memory units the agent can read and modify across sessions.",
-    inputSchema: { type: "object", properties: {} },
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Canonical project ID" },
+      },
+      required: ["project"],
+    },
   },
   {
     name: "memory_slot_get",
@@ -867,8 +1047,9 @@ export const V010_SLOTS_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         label: { type: "string", description: "Slot label (e.g. 'persona', 'pending_items')" },
+        project: { type: "string", description: "Canonical project ID" },
       },
-      required: ["label"],
+      required: ["label", "project"],
     },
   },
   {
@@ -883,6 +1064,10 @@ export const V010_SLOTS_TOOLS: McpToolDef[] = [
         description: { type: "string", description: "What this slot is for" },
         pinned: { type: "string", description: "'false' to exclude from context injection; default true" },
         scope: { type: "string", description: "'project' (default) or 'global' (shared across projects)" },
+        project: {
+          type: "string",
+          description: "Canonical project ID; required for project scope",
+        },
       },
       required: ["label"],
     },
@@ -896,8 +1081,9 @@ export const V010_SLOTS_TOOLS: McpToolDef[] = [
       properties: {
         label: { type: "string", description: "Slot label" },
         text: { type: "string", description: "Text to append" },
+        project: { type: "string", description: "Canonical project ID" },
       },
-      required: ["label", "text"],
+      required: ["label", "text", "project"],
     },
   },
   {
@@ -908,8 +1094,9 @@ export const V010_SLOTS_TOOLS: McpToolDef[] = [
       properties: {
         label: { type: "string", description: "Slot label" },
         content: { type: "string", description: "New full content" },
+        project: { type: "string", description: "Canonical project ID" },
       },
-      required: ["label", "content"],
+      required: ["label", "content", "project"],
     },
   },
   {
@@ -919,8 +1106,134 @@ export const V010_SLOTS_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         label: { type: "string", description: "Slot label" },
+        project: { type: "string", description: "Canonical project ID" },
       },
-      required: ["label"],
+      required: ["label", "project"],
+    },
+  },
+];
+
+export const CODING_MEMORY_TOOLS: McpToolDef[] = [
+  {
+    name: "memory_context_packet",
+    description:
+      "Build the project-scoped Recall packet for a coding task with fixed budgets for identity, lessons, episodic history, file history, and provenance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Canonical project ID" },
+        sessionId: { type: "string", description: "Current session ID" },
+        query: { type: "string", description: "Optional task-aware recall query" },
+        files: { type: "string", description: "Comma-separated relevant files" },
+        token_budget: {
+          type: "number",
+          description: "Maximum packet tokens (default and hard maximum 2000)",
+        },
+        context_class: {
+          type: "string",
+          enum: ["advisory", "gate-critical"],
+          description:
+            "Advisory returns typed degradation; gate-critical fails closed when a required source is unavailable or failed",
+        },
+      },
+      required: ["project", "sessionId"],
+    },
+  },
+  {
+    name: "memory_context_acknowledge",
+    description:
+      "Submit provider delivery evidence for a generated context packet. Sources are suppressed only after a configured trusted verifier accepts the receipt; otherwise this fails closed.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Canonical project ID" },
+        sessionId: { type: "string", description: "Current session ID" },
+        packetId: {
+          type: "string",
+          description: "Packet identifier returned by memory_context_packet",
+        },
+        providerReceipt: {
+          type: "string",
+          description:
+            "Provider delivery receipt evaluated by the configured trusted verifier",
+        },
+      },
+      required: ["project", "sessionId", "packetId", "providerReceipt"],
+    },
+  },
+  {
+    name: "memory_commit_link",
+    description:
+      "Link a verified Git commit SHA to its canonical project and optional coding session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        sha: { type: "string", description: "Full Git commit SHA" },
+        sessionId: { type: "string", description: "Optional coding session ID" },
+        project: { type: "string", description: "Canonical project ID" },
+      },
+      required: ["sha", "project"],
+    },
+  },
+  {
+    name: "memory_project_health",
+    description:
+      "Report project memory scope coverage, retrieval use, duplicates, abandoned sessions, promotions, injection latency, and commit coverage.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Canonical project ID" },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "memory_promotion_candidates",
+    description:
+      "List up to three evidence-gated durable-memory promotion candidates generated for substantive project sessions.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Canonical project ID" },
+        sessionId: {
+          type: "string",
+          description: "Optional session ID filter",
+        },
+        status: {
+          type: "string",
+          description:
+            "Optional status filter: pending, auto_promoted, accepted, or rejected",
+        },
+      },
+      required: ["project"],
+    },
+  },
+  {
+    name: "memory_promotion_decide",
+    description:
+      "Explicitly accept or reject a durable-memory promotion candidate. Architecture acceptance requires canonical ADR and commit provenance.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Canonical project ID" },
+        candidateId: {
+          type: "string",
+          description: "Promotion candidate ID",
+        },
+        action: {
+          type: "string",
+          description: "Decision: accept or reject",
+        },
+        canonicalAdr: {
+          type: "string",
+          description: "Canonical ADR path required for architecture",
+        },
+        commitSha: {
+          type: "string",
+          description: "Verified commit SHA",
+        },
+      },
+      required: ["project", "candidateId", "action"],
     },
   },
 ];
@@ -946,12 +1259,13 @@ export function getAllTools(): McpToolDef[] {
     ...V070_TOOLS,
     ...V073_TOOLS,
     ...V010_SLOTS_TOOLS,
+    ...CODING_MEMORY_TOOLS,
   ];
 }
 
 // default switched from "core" (8 essential tools) to "all"
-// (full 53-tool surface). README and plugin manifests have always
-// advertised 53 tools "in proxy mode"; the old default left OpenCode /
+// (full 58-tool surface). README and plugin manifests have always
+// advertised the full tool surface; the old default left OpenCode /
 // Claude Code users seeing 8 with no indication the other tools existed.
 // Users who want the lean essentials can still set AGENTMEMORY_TOOLS=core.
 export function getVisibleTools(): McpToolDef[] {

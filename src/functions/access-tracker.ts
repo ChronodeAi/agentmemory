@@ -96,9 +96,16 @@ export async function deleteAccessLog(
 ): Promise<void> {
   if (!memoryId) return;
   try {
-    await withKeyedLock(`mem:access:${memoryId}`, async () => {
-      await kv.delete(KV.accessLog, memoryId);
-    });
+    await deleteAccessLogStrict(kv, memoryId);
   } catch {}
 }
 
+export async function deleteAccessLogStrict(
+  kv: StateKV,
+  memoryId: string,
+): Promise<void> {
+  if (!memoryId) return;
+  await withKeyedLock(`mem:access:${memoryId}`, async () => {
+    await kv.delete(KV.accessLog, memoryId);
+  });
+}

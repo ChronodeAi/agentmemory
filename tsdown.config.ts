@@ -44,6 +44,28 @@ const shared = {
   },
 };
 
+// Provider plugin caches contain only the published plugin tree. Bundle the
+// small config parsers used by hooks so those entrypoints never depend on a
+// repository or package-level node_modules directory at runtime.
+const pluginShared = {
+  ...shared,
+  deps: {
+    ...shared.deps,
+    alwaysBundle: ["dotenv", "yaml"],
+  },
+};
+
+const pluginEntries = {
+  standalone: "src/mcp/standalone.ts",
+  diagnostics: "src/functions/diagnostics.ts",
+  ...Object.fromEntries(
+    hookEntries.map((entry) => [
+      entry.replace(/^src\/hooks\//, "").replace(/\.ts$/, ""),
+      entry,
+    ]),
+  ),
+};
+
 export default defineConfig([
   {
     entry: ["src/index.ts"],
@@ -51,7 +73,7 @@ export default defineConfig([
     ...shared,
     dts: true,
     clean: true,
-    sourcemap: true,
+    sourcemap: false,
     banner: { js: "#!/usr/bin/env node" },
   },
   {
@@ -68,8 +90,16 @@ export default defineConfig([
     clean: false,
     sourcemap: false,
   },
-  // One entry per config block prevents tsdown from hoisting shared
-  // helpers into hashed chunks across hooks.
+  {
+    entry: ["src/functions/migrate.ts"],
+    outDir: "dist/functions",
+    ...shared,
+    clean: false,
+    sourcemap: false,
+    banner: { js: "#!/usr/bin/env node" },
+  },
+  // Keep distributable package hooks independent; the package has its own
+  // dependencies available at runtime.
   ...hookEntries.map((entry) => ({
     entry: [entry],
     outDir: "dist/hooks",
@@ -77,11 +107,15 @@ export default defineConfig([
     clean: false,
     sourcemap: false,
   })),
-  ...hookEntries.map((entry) => ({
-    entry: [entry],
+  // Build the published plugin as one graph so bundled config parsers are
+  // shared once across entrypoints. The entire scripts directory is copied by
+  // provider plugin managers, and the isolated publish-tree test exercises
+  // those relative shared-chunk imports.
+  {
+    entry: pluginEntries,
     outDir: "plugin/scripts",
-    ...shared,
-    clean: false,
+    ...pluginShared,
+    clean: true,
     sourcemap: false,
-  })),
+  },
 ]);

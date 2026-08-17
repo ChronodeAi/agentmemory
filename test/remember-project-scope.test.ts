@@ -90,14 +90,14 @@ describe("mem::remember — project field stamping", () => {
     expect(stored?.project).toBe("api");
   });
 
-  it("leaves project undefined when not provided (backward-compat)", async () => {
+  it("creates an explicitly global memory only when global scope is requested", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     registerRememberFunction(sdk as never, kv as never);
 
     const result = await sdk.trigger({
       function_id: "mem::remember",
-      payload: { content: "some unscoped memory" },
+      payload: { content: "some global memory", scope: "global" },
     }) as { success: boolean; memory: { id: string; project?: string } };
 
     expect(result.success).toBe(true);
@@ -117,17 +117,17 @@ describe("mem::remember — project field stamping", () => {
     expect(result.memory.project).toBe("api");
   });
 
-  it("treats a blank project string the same as no project", async () => {
+  it("rejects a blank project string without explicit global scope", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     registerRememberFunction(sdk as never, kv as never);
 
-    const result = await sdk.trigger({
-      function_id: "mem::remember",
-      payload: { content: "blank project string", project: "   " },
-    }) as { success: boolean; memory: { project?: string } };
-
-    expect(result.memory.project).toBeUndefined();
+    await expect(
+      sdk.trigger({
+        function_id: "mem::remember",
+        payload: { content: "blank project string", project: "   " },
+      }),
+    ).rejects.toThrow(/project is required/);
   });
 });
 
@@ -203,21 +203,20 @@ describe("mem::remember — cross-project dedup isolation", () => {
     expect(original?.isLatest).toBe(false);
   });
 
-  it("allows an unscoped memory to be superseded by a scoped one (legacy compat)", async () => {
+  it("does not let an explicitly global memory supersede a project memory", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     registerRememberFunction(sdk as never, kv as never);
 
-    // Existing legacy memory with no project
-    const legacy = await sdk.trigger({
+    const global = await sdk.trigger({
       function_id: "mem::remember",
       payload: {
         content: "always use express-jwt middleware for token validation in this project",
         type: "pattern",
+        scope: "global",
       },
     }) as { memory: { id: string } };
 
-    // New scoped memory — should supersede the legacy unscoped one
     const scoped = await sdk.trigger({
       function_id: "mem::remember",
       payload: {
@@ -227,10 +226,10 @@ describe("mem::remember — cross-project dedup isolation", () => {
       },
     }) as { memory: { supersedes: string[] } };
 
-    expect(scoped.memory.supersedes).toContain(legacy.memory.id);
+    expect(scoped.memory.supersedes).not.toContain(global.memory.id);
   });
 
-  it("allows a scoped memory to be superseded by an unscoped one (legacy compat)", async () => {
+  it("does not let a project memory supersede an explicitly global memory", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     registerRememberFunction(sdk as never, kv as never);
@@ -244,15 +243,15 @@ describe("mem::remember — cross-project dedup isolation", () => {
       },
     }) as { memory: { id: string } };
 
-    // Unscoped write — should still supersede since one side has no project
-    const unscoped = await sdk.trigger({
+    const global = await sdk.trigger({
       function_id: "mem::remember",
       payload: {
         content: "always use express-jwt middleware for token validation in this project",
         type: "pattern",
+        scope: "global",
       },
     }) as { memory: { supersedes: string[] } };
 
-    expect(unscoped.memory.supersedes).toContain(scoped.memory.id);
+    expect(global.memory.supersedes).not.toContain(scoped.memory.id);
   });
 });

@@ -27,7 +27,7 @@ export const KV = {
   // bounded payload — works at 75K+ nodes where kv.list would block
   // the worker event loop (37MB WS frame parse blocks heartbeat,
   // worker is declared dead before any Promise.race timer can fire).
-  // - graphNameIndex: key `${type}|${name}` -> nodeId. Replaces the
+  // - graphNameIndex: key `${project}|${type}|${name}` -> nodeId. Replaces the
   //   existingNodes.find() O(n) dedup scan inside mem::graph-extract.
   // - graphEdgeKey: key `${src}|${tgt}|${type}` -> edgeId. Same for
   //   edge dedup.
@@ -44,6 +44,7 @@ export const KV = {
     `mem:team:${teamId}:users:${userId}`,
   teamProfile: (teamId: string) => `mem:team:${teamId}:profile`,
   audit: "mem:audit",
+  auditGaps: "mem:audit:gaps",
   actions: "mem:actions",
   actionEdges: "mem:action-edges",
   leases: "mem:leases",
@@ -66,7 +67,18 @@ export const KV = {
   imageRefs: "mem:image-refs",
   imageEmbeddings: "mem:image-embeddings",
   slots: "mem:slots",
+  projectSlots: (project: string) =>
+    `mem:slots:project:${createHash("sha256").update(project).digest("hex").slice(0, 24)}`,
   globalSlots: "mem:slots:global",
+  injectedSources: (sessionId: string) => `mem:injected-sources:${sessionId}`,
+  contextDeliveryReceipts: "mem:context-delivery-receipts",
+  factLedger: (sessionId: string) => `mem:fact-ledger:${sessionId}`,
+  projectMetrics: (project: string) =>
+    `mem:project-metrics:${createHash("sha256").update(project).digest("hex").slice(0, 24)}`,
+  promotionCandidates: (project: string) =>
+    `mem:promotion-candidates:${createHash("sha256").update(project).digest("hex").slice(0, 24)}`,
+  migrationQuarantine: "mem:migration:quarantine",
+  migrationReports: "mem:migration:reports",
   state: "mem:state",
   commits: "mem:commits",
   // #771: tracks the most recent smart-search call per session, used by

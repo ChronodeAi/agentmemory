@@ -1,6 +1,7 @@
 import { describe, it, expect, afterAll } from "vitest";
 import type { AddressInfo } from "node:net";
-import { request as httpRequest } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
+import { authorizeProjectRequest } from "../src/auth.js";
 import { renderViewerDocument } from "../src/viewer/document.js";
 import {
   buildAllowedHosts,
@@ -222,5 +223,139 @@ describe("viewer request handler DNS rebinding defence (e2e)", () => {
     // Sanity-check the artwork: rounded dark tile + green "AM" lettering.
     expect(res.body).toContain('fill="#111111"');
     expect(res.body).toContain(">AM<");
+  });
+});
+
+describe("viewer upstream authorization", () => {
+  const cleanups: Array<() => Promise<void>> = [];
+  afterAll(async () => {
+    for (const cleanup of cleanups) await cleanup();
+  });
+
+  async function startUpstream(): Promise<{
+    port: number;
+    requests: Array<{
+      authorization?: string;
+      project?: string;
+      url?: string;
+    }>;
+  }> {
+    const requests: Array<{
+      authorization?: string;
+      project?: string;
+      url?: string;
+    }> = [];
+    const server = createServer((req, res) => {
+      requests.push({
+        authorization: req.headers.authorization,
+        project:
+          typeof req.headers["x-agentmemory-project"] === "string"
+            ? req.headers["x-agentmemory-project"]
+            : undefined,
+        url: req.url,
+      });
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end('{"success":true}');
+    });
+    server.listen(0, "127.0.0.1");
+    await new Promise<void>((resolve) =>
+      server.once("listening", () => resolve()),
+    );
+    const address = server.address() as AddressInfo;
+    cleanups.push(
+      () => new Promise<void>((resolve) => server.close(() => resolve())),
+    );
+    return { port: address.port, requests };
+  }
+
+  async function startViewer(
+    restPort: number,
+    auth: Parameters<typeof startViewerServer>[5],
+  ): Promise<number> {
+    const server = startViewerServer(
+      0,
+      {},
+      {},
+      undefined,
+      restPort,
+      auth,
+    );
+    await new Promise<void>((resolve) =>
+      server.once("listening", () => resolve()),
+    );
+    const address = server.address() as AddressInfo;
+    cleanups.push(
+      () => new Promise<void>((resolve) => server.close(() => resolve())),
+    );
+    return address.port;
+  }
+
+  it("signs project-scoped requests and uses admin auth for global requests", async () => {
+    const capabilitySecret = "viewer-capability-secret";
+    const adminSecret = "viewer-admin-secret";
+    const project = "github.com/example/viewer";
+    const upstream = await startUpstream();
+    const viewerPort = await startViewer(upstream.port, {
+      adminSecret,
+      projectCapabilitySecret: capabilitySecret,
+      strictCapabilityMode: true,
+    });
+
+    expect(
+      (
+        await fetch(
+          `http://127.0.0.1:${viewerPort}/agentmemory/graph/stats?project=${encodeURIComponent(project)}`,
+        )
+      ).status,
+    ).toBe(200);
+    expect(
+      (
+        await fetch(
+          `http://127.0.0.1:${viewerPort}/agentmemory/graph/stats?scope=global`,
+        )
+      ).status,
+    ).toBe(200);
+
+    expect(upstream.requests).toHaveLength(2);
+    const projectRequest = upstream.requests[0];
+    expect(projectRequest.project).toBe(project);
+    expect(
+      authorizeProjectRequest(
+        {
+          authorization: projectRequest.authorization,
+          "x-agentmemory-project": projectRequest.project,
+        },
+        {
+          project,
+          signingSecret: capabilitySecret,
+          strictCapabilityMode: true,
+          audience: "agentmemory",
+        },
+      ).authorized,
+    ).toBe(true);
+    expect(upstream.requests[1].authorization).toBe(
+      `Bearer ${adminSecret}`,
+    );
+    expect(upstream.requests[1].project).toBeUndefined();
+  });
+
+  it("rejects conflicting bindings before forwarding upstream", async () => {
+    const upstream = await startUpstream();
+    const viewerPort = await startViewer(upstream.port, {
+      projectCapabilitySecret: "viewer-capability-secret",
+      strictCapabilityMode: true,
+    });
+
+    const response = await fetch(
+      `http://127.0.0.1:${viewerPort}/agentmemory/graph/query?project=one`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ project: "two" }),
+      },
+    );
+
+    expect(response.status).toBe(409);
+    expect(upstream.requests).toHaveLength(0);
   });
 });

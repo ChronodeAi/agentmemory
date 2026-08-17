@@ -5,6 +5,8 @@ import type {
   CompressedObservation,
   HybridSearchResult,
   Lesson,
+  Memory,
+  Session,
 } from "../types.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
@@ -17,6 +19,12 @@ import {
 } from "../config.js";
 import { logger } from "../logger.js";
 import { getCounters } from "../telemetry/setup.js";
+import {
+  recordMatchesProject,
+  requireProjectReadScope,
+  type ProjectReadScope,
+} from "../project-scope.js";
+import type { HybridSearchProcessingContext } from "../state/hybrid-search.js";
 
 // #771: smart-search followup-rate diagnostic. Stored per session as
 // the most recent search payload, used to detect whether the next
@@ -71,11 +79,31 @@ export function resetFollowupStatsForTests(): void {
 // Compact mode trims each lesson's content for at-a-glance display. The
 // full content is fetched via memory_lesson_recall when the caller needs it.
 const LESSON_CONTENT_PREVIEW_CHARS = 240;
+const MIN_VECTOR_RELEVANCE = 0.35;
+
+function hasRetrievalEvidence(result: HybridSearchResult): boolean {
+  const hasStreamScore =
+    Number.isFinite(result.bm25Score) ||
+    Number.isFinite(result.vectorScore) ||
+    Number.isFinite(result.graphScore);
+  if (!hasStreamScore) {
+    return result.combinedScore >= 0.05;
+  }
+  return (
+    (result.bm25Score ?? 0) > 0 ||
+    (result.graphScore ?? 0) > 0 ||
+    (result.vectorScore ?? 0) >= MIN_VECTOR_RELEVANCE
+  );
+}
 
 export function registerSmartSearchFunction(
   sdk: ISdk,
   kv: StateKV,
-  searchFn: (query: string, limit: number) => Promise<HybridSearchResult[]>,
+  searchFn: (
+    query: string,
+    limit: number,
+    processingContext?: HybridSearchProcessingContext,
+  ) => Promise<HybridSearchResult[]>,
 ): void {
   sdk.registerFunction("mem::smart-search",
     async (data: {
@@ -83,6 +111,7 @@ export function registerSmartSearchFunction(
       expandIds?: Array<string | { obsId: string; sessionId: string }>;
       limit?: number;
       project?: string;
+      scope?: "project" | "global";
       includeLessons?: boolean;
       // optional per-call agent filter for runtimes routing many
       // roles through one server. "*" opts out of the env-default
@@ -96,6 +125,8 @@ export function registerSmartSearchFunction(
       // ignores them — only agent-initiated re-queries should count.
       source?: string;
     }) => {
+
+      const projectScope = requireProjectReadScope(data, "mem::smart-search");
 
       // Compute the agent filter once, up front. Both the expandIds
       // branch and the hybrid-search branch consult it — otherwise
@@ -130,7 +161,7 @@ export function registerSmartSearchFunction(
       }
 
       if (data.expandIds && data.expandIds.length > 0) {
-        const raw = data.expandIds.slice(0, 20);
+        const raw = data.expandIds.slice(0, 5);
         const items = raw.map((entry) => {
           if (typeof entry === "string") return { obsId: entry, sessionId: undefined as string | undefined };
           if (entry && typeof entry === "object" && typeof (entry as any).obsId === "string") {
@@ -156,9 +187,19 @@ export function registerSmartSearchFunction(
           if (r) expanded.push(r);
         }
 
-        const scoped = filterAgentId
-          ? expanded.filter((e) => e.observation.agentId === filterAgentId)
-          : expanded;
+        const projectScoped: typeof expanded = [];
+        for (const item of expanded) {
+          if (await observationMatchesProject(kv, item, projectScope)) {
+            projectScoped.push(item);
+          }
+        }
+        const scoped = (
+          filterAgentId
+            ? projectScoped.filter(
+                (e) => e.observation.agentId === filterAgentId,
+              )
+            : projectScoped
+        ).slice(0, 5);
 
         void recordAccessBatch(
           kv,
@@ -180,7 +221,7 @@ export function registerSmartSearchFunction(
         return { mode: "compact", results: [], error: "query is required" };
       }
 
-      const limit = Math.max(1, Math.min(data.limit ?? 20, 100));
+      const limit = Math.max(1, Math.min(data.limit ?? 5, 5));
       // Lesson recall stays capped: lessons are denser than raw
       // observations so 10 covers most recall flows.
       const lessonLimit = Math.min(limit, 10);
@@ -192,22 +233,45 @@ export function registerSmartSearchFunction(
       // is a defensible middle ground: enough headroom for a small
       // workload, capped at 300 so a 100-limit request never asks for
       // thousands of hits.
-      const overFetchLimit = filterAgentId
-        ? Math.min(limit * 3, 300)
+      const overFetchLimit =
+        filterAgentId || projectScope.kind === "project"
+        ? Math.min(Math.max(limit * 20, 100), 300)
         : limit;
 
       const [hybridResults, lessons] = await Promise.all([
-        searchFn(data.query, overFetchLimit),
+        searchFn(
+          data.query,
+          overFetchLimit,
+          projectScope.kind === "project"
+            ? {
+                project: projectScope.project,
+                sessionId: data.sessionId,
+                dataClass: "query_text",
+                sourceProvenance: "smart_search_query",
+              }
+            : undefined,
+        ),
         includeLessons
-          ? recallLessons(sdk, data.query, lessonLimit, data.project)
+          ? recallLessons(sdk, data.query, lessonLimit, projectScope)
           : Promise.resolve([]),
       ]);
 
-      const filteredHybrid = filterAgentId
-        ? hybridResults
-            .filter((r) => r.observation.agentId === filterAgentId)
-            .slice(0, limit)
-        : hybridResults.slice(0, limit);
+      const projectFiltered: typeof hybridResults = [];
+      for (const result of hybridResults) {
+        if (
+          hasRetrievalEvidence(result) &&
+          (await hybridResultMatchesProject(kv, result, projectScope))
+        ) {
+          projectFiltered.push(result);
+        }
+      }
+      const filteredHybrid = (
+        filterAgentId
+          ? projectFiltered.filter(
+              (r) => r.observation.agentId === filterAgentId,
+            )
+          : projectFiltered
+      ).slice(0, limit);
 
       const compact: CompactSearchResult[] = filteredHybrid.map((r) => ({
         obsId: r.observation.id,
@@ -291,12 +355,18 @@ async function recallLessons(
   sdk: ISdk,
   query: string,
   limit: number,
-  project?: string,
+  scope: ProjectReadScope,
 ): Promise<CompactLessonResult[]> {
   try {
     const result = (await sdk.trigger({
       function_id: "mem::lesson-recall",
-      payload: { query, limit, project },
+      payload: {
+        query,
+        limit,
+        ...(scope.kind === "project"
+          ? { project: scope.project }
+          : { scope: "global" }),
+      },
     })) as { success?: boolean; lessons?: Array<Lesson & { score?: number }> };
     if (!result?.success || !Array.isArray(result.lessons)) return [];
     return result.lessons.map((l) => ({
@@ -317,6 +387,34 @@ async function recallLessons(
     });
     return [];
   }
+}
+
+async function observationMatchesProject(
+  kv: StateKV,
+  item: { obsId: string; sessionId: string },
+  scope: ProjectReadScope,
+): Promise<boolean> {
+  if (scope.kind === "global") return true;
+  const session = await kv
+    .get<Session>(KV.sessions, item.sessionId)
+    .catch(() => null);
+  if (session) return session.project === scope.project;
+  const memory = await kv
+    .get<Memory>(KV.memories, item.obsId)
+    .catch(() => null);
+  return recordMatchesProject(memory?.project, scope);
+}
+
+async function hybridResultMatchesProject(
+  kv: StateKV,
+  result: HybridSearchResult,
+  scope: ProjectReadScope,
+): Promise<boolean> {
+  return observationMatchesProject(
+    kv,
+    { obsId: result.observation.id, sessionId: result.sessionId },
+    scope,
+  );
 }
 
 async function detectFollowup(

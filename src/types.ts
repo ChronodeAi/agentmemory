@@ -3,18 +3,75 @@ export interface Session {
   project: string;
   cwd: string;
   startedAt: string;
+  updatedAt?: string;
   endedAt?: string;
+  resumedAt?: string;
+  resumeCount?: number;
+  staleClosedAt?: string;
   status: "active" | "completed" | "abandoned";
   observationCount: number;
+  retainedObservationCount?: number;
   model?: string;
   tags?: string[];
   firstPrompt?: string;
   summary?: string;
   commitShas?: string[];
   agentId?: string;
+  parentSessionId?: string;
+  childSessionIds?: string[];
+  childAgentIds?: string[];
+  privacy?: "standard" | "private" | "strict";
+  captureProfile?: "minimal" | "balanced" | "full";
+  externalProcessing?: boolean;
+  backgroundPipelineRunId?: string;
+  backgroundPipelineStatus?:
+    | "accepted"
+    | "running"
+    | "succeeded"
+    | "failed";
+  backgroundPipelineStage?:
+    | "dispatch"
+    | "session_validation"
+    | "summary"
+    | "promotion";
+  backgroundPipelineAttempts?: number;
+  backgroundPipelineAcceptedAt?: string;
+  backgroundPipelineStartedAt?: string | null;
+  backgroundPipelineFinishedAt?: string | null;
+  backgroundPipelineErrorCode?: string | null;
+  backgroundPipelineSummaryStatus?:
+    | "succeeded"
+    | "skipped"
+    | "failed"
+    | null;
+  backgroundPipelinePromotionStatus?: "succeeded" | "failed" | null;
+}
+
+export type FileOperation = "write" | "edit" | "delete";
+
+export interface FileTransition {
+  path: string;
+  operation: FileOperation;
+  digest: string;
+  digestKind: "git-blob";
+}
+
+export interface WorktreeProvenance {
+  project: string;
+  worktreeId: string;
+  baseHeadSha: string;
+  dirty: boolean;
+  transitions: FileTransition[];
+}
+
+export interface CommitTransition {
+  path: string;
+  operation: FileOperation | "rename" | "copy";
+  previousPath?: string;
 }
 
 export interface CommitLink {
+  project?: string;
   sha: string;
   shortSha: string;
   branch?: string;
@@ -41,6 +98,19 @@ export interface RawObservation {
   modality?: "text" | "image" | "mixed";
   imageData?: string;
   agentId?: string;
+  provenance?: WorktreeProvenance;
+}
+
+export interface FactLedgerEntry {
+  observationId: string;
+  sessionId: string;
+  timestamp: string;
+  type?: ObservationType;
+  title?: string;
+  facts: string[];
+  files: string[];
+  provenance?: WorktreeProvenance;
+  compactedAt: string;
 }
 
 export interface CompressedObservation {
@@ -61,6 +131,8 @@ export interface CompressedObservation {
   imageDescription?: string;
   modality?: "text" | "image" | "mixed";
   agentId?: string;
+  provenance?: WorktreeProvenance;
+  recalledOnly?: boolean;
 }
 
 export type ObservationType =
@@ -137,6 +209,9 @@ export interface HookPayload {
   cwd: string;
   timestamp: string;
   data: unknown;
+  privacy?: "standard" | "private" | "strict";
+  captureProfile?: "minimal" | "balanced" | "full";
+  externalProcessing?: boolean;
 }
 
 export interface ProviderConfig {
@@ -151,6 +226,7 @@ export type ProviderType = "agent-sdk" | "anthropic" | "gemini" | "openrouter" |
 
 export interface MemoryProvider {
   name: string;
+  readonly processingLocation?: "local" | "external";
   compress(systemPrompt: string, userPrompt: string): Promise<string>;
   summarize(systemPrompt: string, userPrompt: string): Promise<string>;
   describeImage?(imageData: string, mimeType: string, prompt: string): Promise<string>;
@@ -199,18 +275,107 @@ export interface FunctionMetrics {
 }
 
 export interface HealthSnapshot {
+  collectedAt?: string;
+  expiresAt?: string;
+  boot?: {
+    id: string;
+    startedAt: string;
+    pid: number;
+  };
   connectionState: string;
   workers: Array<{ id: string; name: string; status: string }>;
+  workerProbeStatus?: "ok" | "error" | "empty" | "invalid";
+  slotBackend?: { status: "ok" | "error"; error?: string };
   memory: {
     heapUsed: number;
     heapTotal: number;
     rss: number;
     external: number;
+    systemTotal?: number;
   };
   cpu: { userMicros: number; systemMicros: number; percent: number };
+  engineResources?: {
+    status: "ok" | "partial" | "unavailable" | "error";
+    pid?: number;
+    cpuPercent?: number;
+    rssBytes?: number;
+    error?: string;
+    stateStore?: {
+      bytes: number;
+      files: number;
+      partial: boolean;
+      growthBytes?: number;
+      growthBytesPerMinute?: number;
+    };
+    streamStore?: {
+      bytes: number;
+      files: number;
+      partial: boolean;
+      growthBytes?: number;
+      growthBytesPerMinute?: number;
+    };
+  };
   eventLoopLagMs: number;
   uptimeSeconds: number;
   kvConnectivity?: { status: string; latencyMs?: number; error?: string };
+  captureAdmission?: {
+    active: number;
+    limit: number;
+    accepted?: number;
+    completed?: number;
+    failed?: number;
+    rejected: number;
+    scopeDenied?: number;
+    failedSinceLastCollection?: number;
+    rejectedSinceLastCollection?: number;
+    scopeDeniedSinceLastCollection?: number;
+    failureReasons?: Record<string, number>;
+    rejectionReasons?: Record<string, number>;
+    scopeDenialReasons?: Record<string, number>;
+    failureReasonsSinceLastCollection?: Record<string, number>;
+    rejectionReasonsSinceLastCollection?: Record<string, number>;
+    scopeDenialReasonsSinceLastCollection?: Record<string, number>;
+    lastCompletionAt?: string;
+    lastFailureAt?: string;
+    lastRejectionAt?: string;
+    lastScopeDenialAt?: string;
+  };
+  backgroundPipeline?: import("./health/background-pipeline.js").BackgroundPipelineHealth;
+  indexPersistence?: {
+    status: "idle" | "scheduled" | "saving" | "ready" | "failed" | "stopped";
+    attempts: number;
+    succeeded: number;
+    failed: number;
+    pending: number;
+    consecutiveFailures: number;
+    scheduledAt?: string;
+    pendingSince?: string;
+    lastAttemptAt?: string;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    lastErrorCode?: string;
+  };
+  auditPersistence?: {
+    status: "idle" | "ready" | "recovering" | "failed";
+    attempts: number;
+    succeeded: number;
+    failed: number;
+    pending: number;
+    recovered: number;
+    unresolvedFailures: number;
+    lastAttemptAt?: string;
+    lastSuccessAt?: string;
+    lastFailureAt?: string;
+    lastRecoveredAt?: string;
+    lastErrorCode?: string;
+  };
+  searchIndex?: {
+    status: "initializing" | "rebuilding" | "ready" | "partial" | "failed";
+    keywordEntries: number;
+    vectorEntries: number;
+    startedAt?: string;
+    error?: string;
+  };
   status: "healthy" | "degraded" | "critical";
   alerts: string[];
   notes?: string[];
@@ -237,6 +402,7 @@ export interface MemorySlot {
 
 export interface EmbeddingProvider {
   name: string;
+  readonly processingLocation?: "local" | "external";
   dimensions: number;
   embed(text: string): Promise<Float32Array>;
   embedBatch(texts: string[]): Promise<Float32Array[]>;
@@ -287,6 +453,7 @@ export interface TimelineEntry {
 }
 
 export interface ProjectProfile {
+  schemaVersion?: number;
   project: string;
   updatedAt: string;
   topConcepts: Array<{ concept: string; frequency: number }>;
@@ -309,6 +476,7 @@ export interface ExportPagination {
 export interface ExportData {
   version: "0.3.0" | "0.4.0" | "0.5.0" | "0.6.0" | "0.6.1" | "0.7.0" | "0.7.2" | "0.7.3" | "0.7.4" | "0.7.5" | "0.7.6" | "0.7.7" | "0.7.9" | "0.8.0" | "0.8.1" | "0.8.2" | "0.8.3" | "0.8.4" | "0.8.5" | "0.8.6" | "0.8.7" | "0.8.8" | "0.8.9" | "0.8.10" | "0.8.11" | "0.8.12" | "0.8.13" | "0.9.0" | "0.9.1" | "0.9.2" | "0.9.3" | "0.9.4" | "0.9.5" | "0.9.6" | "0.9.7" | "0.9.8" | "0.9.9" | "0.9.10" | "0.9.11" | "0.9.12" | "0.9.13" | "0.9.14" | "0.9.15" | "0.9.16" | "0.9.17" | "0.9.18" | "0.9.19" | "0.9.20" | "0.9.21" | "0.9.22" | "0.9.23" | "0.9.24" | "0.9.25" | "0.9.26" | "0.9.27" | "0.9.28";
   exportedAt: string;
+  sections?: string[];
   sessions: Session[];
   observations: Record<string, CompressedObservation[]>;
   memories: Memory[];
@@ -380,6 +548,7 @@ export type GraphNodeType =
 
 export interface GraphNode {
   id: string;
+  project?: string;
   type: GraphNodeType;
   name: string;
   properties: Record<string, unknown>;
@@ -410,6 +579,7 @@ export type GraphEdgeType =
 
 export interface GraphEdge {
   id: string;
+  project?: string;
   type: GraphEdgeType;
   sourceNodeId: string;
   targetNodeId: string;
@@ -499,19 +669,24 @@ export type ConsolidationTier =
 
 export interface SemanticMemory {
   id: string;
+  project?: string;
   fact: string;
   confidence: number;
+  sourceFingerprint?: string;
   sourceSessionIds: string[];
   sourceMemoryIds: string[];
   accessCount: number;
   lastAccessedAt: string;
   strength: number;
+  supersededBy?: string;
+  supersededAt?: string;
   createdAt: string;
   updatedAt: string;
 }
 
 export interface ProceduralMemory {
   id: string;
+  project?: string;
   name: string;
   steps: string[];
   triggerCondition: string;
@@ -575,6 +750,7 @@ export interface AuditEntry {
     | "action_create"
     | "action_update"
     | "lease_acquire"
+    | "lease_renew"
     | "lease_release"
     | "routine_run"
     | "signal_send"
@@ -591,6 +767,7 @@ export interface AuditEntry {
     | "crystallize"
     | "diagnose"
     | "heal"
+    | "audit_gap"
     | "index_persist"
     | "facet_tag"
     | "lesson_save"
@@ -608,7 +785,8 @@ export interface AuditEntry {
     | "slot_replace"
     | "slot_create"
     | "slot_delete"
-    | "slot_reflect";
+    | "slot_reflect"
+    | "session_close";
   userId?: string;
   functionId: string;
   targetIds: string[];
@@ -806,6 +984,7 @@ export interface Lesson {
   reinforcements: number;
   source: "crystal" | "manual" | "consolidation";
   sourceIds: string[];
+  appliedIdempotencyKeys?: string[];
   project?: string;
   tags: string[];
   createdAt: string;
@@ -834,6 +1013,35 @@ export interface Insight {
   lastDecayedAt?: string;
   decayRate: number;
   deleted?: boolean;
+}
+
+export type PromotionCategory =
+  | "bug"
+  | "workflow"
+  | "architecture"
+  | "preference"
+  | "security"
+  | "business";
+
+export interface PromotionCandidate {
+  id: string;
+  project: string;
+  sessionId: string;
+  category: PromotionCategory;
+  title: string;
+  content: string;
+  status: "pending" | "auto_promoted" | "accepted" | "rejected";
+  requiresExplicitApproval: boolean;
+  freshVerification: boolean;
+  sourceObservationIds: string[];
+  failureObservationIds: string[];
+  verificationObservationIds: string[];
+  commitSha?: string;
+  canonicalAdr?: string;
+  promotedRecordId?: string;
+  createdAt: string;
+  updatedAt: string;
+  decidedAt?: string;
 }
 
 export interface DiagnosticCheck {

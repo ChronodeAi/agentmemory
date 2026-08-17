@@ -47,7 +47,7 @@
 <p align="center">
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-recall.svg"><img src="assets/tags/stat-recall.svg" alt="95.2% retrieval R@5" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tokens.svg"><img src="assets/tags/stat-tokens.svg" alt="92% fewer tokens" height="38" /></picture>
-  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tools.svg"><img src="assets/tags/stat-tools.svg" alt="53 MCP tools" height="38" /></picture>
+  <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tools.svg"><img src="assets/tags/stat-tools.svg" alt="59 MCP tools" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-hooks.svg"><img src="assets/tags/stat-hooks.svg" alt="12 auto hooks" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-deps.svg"><img src="assets/tags/stat-deps.svg" alt="0 external DBs" height="38" /></picture>
   <picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/stat-tests.svg"><img src="assets/tags/stat-tests.svg" alt="1,428+ tests passing" height="38" /></picture>
@@ -121,7 +121,7 @@ agentmemory works with any agent that supports hooks, MCP, or REST API. All agen
 <td align="center" width="12.5%">
 <a href="https://github.com/openai/codex"><img src="https://github.com/openai.png?size=120" alt="Codex CLI" width="48" height="48" /></a><br/>
 <strong>Codex CLI</strong><br/>
-<sub>native plugin + 6 hooks + MCP</sub>
+<sub>native plugin + 11 hooks + MCP</sub>
 </td>
 <td align="center" width="12.5%">
 <a href="https://github.com/features/copilot"><img src="https://github.githubassets.com/images/modules/site/copilot/copilot.png" alt="GitHub Copilot CLI" width="48" height="48" /></a><br/>
@@ -504,7 +504,7 @@ Implementation details live in `src/cli.ts` (see `runUpgrade` around the `src/cl
 ### Claude Code (one block, paste it)
 
 ```text
-Install agentmemory: run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server. Then run `/plugin marketplace add rohitg00/agentmemory` and `/plugin install agentmemory` — the plugin registers all 12 hooks, 15 skills, AND auto-wires the `@agentmemory/mcp` stdio server via its `.mcp.json`, so you get 53 MCP tools (memory_smart_search, memory_save, memory_sessions, memory_governance_delete, etc.) without any extra config step. Verify with `curl http://localhost:3111/agentmemory/health`. The real-time viewer is at http://localhost:3113.
+Install agentmemory: run `npx @agentmemory/agentmemory` in a separate terminal to start the memory server. Then run `/plugin marketplace add rohitg00/agentmemory` and `/plugin install agentmemory` — the plugin registers all 12 hooks, 15 skills, AND auto-wires the `@agentmemory/mcp` stdio server via its `.mcp.json`, so you get 59 MCP tools (memory_smart_search, memory_save, memory_sessions, memory_governance_delete, etc.) without any extra config step. Verify with `curl http://localhost:3111/agentmemory/health`. The real-time viewer is at http://localhost:3113.
 ```
 
 #### Claude Code without the plugin install (MCP-standalone path)
@@ -518,7 +518,7 @@ agentmemory connect claude-code --with-hooks
 ```
 
 This merges the same hook commands into `~/.claude/settings.json` with absolute paths resolved to the bundled `plugin/` directory of the currently installed `@agentmemory/agentmemory` package. Re-run the command after upgrading agentmemory to refresh the paths. User entries in the same file are preserved; only previous agentmemory entries are replaced. Using the `/plugin install` path remains the recommended approach.
-For remote or protected deployments, launch Claude Code with `AGENTMEMORY_URL` and `AGENTMEMORY_SECRET` set. The plugin passes both values through to its bundled MCP server; when `AGENTMEMORY_URL` is empty, the MCP shim uses `http://localhost:3111`.
+For remote or protected deployments, launch Claude Code with `AGENTMEMORY_URL` and either `AGENTMEMORY_SECRET` or `AGENTMEMORY_SECRET_FILE` set. The plugin passes these values through to its bundled MCP server; when `AGENTMEMORY_URL` is empty, the MCP shim uses `http://localhost:3111`. For local installs, `AGENTMEMORY_SECRET_FILE=~/.agentmemory/secret` avoids copying the credential into agent configuration.
 
 ### Codex CLI (Codex plugin platform)
 
@@ -533,7 +533,7 @@ codex plugin add agentmemory@agentmemory
 
 The Codex plugin ships from the same `plugin/` directory as the Claude Code plugin. It registers:
 
-- `@agentmemory/mcp` as an MCP server (proxies all 53 tools when `AGENTMEMORY_URL` points at a running agentmemory server; falls back to 7 tools locally when no server is reachable)
+- `@agentmemory/mcp` as an MCP server (proxies all 59 tools when `AGENTMEMORY_URL` points at a running agentmemory server; falls back to 7 tools locally when no server is reachable)
 - 6 lifecycle hooks: `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `PreCompact`, `Stop`
 - 8 invocable skills: `/recall`, `/remember`, `/session-history`, `/forget`, `/recap`, `/handoff`, `/commit-context`, `/commit-history`, plus 7 reference skills the agent loads on demand (MCP tools, REST API, config, agents, hooks, architecture, and the skill-authoring guide)
 
@@ -711,6 +711,12 @@ npm install && npm run build && npm start
 This starts agentmemory with a local `iii-engine` if `iii` is already installed, or falls back to Docker Compose if Docker is available. REST, streams, and the viewer bind to `127.0.0.1` by default.
 
 Install `iii-engine` manually. **agentmemory currently pins `iii-engine` to `v0.11.2`** — `v0.11.6` introduces a new sandbox-everything-via-`iii worker add` model that agentmemory hasn't been refactored for yet. Pin lifts once the refactor lands. Override with `AGENTMEMORY_III_VERSION=<version>` if you've migrated to the sandbox model manually.
+
+The pinned file-backed KV engine retains its upstream persistence cadence by default. `AGENTMEMORY_III_SAVE_INTERVAL_MS` is an advanced override accepting an integer from `100` to `3600000`; increasing it expands the amount of recent capture that a sudden host failure could lose and should be justified with workload-specific evidence.
+
+Search indexes are rebuildable derivatives of canonical observations. Agentmemory coalesces index changes into at most one full checkpoint every 30 seconds and attempts a final checkpoint on graceful shutdown, avoiding repeated whole-corpus serialization during active coding sessions. Every restart reconciles a non-empty persisted index against canonical observations and memories before declaring search ready, so an interrupted or failed checkpoint cannot permanently hide committed memory.
+
+Startup maintenance is fail-closed and bounded by `AGENTMEMORY_STARTUP_AUDIT_GAP_MAX_ENTRIES`, `AGENTMEMORY_STARTUP_GOVERNANCE_MAX_AUDIT_ENTRIES`, and `AGENTMEMORY_STARTUP_RECONCILE_MAX_ENTRIES` (each defaults to 100,000 and is capped at 1,000,000), plus `REBUILD_EMBED_BATCH_SIZE` (default 32, maximum 64). Audit recovery, governance reconciliation, and search reconciliation share one `AGENTMEMORY_STARTUP_RECONCILE_TIMEOUT_MS` deadline (default 120 seconds, range 10 seconds to 10 minutes). The iii `state::list` API returns each scope as a complete array, so these controls bound Agentmemory after each read but cannot prevent the engine from allocating the response. Search reconciliation may hold one sessions array, one memories array, the growing canonical map, and up to ten session-observation arrays concurrently. Large installations should partition state or adopt a paginated iii state API before raising the caps.
 
 - **macOS arm64:** `mkdir -p ~/.local/bin && curl -fsSL https://github.com/iii-hq/iii/releases/download/iii/v0.11.2/iii-aarch64-apple-darwin.tar.gz | tar -xz -C ~/.local/bin && chmod +x ~/.local/bin/iii`
 - **macOS x64:** swap `aarch64-apple-darwin` for `x86_64-apple-darwin`
@@ -949,9 +955,9 @@ npm install @xenova/transformers
 
 <h2 id="mcp-server"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-mcp.svg"><img src="assets/tags/section-mcp.svg" alt="MCP Server" height="32" /></picture></h2>
 
-53 tools, 6 resources, 3 prompts, and 15 skills, the most comprehensive MCP memory toolkit for any agent.
+59 tools, 6 resources, 3 prompts, and 15 skills, the most comprehensive MCP memory toolkit for any agent.
 
-> **MCP shim vs full server:** the published `@agentmemory/mcp` package is a thin shim. It exposes the full 53-tool surface **only when it can reach a running agentmemory server** via `AGENTMEMORY_URL` (proxy mode). With no server reachable, the shim falls back to a 7-tool local set (`memory_save`, `memory_recall`, `memory_smart_search`, `memory_sessions`, `memory_export`, `memory_audit`, `memory_governance_delete`). The `AGENTMEMORY_TOOLS=core|all` env var is a *server-side* flag — setting it in the shim's `env` block has no effect. If you see only 7 tools in Cursor / OpenCode / Gemini CLI, start `npx @agentmemory/agentmemory` (or the Docker stack) and set `AGENTMEMORY_URL=http://localhost:3111`.
+> **MCP shim vs full server:** the published `@agentmemory/mcp` package is a thin shim. It exposes the full 58-tool surface **only when it can reach a running agentmemory server** via `AGENTMEMORY_URL` (proxy mode). With no server reachable, the shim falls back to a 7-tool local set (`memory_save`, `memory_recall`, `memory_smart_search`, `memory_sessions`, `memory_export`, `memory_audit`, `memory_governance_delete`). The `AGENTMEMORY_TOOLS=core|all` env var is a *server-side* flag — setting it in the shim's `env` block has no effect. If you see only 7 tools in Cursor / OpenCode / Gemini CLI, start `npx @agentmemory/agentmemory` (or the Docker stack) and set `AGENTMEMORY_URL=http://localhost:3111`.
 
 ### 53 Tools
 
@@ -1426,9 +1432,15 @@ Create `~/.agentmemory/.env`:
 # BM25_WEIGHT=0.4
 # VECTOR_WEIGHT=0.6
 # TOKEN_BUDGET=2000
+# REBUILD_EMBED_BATCH_SIZE=32
+# AGENTMEMORY_STARTUP_RECONCILE_MAX_ENTRIES=100000
+# AGENTMEMORY_STARTUP_AUDIT_GAP_MAX_ENTRIES=100000
+# AGENTMEMORY_STARTUP_GOVERNANCE_MAX_AUDIT_ENTRIES=100000
+# AGENTMEMORY_STARTUP_RECONCILE_TIMEOUT_MS=120000
 
 # Auth
 # AGENTMEMORY_SECRET=your-secret
+# AGENTMEMORY_SECRET_FILE=~/.agentmemory/secret
 
 # Ports (defaults: 3111 API, 3113 viewer)
 # III_REST_PORT=3111
@@ -1483,7 +1495,7 @@ Create `~/.agentmemory/.env`:
 # USER_ID=
 # TEAM_MODE=private
 
-# Tool visibility: "core" (8 tools, lean fallback) or "all" (53 tools)
+# Tool visibility: "core" (8 tools, lean fallback) or "all" (59 tools)
 # AGENTMEMORY_TOOLS=core
 ```
 
@@ -1491,14 +1503,21 @@ Create `~/.agentmemory/.env`:
 
 <h2 id="api"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-api.svg"><img src="assets/tags/section-api.svg" alt="API" height="32" /></picture></h2>
 
-128 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default. Protected endpoints require `Authorization: Bearer <secret>` when `AGENTMEMORY_SECRET` is set, and mesh sync endpoints require `AGENTMEMORY_SECRET` on both peers.
+135 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default.
+Only `/agentmemory/livez` is public. Protected endpoints, including detailed
+health telemetry, require `Authorization: Bearer <secret>`. Explicit
+cross-project `scope: "global"` requires the separate
+`AGENTMEMORY_ADMIN_SECRET`; project credentials cannot escalate to global
+scope. Mesh sync endpoints require the same `AGENTMEMORY_ADMIN_SECRET` on both
+peers and use an explicit project or global export scope.
 
 <details>
 <summary>Key endpoints</summary>
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/agentmemory/health` | Health check (always public) |
+| `GET` | `/agentmemory/health` | Detailed health telemetry (authenticated) |
+| `GET` | `/agentmemory/livez` | Minimal public liveness check |
 | `POST` | `/agentmemory/session/start` | Start session + get context |
 | `POST` | `/agentmemory/session/end` | End session |
 | `POST` | `/agentmemory/observe` | Capture observation |

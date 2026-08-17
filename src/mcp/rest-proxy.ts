@@ -1,7 +1,18 @@
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import {
+  createProjectCapabilityToken,
+  DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
+  isStrictCapabilityMode,
+  PROJECT_CAPABILITY_PROJECT_HEADER,
+} from "../auth.js";
+
 const DEFAULT_URL = "http://localhost:3111";
 const DEFAULT_HEALTH_PROBE_TIMEOUT_MS = 2_000;
 const CALL_TIMEOUT_MS = 15_000;
 const LOCAL_MODE_TTL_MS = 30_000;
+const CAPABILITY_TTL_SECONDS = 300;
 
 function probeTimeoutMs(): number {
   const raw = process.env["AGENTMEMORY_PROBE_TIMEOUT_MS"];
@@ -45,13 +56,190 @@ export function resolveEnvOrEmpty(name: string): string {
   return raw;
 }
 
+function resolveEnvValue(value: string | undefined): string {
+  if (!value) return "";
+  const trimmed = value.trim();
+  const placeholder = trimmed.match(
+    /^\$\{[A-Za-z_][A-Za-z0-9_]*(?::-(.*))?\}$/,
+  );
+  return placeholder ? (placeholder[1]?.trim() ?? "") : trimmed;
+}
+
+function userEnv(): Record<string, string> {
+  const path = join(homedir(), ".agentmemory", ".env");
+  if (!existsSync(path)) return {};
+  const vars: Record<string, string> = {};
+  try {
+    for (const line of readFileSync(path, "utf8").split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const eq = trimmed.indexOf("=");
+      if (eq < 1) continue;
+      const key = trimmed.slice(0, eq).trim();
+      let value = trimmed.slice(eq + 1).trim();
+      const quote = value[0] === "'" || value[0] === '"' ? value[0] : "";
+      if (quote) {
+        const close = value.indexOf(quote, 1);
+        value = close >= 0 ? value.slice(1, close) : value.slice(1);
+      } else {
+        const comment = value.indexOf(" #");
+        if (comment >= 0) value = value.slice(0, comment).trim();
+      }
+      vars[key] = value;
+    }
+  } catch {
+    return {};
+  }
+  return vars;
+}
+
+function configuredEnvValue(
+  name: string,
+  fileEnv: Record<string, string>,
+): string {
+  const raw = Object.prototype.hasOwnProperty.call(process.env, name)
+    ? process.env[name]
+    : fileEnv[name];
+  return resolveEnvValue(raw);
+}
+
+function agentmemorySecret(): string {
+  const fileEnv = userEnv();
+  const direct = configuredEnvValue("AGENTMEMORY_SECRET", fileEnv);
+  if (direct) return direct;
+  const secretFile = configuredEnvValue("AGENTMEMORY_SECRET_FILE", fileEnv);
+  if (!secretFile) return "";
+  const path = secretFile.startsWith("~/")
+    ? join(homedir(), secretFile.slice(2))
+    : secretFile;
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function secretFromEnvironmentOrFile(
+  directName: string,
+  fileName: string,
+  defaultFileName?: string,
+): string {
+  const fileEnv = userEnv();
+  const direct = configuredEnvValue(directName, fileEnv);
+  if (direct) return direct;
+  const configuredFile =
+    configuredEnvValue(fileName, fileEnv) ||
+    (defaultFileName
+      ? join(homedir(), ".agentmemory", defaultFileName)
+      : "");
+  if (!configuredFile) return "";
+  const path = configuredFile.startsWith("~/")
+    ? join(homedir(), configuredFile.slice(2))
+    : configuredFile;
+  try {
+    return readFileSync(path, "utf8").trim();
+  } catch {
+    return "";
+  }
+}
+
+function projectCapability(project: string): string {
+  const fileEnv = userEnv();
+  const configuredToken = configuredEnvValue(
+    "AGENTMEMORY_PROJECT_CAPABILITY_TOKEN",
+    fileEnv,
+  );
+  if (configuredToken) return configuredToken;
+  const signingSecret = secretFromEnvironmentOrFile(
+    "AGENTMEMORY_PROJECT_CAPABILITY_SECRET",
+    "AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE",
+    "project-capability-secret",
+  );
+  if (signingSecret) {
+    const issuedAt = Math.floor(Date.now() / 1000);
+    return createProjectCapabilityToken(
+      {
+        version: 1,
+        audience:
+          configuredEnvValue(
+            "AGENTMEMORY_PROJECT_CAPABILITY_AUDIENCE",
+            fileEnv,
+          ) || DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
+        project,
+        issuedAt,
+        expiresAt: issuedAt + CAPABILITY_TTL_SECONDS,
+      },
+      signingSecret,
+    );
+  }
+  if (!isStrictCapabilityMode(
+    configuredEnvValue("AGENTMEMORY_STRICT_CAPABILITY_MODE", fileEnv),
+  )) {
+    return agentmemorySecret();
+  }
+  throw new Error(
+    "project capability credentials are unavailable; configure AGENTMEMORY_PROJECT_CAPABILITY_SECRET or its secret file",
+  );
+}
+
 function baseUrl(): string {
   return (resolveEnvOrEmpty("AGENTMEMORY_URL") || DEFAULT_URL).replace(/\/+$/, "");
 }
 
 function authHeader(): Record<string, string> {
-  const secret = resolveEnvOrEmpty("AGENTMEMORY_SECRET");
+  const secret = agentmemorySecret();
   return secret ? { authorization: `Bearer ${secret}` } : {};
+}
+
+function requestBody(init?: RequestInit): Record<string, unknown> {
+  if (typeof init?.body !== "string") return {};
+  try {
+    const parsed = JSON.parse(init.body) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function requestAuthHeaders(
+  path: string,
+  init?: RequestInit,
+): Record<string, string> {
+  const body = requestBody(init);
+  const argumentsBody =
+    body["arguments"] &&
+    typeof body["arguments"] === "object" &&
+    !Array.isArray(body["arguments"])
+      ? (body["arguments"] as Record<string, unknown>)
+      : {};
+  const parsedUrl = new URL(path, DEFAULT_URL);
+  const scope =
+    body["scope"] ??
+    argumentsBody["scope"] ??
+    parsedUrl.searchParams.get("scope");
+  const projectValue =
+    body["project"] ??
+    argumentsBody["project"] ??
+    parsedUrl.searchParams.get("project");
+  const project =
+    typeof projectValue === "string" ? projectValue.trim() : "";
+
+  if (scope === "global" || parsedUrl.pathname === "/agentmemory/migrate") {
+    const adminSecret = secretFromEnvironmentOrFile(
+      "AGENTMEMORY_ADMIN_SECRET",
+      "AGENTMEMORY_ADMIN_SECRET_FILE",
+    );
+    const secret = adminSecret || agentmemorySecret();
+    return secret ? { authorization: `Bearer ${secret}` } : {};
+  }
+  if (!project) return authHeader();
+  const capability = projectCapability(project);
+  return {
+    authorization: `Bearer ${capability}`,
+    [PROJECT_CAPABILITY_PROJECT_HEADER]: project,
+  };
 }
 
 /**
@@ -141,7 +329,7 @@ export async function resolveHandle(): Promise<Handle> {
             ...init,
             headers: {
               "content-type": "application/json",
-              ...authHeader(),
+              ...requestAuthHeaders(path, init),
               ...(init?.headers as Record<string, string> | undefined),
             },
             signal: AbortSignal.timeout(CALL_TIMEOUT_MS),

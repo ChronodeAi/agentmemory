@@ -1,18 +1,34 @@
-import { TriggerAction, type ISdk, type ApiRequest } from "iii-sdk";
+import { type ISdk, type ApiRequest } from "iii-sdk";
 import type { Session, CompressedObservation, HookPayload, CommitLink, SessionSummary } from "../types.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
-import { KV } from "../state/schema.js";
+import { KV, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { getLatestHealth } from "../health/monitor.js";
 import type { MetricsStore } from "../eval/metrics-store.js";
 import type { ResilientProvider } from "../providers/resilient.js";
-import { VERSION } from "../version.js";
-import { timingSafeCompare } from "../auth.js";
+import {
+  API_CONTRACT_VERSION,
+  BACKEND_BUILD_ID,
+  VERSION,
+  VIEWER_BUILD_ID,
+} from "../version.js";
+import {
+  authorizeAdministrativeRequest,
+  authorizeProjectRequest,
+  authorizeProtectedRequest,
+  DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
+  extractProjectBinding,
+} from "../auth.js";
 import { isSlotsEnabled, isReflectEnabled } from "../functions/slots.js";
 import { renderViewerDocument } from "../viewer/document.js";
 import { getBoundViewerPort, getViewerSkipped } from "../viewer/server.js";
 import { MAX_FILES_UPPER_BOUND } from "../functions/replay.js";
 import { logger } from "../logger.js";
+import {
+  closeStaleSessions,
+  startOrResumeSession,
+} from "../functions/session-lifecycle.js";
+import { requireProjectReadScope } from "../project-scope.js";
 import {
   isGraphExtractionEnabled,
   isConsolidationEnabled,
@@ -23,6 +39,17 @@ import {
   getAgentId,
   isAgentScopeIsolated,
 } from "../config.js";
+import {
+  flushIndexSave,
+  getEmbeddingProvider,
+  getSearchIndex,
+  getVectorIndex,
+  rebuildIndex,
+} from "../functions/search.js";
+import {
+  recordBackgroundPipelineAccepted,
+} from "../health/background-pipeline.js";
+import { dispatchSessionStopped } from "./events.js";
 
 type Response = {
   status_code: number;
@@ -36,29 +63,15 @@ function parseOptionalInt(raw: unknown): number | undefined {
   return Number.isFinite(n) ? n : undefined;
 }
 
-function checkAuth(
-  req: ApiRequest,
-  secret: string | undefined,
-): Response | null {
-  if (!secret) return null;
-  const auth = req.headers?.["authorization"] || req.headers?.["Authorization"];
-  if (
-    typeof auth !== "string" ||
-    !timingSafeCompare(auth, `Bearer ${secret}`)
-  ) {
-    return { status_code: 401, body: { error: "unauthorized" } };
-  }
-  return null;
-}
-
 function requireConfiguredSecret(
   secret: string | undefined,
   feature: string,
+  variable = "AGENTMEMORY_SECRET",
 ): Response | null {
   if (secret) return null;
   return {
     status_code: 503,
-    body: { error: `${feature} requires AGENTMEMORY_SECRET` },
+    body: { error: `${feature} requires ${variable}` },
   };
 }
 
@@ -135,28 +148,180 @@ function parseOptionalPositiveInt(value: unknown): number | undefined | null {
   return parsed;
 }
 
+function triggerResult(
+  value: unknown,
+): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function failedTriggerStatus(
+  result: Record<string, unknown>,
+  fallback = 400,
+): number {
+  const error =
+    typeof result["error"] === "string" ? result["error"].toLowerCase() : "";
+  const code =
+    typeof result["code"] === "string" ? result["code"].toLowerCase() : "";
+  if (
+    error.includes("unavailable") ||
+    error.includes("incomplete") ||
+    code.includes("ledger")
+  ) {
+    return 503;
+  }
+  if (
+    result["retryable"] === true ||
+    error.includes("capacity") ||
+    error.includes("temporarily")
+  ) {
+    return 429;
+  }
+  if (error.includes("not found")) return 404;
+  if (error.includes("expired")) return 410;
+  if (
+    error.includes("does not match") ||
+    error.includes("does not belong") ||
+    error.includes("already") ||
+    error.includes("limit reached")
+  ) {
+    return 409;
+  }
+  return fallback;
+}
+
 export function registerApiTriggers(
   sdk: ISdk,
   kv: StateKV,
   secret?: string,
   metricsStore?: MetricsStore,
   provider?: ResilientProvider | { circuitState?: unknown },
+  adminSecret?: string,
+  projectCapabilitySecret?: string,
+  strictCapabilityMode = false,
+  capabilityAudience = DEFAULT_PROJECT_CAPABILITY_AUDIENCE,
 ): void {
+  type ApiTrigger = {
+    type: "http";
+    function_id: string;
+    config: {
+      api_path: string;
+      http_method: string;
+      middleware_function_ids?: string[];
+    };
+  };
+  const publicRoutes = new Set([
+    "GET /agentmemory/livez",
+  ]);
+  const rawRegisterTrigger = sdk.registerTrigger.bind(sdk);
+  const registerApiTrigger = (trigger: ApiTrigger): void => {
+    const route = `${trigger.config.http_method} ${trigger.config.api_path}`;
+    if (publicRoutes.has(route)) {
+      rawRegisterTrigger(trigger);
+      return;
+    }
+    const middleware = new Set(
+      trigger.config.middleware_function_ids ?? [],
+    );
+    middleware.add("middleware::api-auth");
+    rawRegisterTrigger({
+      ...trigger,
+      config: {
+        ...trigger.config,
+        middleware_function_ids: [...middleware],
+      },
+    });
+  };
+  type AuthRequest = {
+    headers?: Record<string, string | string[] | undefined>;
+    body?: Record<string, unknown>;
+    query_params?: Record<string, unknown>;
+  };
+  const checkRequestAuthorization = (
+    request: AuthRequest | undefined,
+  ): Response | null => {
+    const headers = request?.headers;
+    const adminDecision = authorizeAdministrativeRequest(headers, adminSecret);
+    const requestsGlobal =
+      request?.body?.["scope"] === "global" ||
+      request?.query_params?.["scope"] === "global";
+    if (requestsGlobal) {
+      return adminDecision.authorized
+        ? null
+        : {
+            status_code: adminDecision.statusCode,
+            body: {
+              error:
+                adminDecision.error === "authentication_unavailable"
+                  ? "global_authentication_unavailable"
+                  : "global_unauthorized",
+            },
+          };
+    }
+    if (adminDecision.authorized) return null;
+
+    const projectBindings = [
+      extractProjectBinding(headers),
+      asNonEmptyString(request?.body?.["project"]) ?? undefined,
+      asNonEmptyString(request?.query_params?.["project"]) ?? undefined,
+    ].filter((value): value is string => Boolean(value));
+    const uniqueProjectBindings = new Set(projectBindings);
+    if (uniqueProjectBindings.size > 1) {
+      return {
+        status_code: 401,
+        body: { error: "project_binding_mismatch" },
+      };
+    }
+    const project = projectBindings[0];
+    const decision = project
+      ? authorizeProjectRequest(headers, {
+          signingSecret: projectCapabilitySecret,
+          legacySecret: secret,
+          strictCapabilityMode,
+          audience: capabilityAudience,
+          project,
+        })
+      : authorizeProtectedRequest(headers, secret);
+    return decision.authorized
+      ? null
+      : {
+          status_code: decision.statusCode,
+          body: { error: decision.error },
+        };
+  };
+  const checkAuth = (
+    req: ApiRequest,
+    _legacySecret?: string,
+  ): Response | null =>
+    checkRequestAuthorization(req as unknown as AuthRequest);
+  const checkAdminAuth = (req: ApiRequest): Response | null => {
+    const decision = authorizeAdministrativeRequest(
+      req.headers,
+      adminSecret,
+    );
+    return decision.authorized
+      ? null
+      : {
+          status_code: decision.statusCode,
+          body: { error: decision.error },
+        };
+  };
+
   sdk.registerFunction(
     "middleware::api-auth",
     async (input: {
-      request?: { headers?: Record<string, string | undefined> };
+      request?: {
+        headers?: Record<string, string | undefined>;
+        body?: Record<string, unknown>;
+        query_params?: Record<string, unknown>;
+      };
     }) => {
-      if (!secret) return { action: "continue" };
-      const headers = input?.request?.headers || {};
-      const auth = headers["authorization"] || headers["Authorization"];
-      if (
-        typeof auth !== "string" ||
-        !timingSafeCompare(auth, `Bearer ${secret}`)
-      ) {
+      const authError = checkRequestAuthorization(input?.request);
+      if (authError) {
         return {
           action: "respond",
-          response: { status_code: 401, body: { error: "unauthorized" } },
+          response: authError,
         };
       }
       return { action: "continue" };
@@ -169,7 +334,7 @@ export function registerApiTriggers(
       body: { status: "ok", service: "agentmemory", viewerPort: getBoundViewerPort(), viewerSkipped: getViewerSkipped() },
     }),
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::liveness",
     config: { api_path: "/agentmemory/livez", http_method: "GET" },
@@ -231,6 +396,12 @@ export function registerApiTriggers(
         status_code: 200,
         body: {
           version: VERSION,
+          build: {
+            backend: BACKEND_BUILD_ID,
+            viewer: VIEWER_BUILD_ID,
+            apiContract: API_CONTRACT_VERSION,
+            compatibility: "compatible",
+          },
           provider: providerKind,
           embeddingProvider,
           flags,
@@ -238,7 +409,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::config-flags",
     config: {
@@ -249,43 +420,72 @@ export function registerApiTriggers(
   });
 
   sdk.registerFunction("api::health", 
-    async (req: ApiRequest): Promise<Response> => {
+    async (_req: ApiRequest): Promise<Response> => {
       const health = await getLatestHealth(kv);
       const functionMetrics = metricsStore ? await metricsStore.getAll() : [];
       const circuitBreaker =
         provider && "circuitState" in provider ? provider.circuitState : null;
 
-      const status = health?.status || "healthy";
+      const viewerPort = getBoundViewerPort();
+      const viewerSkipped = getViewerSkipped();
+      const viewerStatus = viewerSkipped
+        ? "unavailable"
+        : typeof viewerPort === "number"
+          ? "ok"
+          : "error";
+      const backendStatus = health?.status || "critical";
+      const status =
+        backendStatus === "healthy" && viewerStatus !== "ok"
+          ? "degraded"
+          : backendStatus;
       const statusCode = status === "critical" ? 503 : 200;
 
       return {
         status_code: statusCode,
         body: {
           status,
+          readiness: health ? "evaluated" : "initializing",
           service: "agentmemory",
           version: VERSION,
+          build: {
+            backend: BACKEND_BUILD_ID,
+            viewer: VIEWER_BUILD_ID,
+            apiContract: API_CONTRACT_VERSION,
+            compatibility: "compatible",
+          },
+          components: {
+            backend: { status: backendStatus },
+            workers: {
+              status: health?.workerProbeStatus ?? "error",
+              count: health?.workers.length ?? 0,
+            },
+            slots: health?.slotBackend ?? {
+              status: "error",
+              error: "health_not_collected",
+            },
+            viewer: { status: viewerStatus, port: viewerPort ?? null },
+          },
           health: health || null,
           functionMetrics,
           circuitBreaker,
-          viewerPort: getBoundViewerPort(),
-          viewerSkipped: getViewerSkipped(),
+          viewerPort,
+          viewerSkipped,
         },
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::health",
     config: {
       api_path: "/agentmemory/health",
       http_method: "GET",
-      middleware_function_ids: ["middleware::api-auth"],
     },
   });
 
   sdk.registerFunction("api::observe",
     async (req: ApiRequest<HookPayload>): Promise<Response> => {
-      const body = (req.body ?? {}) as Record<string, unknown>;
+      const body = (req.body ?? {}) as unknown as Record<string, unknown>;
       const hookType = asNonEmptyString(body.hookType);
       const sessionId = asNonEmptyString(body.sessionId);
       const project = asNonEmptyString(body.project);
@@ -307,12 +507,56 @@ export function registerApiTriggers(
         cwd,
         timestamp,
         data: body.data,
+        ...(body.privacy === "standard" ||
+        body.privacy === "private" ||
+        body.privacy === "strict"
+          ? { privacy: body.privacy }
+          : {}),
+        ...(body.captureProfile === "minimal" ||
+        body.captureProfile === "balanced" ||
+        body.captureProfile === "full"
+          ? { captureProfile: body.captureProfile }
+          : {}),
+        ...(typeof body.externalProcessing === "boolean"
+          ? { externalProcessing: body.externalProcessing }
+          : {}),
       };
-      const result = await sdk.trigger({ function_id: "mem::observe", payload });
-      return { status_code: 201, body: result };
+      try {
+        const rawResult = await sdk.trigger({
+          function_id: "mem::observe",
+          payload,
+        });
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: {
+              success: false,
+              retryable: true,
+              error: "capture_result_unavailable",
+            },
+          };
+        }
+        if (result["success"] !== true) {
+          return {
+            status_code: failedTriggerStatus(result, 500),
+            body: result,
+          };
+        }
+        return { status_code: 201, body: result };
+      } catch {
+        return {
+          status_code: 503,
+          body: {
+            success: false,
+            retryable: true,
+            error: "capture_delivery_failed",
+          },
+        };
+      }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::observe",
     config: {
@@ -376,11 +620,261 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::context",
     config: {
       api_path: "/agentmemory/context",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::context-packet",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const sessionId = asNonEmptyString(body.sessionId);
+      if (!project || !sessionId) {
+        return {
+          status_code: 400,
+          body: { error: "project and sessionId are required" },
+        };
+      }
+      const tokenBudget = parseOptionalPositiveInt(body.token_budget);
+      if (tokenBudget === null || (tokenBudget ?? 2000) > 2000) {
+        return {
+          status_code: 400,
+          body: { error: "token_budget must be an integer from 1 to 2000" },
+        };
+      }
+      if (
+        body.context_class !== undefined &&
+        body.context_class !== "advisory" &&
+        body.context_class !== "gate-critical"
+      ) {
+        return {
+          status_code: 400,
+          body: {
+            error: "context_class must be advisory or gate-critical",
+          },
+        };
+      }
+      const rawResult = await sdk.trigger({
+        function_id: "mem::context-packet",
+        payload: {
+          project,
+          sessionId,
+          query: asNonEmptyString(body.query) ?? undefined,
+          files: Array.isArray(body.files)
+            ? body.files.filter((file): file is string => typeof file === "string")
+            : [],
+          token_budget: tokenBudget,
+          context_class:
+            body.context_class === "gate-critical"
+              ? "gate-critical"
+              : "advisory",
+        },
+      });
+      const result = triggerResult(rawResult);
+      if (!result) {
+        return {
+          status_code: 503,
+          body: { success: false, error: "context_packet_result_unavailable" },
+        };
+      }
+      return {
+        status_code:
+          result["success"] === true ? 200 : failedTriggerStatus(result, 400),
+        body: result,
+      };
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::context-packet",
+    config: {
+      api_path: "/agentmemory/context-packet",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::context-acknowledge",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const sessionId = asNonEmptyString(body.sessionId);
+      const packetId = asNonEmptyString(body.packetId);
+      const providerReceipt = asNonEmptyString(body.providerReceipt);
+      if (!project || !sessionId || !packetId || !providerReceipt) {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "project, sessionId, packetId, and providerReceipt are required",
+          },
+        };
+      }
+      const rawResult = await sdk.trigger({
+        function_id: "mem::context-acknowledge",
+        payload: { project, sessionId, packetId, providerReceipt },
+      });
+      const result = triggerResult(rawResult);
+      if (!result) {
+        return {
+          status_code: 503,
+          body: {
+            success: false,
+            acknowledged: false,
+            error: "context_acknowledgement_result_unavailable",
+          },
+        };
+      }
+      return {
+        status_code:
+          result["success"] === true && result["acknowledged"] === true
+            ? 200
+            : failedTriggerStatus(result, 400),
+        body: result,
+      };
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::context-acknowledge",
+    config: {
+      api_path: "/agentmemory/context-acknowledge",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::commit-link",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const sha = asNonEmptyString(body.sha);
+      if (!project || !sha) {
+        return {
+          status_code: 400,
+          body: { error: "project and sha are required" },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::commit-link",
+        payload: {
+          project,
+          sha,
+          sessionId: asNonEmptyString(body.sessionId) ?? undefined,
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::commit-link",
+    config: {
+      api_path: "/agentmemory/commit-link",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::project-health",
+    async (req: ApiRequest): Promise<Response> => {
+      const project = asNonEmptyString(req.query_params?.["project"]);
+      if (!project) {
+        return { status_code: 400, body: { error: "project is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::project-health",
+        payload: { project },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::project-health",
+    config: {
+      api_path: "/agentmemory/project-health",
+      http_method: "GET",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::promotion-candidates",
+    async (req: ApiRequest): Promise<Response> => {
+      const project = asNonEmptyString(req.query_params?.["project"]);
+      if (!project) {
+        return { status_code: 400, body: { error: "project is required" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::promotion-list",
+        payload: {
+          project,
+          sessionId: asNonEmptyString(req.query_params?.["sessionId"]),
+          status: asNonEmptyString(req.query_params?.["status"]),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::promotion-candidates",
+    config: {
+      api_path: "/agentmemory/promotion-candidates",
+      http_method: "GET",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction(
+    "api::promotion-decide",
+    async (req: ApiRequest): Promise<Response> => {
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const project = asNonEmptyString(body.project);
+      const candidateId = asNonEmptyString(body.candidateId);
+      const action = asNonEmptyString(body.action);
+      if (
+        !project ||
+        !candidateId ||
+        (action !== "accept" && action !== "reject")
+      ) {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "project, candidateId, and action (accept or reject) are required",
+          },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::promotion-decide",
+        payload: {
+          project,
+          candidateId,
+          action,
+          canonicalAdr: asNonEmptyString(body.canonicalAdr),
+          commitSha: asNonEmptyString(body.commitSha),
+        },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::promotion-decide",
+    config: {
+      api_path: "/agentmemory/promotion-decide",
       http_method: "POST",
       middleware_function_ids: ["middleware::api-auth"],
     },
@@ -407,6 +901,20 @@ export function registerApiTriggers(
           : undefined;
       if (typeof body.query !== "string" || !body.query.trim()) {
         return { status_code: 400, body: { error: "query is required and must be a non-empty string" } };
+      }
+      const projectScope =
+        body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof body.project === "string" && body.project.trim()
+            ? { project: body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return {
+          status_code: 400,
+          body: {
+            error: "project is required unless scope is explicitly global",
+          },
+        };
       }
       if (
         body.limit !== undefined &&
@@ -450,7 +958,7 @@ export function registerApiTriggers(
       const payload = {
         query: body.query.trim(),
         limit: body.limit as number | undefined,
-        project: body.project as string | undefined,
+        ...projectScope,
         cwd: body.cwd as string | undefined,
         format:
           typeof body.format === "string"
@@ -463,7 +971,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::search",
     config: {
@@ -473,26 +981,68 @@ export function registerApiTriggers(
     },
   });
 
-  sdk.registerFunction("api::compress-file", 
-    async (req: ApiRequest<{ filePath: string }>): Promise<Response> => {
+  sdk.registerFunction(
+    "api::index-rebuild",
+    async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const filePath = asNonEmptyString(body.filePath);
-      if (!filePath) {
+      if (body.scope !== "global") {
         return {
           status_code: 400,
-          body: { error: "filePath is required and must be a non-empty string" },
+          body: {
+            error:
+              "scope must be explicitly set to global because the search index is shared",
+          },
         };
       }
-      const result = await sdk.trigger({
-        function_id: "mem::compress-file",
-        payload: { filePath },
+      const result = await withKeyedLock("search-index-rebuild", async () => {
+        const entries = await rebuildIndex(kv);
+        await flushIndexSave();
+        return {
+          success: true,
+          entries,
+          keywordEntries: getSearchIndex().size,
+          vectorEntries: getVectorIndex()?.size ?? 0,
+          embeddingProvider: getEmbeddingProvider()?.name ?? "none",
+        };
       });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::index-rebuild",
+    config: {
+      api_path: "/agentmemory/index/rebuild",
+      http_method: "POST",
+      middleware_function_ids: ["middleware::api-auth"],
+    },
+  });
+
+  sdk.registerFunction("api::compress-file", 
+    async (req: ApiRequest<{ filePath: string; project: string }>): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const filePath = asNonEmptyString(body.filePath);
+      const project = asNonEmptyString(body.project);
+      if (!filePath || !project) {
+        return {
+          status_code: 400,
+          body: {
+            error: "filePath and project are required and must be non-empty strings",
+          },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::compress-file",
+        payload: { filePath, project },
+      });
+      return { status_code: 200, body: result };
+    },
+  );
+  registerApiTrigger({
     type: "http",
     function_id: "api::compress-file",
     config: { api_path: "/agentmemory/compress-file", http_method: "POST" },
@@ -513,7 +1063,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::replay::load",
     config: { api_path: "/agentmemory/replay/load", http_method: "GET" },
@@ -530,7 +1080,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { success: true, sessions } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::replay::sessions",
     config: { api_path: "/agentmemory/replay/sessions", http_method: "GET" },
@@ -576,7 +1126,7 @@ export function registerApiTriggers(
       return { status_code: 202, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::replay::import",
     config: { api_path: "/agentmemory/replay/import-jsonl", http_method: "POST" },
@@ -584,7 +1134,15 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::session::start",
     async (
-      req: ApiRequest<{ sessionId: string; project: string; cwd: string }>,
+      req: ApiRequest<{
+        sessionId: string;
+        project: string;
+        cwd: string;
+        parentSessionId?: string;
+        privacy?: "standard" | "private" | "strict";
+        captureProfile?: "minimal" | "balanced" | "full";
+        externalProcessing?: boolean;
+      }>,
     ): Promise<Response> => {
       const body = (req.body ?? {}) as Record<string, unknown>;
       const sessionId = asNonEmptyString(body.sessionId);
@@ -599,6 +1157,24 @@ export function registerApiTriggers(
         };
       }
       const title = typeof body.title === "string" ? body.title.trim() : undefined;
+      const parentSessionId =
+        asNonEmptyString(body.parentSessionId) ?? undefined;
+      const privacy =
+        body.privacy === "standard" ||
+        body.privacy === "private" ||
+        body.privacy === "strict"
+          ? body.privacy
+          : undefined;
+      const captureProfile =
+        body.captureProfile === "minimal" ||
+        body.captureProfile === "balanced" ||
+        body.captureProfile === "full"
+          ? body.captureProfile
+          : undefined;
+      const externalProcessing =
+        typeof body.externalProcessing === "boolean"
+          ? body.externalProcessing
+          : undefined;
       // allow session/start to override AGENT_ID from request body
       // (multi-agent runtimes that route many roles through one server
       // process). Falls back to the AGENT_ID env on the server.
@@ -607,32 +1183,48 @@ export function registerApiTriggers(
           ? body.agentId.trim().slice(0, 128)
           : undefined;
       const agentId = requestAgentId ?? getAgentId();
-      const session: Session = {
-        id: sessionId,
-        project,
-        cwd,
-        startedAt: new Date().toISOString(),
-        status: "active",
-        observationCount: 0,
-        ...(title ? { summary: title.slice(0, 200) } : {}),
-        ...(title ? { firstPrompt: title.slice(0, 200) } : {}),
-        ...(agentId ? { agentId } : {}),
-      };
-      await kv.set(KV.sessions, sessionId, session);
+      await closeStaleSessions(kv);
+      let lifecycle: Awaited<ReturnType<typeof startOrResumeSession>>;
+      try {
+        lifecycle = await startOrResumeSession(kv, {
+          sessionId,
+          project,
+          cwd,
+          ...(title ? { title } : {}),
+          ...(agentId ? { agentId } : {}),
+          ...(parentSessionId ? { parentSessionId } : {}),
+          ...(privacy ? { privacy } : {}),
+          ...(captureProfile ? { captureProfile } : {}),
+          ...(externalProcessing !== undefined
+            ? { externalProcessing }
+            : {}),
+        });
+      } catch (error) {
+        return {
+          status_code: 409,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const contextResult = await sdk.trigger<
-        { sessionId: string; project: string; agentId?: string },
+        { sessionId: string; project: string },
         { context: string }
       >({
-        function_id: "mem::context",
-        payload: { sessionId, project, ...(agentId ? { agentId } : {}) },
+        function_id: "mem::context-packet",
+        payload: { sessionId, project },
       });
       return {
         status_code: 200,
-        body: { session, context: contextResult.context },
+        body: {
+          session: lifecycle.session,
+          resumed: lifecycle.resumed,
+          context: contextResult.context,
+        },
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::session::start",
     config: {
@@ -644,34 +1236,189 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::session::end",
     async (req: ApiRequest<{ sessionId: string }>): Promise<Response> => {
-      const sessionId = asNonEmptyString((req.body as Record<string, unknown>)?.sessionId);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const sessionId = asNonEmptyString(body.sessionId);
+      const project = asNonEmptyString(body.project);
       if (!sessionId) {
         return {
           status_code: 400,
           body: { error: "sessionId is required and must be a non-empty string" },
         };
       }
+      return withKeyedLock(`session-end:${sessionId}`, async () => {
+      const session = await kv.get<Session>(KV.sessions, sessionId);
+      if (!session) {
+        return { status_code: 404, body: { error: "session not found" } };
+      }
+      if (!project || session.project !== project) {
+        return {
+          status_code: 409,
+          body: { error: "session does not belong to the requested project" },
+        };
+      }
+      if (session.status === "completed") {
+        if (
+          session.backgroundPipelineStatus === "failed" &&
+          (session.backgroundPipelineAttempts ?? 0) < 3 &&
+          session.backgroundPipelineRunId
+        ) {
+          const acceptedAt = new Date().toISOString();
+          await kv.update(KV.sessions, sessionId, [
+            {
+              type: "set",
+              path: "backgroundPipelineStatus",
+              value: "accepted",
+            },
+            {
+              type: "set",
+              path: "backgroundPipelineAcceptedAt",
+              value: acceptedAt,
+            },
+            {
+              type: "set",
+              path: "backgroundPipelineErrorCode",
+              value: null,
+            },
+          ]);
+          recordBackgroundPipelineAccepted({
+            runId: session.backgroundPipelineRunId,
+            sessionId,
+            project,
+            acceptedAt,
+          });
+          const pipelineAccepted = await dispatchSessionStopped(sdk, kv, {
+            sessionId,
+            project,
+            pipelineRunId: session.backgroundPipelineRunId,
+          });
+          return {
+            status_code: pipelineAccepted ? 200 : 503,
+            body: {
+              success: pipelineAccepted,
+              alreadyClosed: true,
+              retryingPipeline: true,
+              pipelineRunId: session.backgroundPipelineRunId,
+              pipelineAccepted,
+              ...(!pipelineAccepted
+                ? {
+                    error: "background pipeline dispatch was not accepted",
+                    retryable: true,
+                  }
+                : {}),
+            },
+          };
+        }
+        if (session.backgroundPipelineStatus === "failed") {
+          return {
+            status_code: 409,
+            body: {
+              success: false,
+              alreadyClosed: true,
+              retryable: false,
+              error: "background pipeline dispatch retry exhausted",
+              pipelineStatus: "failed",
+              ...(session.backgroundPipelineRunId
+                ? { pipelineRunId: session.backgroundPipelineRunId }
+                : {}),
+            },
+          };
+        }
+        return {
+          status_code: 200,
+          body: {
+            success: true,
+            alreadyClosed: true,
+            ...(session.backgroundPipelineStatus
+              ? { pipelineStatus: session.backgroundPipelineStatus }
+              : {}),
+            ...(session.backgroundPipelineRunId
+              ? { pipelineRunId: session.backgroundPipelineRunId }
+              : {}),
+          },
+        };
+      }
+      const pipelineRunId = generateId("pipeline");
+      const acceptedAt = new Date().toISOString();
       await kv.update(KV.sessions, sessionId, [
-        { type: "set", path: "endedAt", value: new Date().toISOString() },
+        { type: "set", path: "endedAt", value: acceptedAt },
         { type: "set", path: "status", value: "completed" },
+        { type: "set", path: "backgroundPipelineRunId", value: pipelineRunId },
+        {
+          type: "set",
+          path: "backgroundPipelineStatus",
+          value: "accepted",
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineStage",
+          value: "dispatch",
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineAttempts",
+          value: 0,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineAcceptedAt",
+          value: acceptedAt,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineStartedAt",
+          value: null,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineFinishedAt",
+          value: null,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineErrorCode",
+          value: null,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelineSummaryStatus",
+          value: null,
+        },
+        {
+          type: "set",
+          path: "backgroundPipelinePromotionStatus",
+          value: null,
+        },
       ]);
       // Fan out session-stopped lifecycle (non-blocking).
-      try {
-        sdk.trigger({
-          function_id: "event::session::stopped",
-          payload: { sessionId },
-          action: TriggerAction.Void(),
-        });
-      } catch (err) {
-        logger.warn("event::session::stopped trigger failed", {
-          sessionId,
-          error: err instanceof Error ? err.message : String(err),
-        });
-      }
-      return { status_code: 200, body: { success: true } };
+      recordBackgroundPipelineAccepted({
+        runId: pipelineRunId,
+        sessionId,
+        project,
+        acceptedAt,
+      });
+      const pipelineAccepted = await dispatchSessionStopped(sdk, kv, {
+        sessionId,
+        project,
+        pipelineRunId,
+      });
+      return {
+        status_code: pipelineAccepted ? 200 : 503,
+        body: {
+          success: pipelineAccepted,
+          pipelineRunId,
+          pipelineAccepted,
+          ...(!pipelineAccepted
+            ? {
+                error: "background pipeline dispatch was not accepted",
+                retryable: true,
+              }
+            : {}),
+        },
+      };
+      });
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::session::end",
     config: {
@@ -683,18 +1430,23 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::summarize", 
     async (req: ApiRequest<{ sessionId: string }>): Promise<Response> => {
-      const sessionId = asNonEmptyString((req.body as Record<string, unknown>)?.sessionId);
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const sessionId = asNonEmptyString(body.sessionId);
+      const project = asNonEmptyString(body.project);
       if (!sessionId) {
         return { status_code: 400, body: { error: "sessionId is required" } };
       }
+      if (!project) {
+        return { status_code: 400, body: { error: "project is required" } };
+      }
       const result = await sdk.trigger({
         function_id: "mem::summarize",
-        payload: { sessionId },
+        payload: { sessionId, project },
       });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::summarize",
     config: {
@@ -714,6 +1466,13 @@ export function registerApiTriggers(
           body: { error: "sha is required and must be a non-empty string" },
         };
       }
+      const project = asNonEmptyString(body.project);
+      if (!project) {
+        return {
+          status_code: 400,
+          body: { error: "project is required and must be a non-empty string" },
+        };
+      }
       const sessionId = asNonEmptyString(body.sessionId) ?? undefined;
       const branch = asNonEmptyString(body.branch) ?? undefined;
       const repo = asNonEmptyString(body.repo) ?? undefined;
@@ -728,10 +1487,16 @@ export function registerApiTriggers(
 
       const link = await withKeyedLock(`commit:${sha}`, async () => {
         const existing = await kv.get<CommitLink>(KV.commits, sha);
+        if (existing?.project && existing.project !== project) {
+          throw new Error(
+            `commit ${sha} is already linked to ${existing.project}`,
+          );
+        }
         const sessionSet = new Set<string>(existing?.sessionIds ?? []);
         if (sessionId) sessionSet.add(sessionId);
         const merged: CommitLink = {
           sha,
+          project,
           shortSha: existing?.shortSha ?? sha.slice(0, 7),
           branch: branch ?? existing?.branch,
           repo: repo ?? existing?.repo,
@@ -750,6 +1515,9 @@ export function registerApiTriggers(
         await withKeyedLock(`session:${sessionId}`, async () => {
           const session = await kv.get<Session>(KV.sessions, sessionId);
           if (!session) return;
+          if (session.project !== project) {
+            throw new Error("session does not belong to project");
+          }
           const shaSet = new Set<string>(session.commitShas ?? []);
           shaSet.add(sha);
           session.commitShas = Array.from(shaSet);
@@ -760,7 +1528,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { commit: link } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::session::commit",
     config: {
@@ -774,6 +1542,23 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let projectScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        projectScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::session::by-commit",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const sha = asNonEmptyString(req.query_params?.["sha"]);
       if (!sha) {
         return {
@@ -782,7 +1567,11 @@ export function registerApiTriggers(
         };
       }
       const link = await kv.get<CommitLink>(KV.commits, sha);
-      if (!link) {
+      if (
+        !link ||
+        (projectScope.kind === "project" &&
+          link.project !== projectScope.project)
+      ) {
         return {
           status_code: 404,
           body: { error: "no sessions linked to this commit" },
@@ -791,11 +1580,16 @@ export function registerApiTriggers(
       const fetched = await Promise.all(
         (link.sessionIds ?? []).map((sid) => kv.get<Session>(KV.sessions, sid)),
       );
-      const sessions = fetched.filter((s): s is Session => s !== null);
+      const sessions = fetched.filter(
+        (session): session is Session =>
+          session !== null &&
+          (projectScope.kind === "global" ||
+            session.project === projectScope.project),
+      );
       return { status_code: 200, body: { commit: link, sessions } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::session::by-commit",
     config: {
@@ -809,12 +1603,34 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let projectScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        projectScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::commits",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const branch = asNonEmptyString(req.query_params?.["branch"]);
       const repo = asNonEmptyString(req.query_params?.["repo"]);
       const rawLimit = parseOptionalInt(req.query_params?.["limit"]);
       const limit = Math.max(1, Math.min(500, rawLimit ?? 100));
       const all = await kv.list<CommitLink>(KV.commits);
       const filtered = all
+        .filter(
+          (commit) =>
+            projectScope.kind === "global" ||
+            commit.project === projectScope.project,
+        )
         .filter((c) => !branch || c.branch === branch)
         .filter((c) => !repo || c.repo === repo)
         .sort((a, b) => ((a.linkedAt ?? "") < (b.linkedAt ?? "") ? 1 : -1))
@@ -822,7 +1638,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { commits: filtered } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::commits",
     config: {
@@ -836,7 +1652,28 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const sessions = await kv.list<Session>(KV.sessions);
+      let projectScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        projectScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::sessions",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      const sessions = (await kv.list<Session>(KV.sessions)).filter(
+        (session) =>
+          projectScope.kind === "global" ||
+          session.project === projectScope.project,
+      );
       const normalizedAgentId =
         typeof req.query_params?.["agentId"] === "string"
           ? req.query_params["agentId"].trim()
@@ -851,18 +1688,34 @@ export function registerApiTriggers(
       const filtered = filterAgentId
         ? sessions.filter((s) => s.agentId === filterAgentId)
         : sessions;
+      const requestedLimit = Number(req.query_params?.["limit"]);
+      const limit = Number.isFinite(requestedLimit)
+        ? Math.max(1, Math.min(1000, Math.floor(requestedLimit)))
+        : undefined;
+      const selected = limit
+        ? [...filtered]
+            .sort((a, b) =>
+              (b.updatedAt ?? b.startedAt ?? "").localeCompare(
+                a.updatedAt ?? a.startedAt ?? "",
+              ),
+            )
+            .slice(0, limit)
+        : filtered;
       const summaries = await Promise.all(
-        filtered.map((s) =>
+        selected.map((s) =>
           kv.get<SessionSummary>(KV.summaries, s.id).catch(() => null),
         ),
       );
-      const withSummary = filtered.map((s, i) =>
+      const withSummary = selected.map((s, i) =>
         summaries[i] ? { ...s, summary: summaries[i] } : s,
       );
-      return { status_code: 200, body: { sessions: withSummary } };
+      return {
+        status_code: 200,
+        body: { sessions: withSummary, total: filtered.length },
+      };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::sessions",
     config: { api_path: "/agentmemory/sessions", http_method: "GET" },
@@ -873,8 +1726,18 @@ export function registerApiTriggers(
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
       const sessionId = asNonEmptyString(req.query_params?.["sessionId"]);
+      const project = asNonEmptyString(req.query_params?.["project"]);
       if (!sessionId)
         return { status_code: 400, body: { error: "sessionId required" } };
+      if (!project)
+        return { status_code: 400, body: { error: "project required" } };
+      const session = await kv.get<Session>(KV.sessions, sessionId);
+      if (!session || session.project !== project) {
+        return {
+          status_code: 404,
+          body: { error: "session not found for project" },
+        };
+      }
       const observations = await kv.list<CompressedObservation>(
         KV.observations(sessionId),
       );
@@ -895,7 +1758,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { observations: filtered } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::observations",
     config: { api_path: "/agentmemory/observations", http_method: "GET" },
@@ -907,11 +1770,24 @@ export function registerApiTriggers(
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const result = await sdk.trigger({ function_id: "mem::file-context", payload: req.body });
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const projectScope =
+        body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof body.project === "string" && body.project.trim()
+            ? { project: body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return { status_code: 400, body: { error: "project required unless scope is global" } };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::file-context",
+        payload: { ...body, ...projectScope },
+      });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::file-context",
     config: { api_path: "/agentmemory/file-context", http_method: "POST" },
@@ -925,6 +1801,7 @@ export function registerApiTriggers(
         terms?: string[];
         toolName?: string;
         project?: string;
+        scope?: "project" | "global";
       }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
@@ -975,7 +1852,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::enrich",
     config: { api_path: "/agentmemory/enrich", http_method: "POST" },
@@ -991,6 +1868,7 @@ export function registerApiTriggers(
         ttlDays?: number;
         sourceObservationIds?: string[];
         project?: string;
+        scope?: "project" | "global";
       }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
@@ -1002,11 +1880,14 @@ export function registerApiTriggers(
       ) {
         return { status_code: 400, body: { error: "content is required" } };
       }
-      if (
-        req.body.project !== undefined &&
-        (typeof req.body.project !== "string" || !req.body.project.trim())
-      ) {
-        return { status_code: 400, body: { error: "project must be a non-empty string" } };
+      const projectScope =
+        req.body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof req.body.project === "string" && req.body.project.trim()
+            ? { project: req.body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return { status_code: 400, body: { error: "project required unless scope is global" } };
       }
       const result = await sdk.trigger({
         function_id: "mem::remember",
@@ -1017,13 +1898,13 @@ export function registerApiTriggers(
           ...(req.body.files !== undefined && { files: req.body.files }),
           ...(req.body.ttlDays !== undefined && { ttlDays: req.body.ttlDays }),
           ...(req.body.sourceObservationIds !== undefined && { sourceObservationIds: req.body.sourceObservationIds }),
-          ...(req.body.project !== undefined && { project: req.body.project }),
+          ...projectScope,
         },
       });
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::remember",
     config: { api_path: "/agentmemory/remember", http_method: "POST" },
@@ -1049,7 +1930,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::forget",
     config: { api_path: "/agentmemory/forget", http_method: "POST" },
@@ -1057,15 +1938,37 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::consolidate", 
     async (
-      req: ApiRequest<{ project?: string; minObservations?: number }>,
+      req: ApiRequest<{
+        project?: string;
+        scope?: "project" | "global";
+        minObservations?: number;
+      }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
-      const result = await sdk.trigger({ function_id: "mem::consolidate", payload: req.body });
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const projectScope =
+        body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : asNonEmptyString(body.project)
+            ? { project: asNonEmptyString(body.project) }
+            : null;
+      if (!projectScope) {
+        return {
+          status_code: 400,
+          body: {
+            error: "project is required unless scope is explicitly global",
+          },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::consolidate",
+        payload: { ...body, ...projectScope },
+      });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::consolidate",
     config: { api_path: "/agentmemory/consolidate", http_method: "POST" },
@@ -1079,7 +1982,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::patterns",
     config: { api_path: "/agentmemory/patterns", http_method: "POST" },
@@ -1093,7 +1996,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::generate-rules",
     config: { api_path: "/agentmemory/generate-rules", http_method: "POST" },
@@ -1101,10 +2004,38 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::migrate",
     async (
-      req: ApiRequest<{ dbPath?: string; step?: string; dryRun?: boolean }>,
+      req: ApiRequest<{
+        dbPath?: string;
+        step?: string;
+        dryRun?: boolean;
+        projectAliases?: Record<string, string>;
+        project?: string;
+        privacy?: "standard" | "private" | "strict";
+        externalProcessing?: boolean;
+        acknowledgeHistoricalContent?: boolean;
+        action?: "resume" | "rollback";
+      }>,
     ): Promise<Response> => {
-      const authErr = checkAuth(req, secret);
-      if (authErr) return authErr;
+      const adminDecision = authorizeAdministrativeRequest(
+        req.headers,
+        adminSecret,
+      );
+      if (!adminDecision.authorized) {
+        return {
+          status_code: adminDecision.statusCode,
+          body: { error: adminDecision.error },
+        };
+      }
+      if (
+        req.body?.action !== undefined &&
+        req.body.action !== "resume" &&
+        req.body.action !== "rollback"
+      ) {
+        return {
+          status_code: 400,
+          body: { error: "action must be resume or rollback" },
+        };
+      }
       const hasStep =
         typeof req.body?.step === "string" && req.body.step.trim().length > 0;
       const hasDbPath =
@@ -1121,12 +2052,39 @@ export function registerApiTriggers(
           ...(req.body.step !== undefined && { step: req.body.step }),
           ...(req.body.dbPath !== undefined && { dbPath: req.body.dbPath }),
           ...(req.body.dryRun !== undefined && { dryRun: req.body.dryRun }),
+          ...(req.body.projectAliases !== undefined && {
+            projectAliases: req.body.projectAliases,
+          }),
+          ...(req.body.project !== undefined && { project: req.body.project }),
+          ...(req.body.privacy !== undefined && { privacy: req.body.privacy }),
+          ...(req.body.externalProcessing !== undefined && {
+            externalProcessing: req.body.externalProcessing,
+          }),
+          ...(req.body.acknowledgeHistoricalContent !== undefined && {
+            acknowledgeHistoricalContent:
+              req.body.acknowledgeHistoricalContent,
+          }),
+          ...(req.body.action !== undefined && { action: req.body.action }),
         },
       });
-      return { status_code: 200, body: result };
+      const parsed = triggerResult(result);
+      const rollbackSucceeded =
+        parsed?.["status"] === "rolled-back" &&
+        triggerResult(parsed["rollback"])?.["success"] === true;
+      const operationSucceeded =
+        parsed?.["success"] === true || rollbackSucceeded;
+      return {
+        status_code:
+          parsed && !operationSucceeded
+            ? failedTriggerStatus(parsed, 400)
+            : 200,
+        body: parsed
+          ? { ...parsed, operationSucceeded }
+          : result,
+      };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::migrate",
     config: { api_path: "/agentmemory/migrate", http_method: "POST" },
@@ -1142,7 +2100,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::evict",
     config: { api_path: "/agentmemory/evict", http_method: "POST" },
@@ -1155,6 +2113,7 @@ export function registerApiTriggers(
         expandIds?: Array<string | { obsId: string; sessionId: string }>;
         limit?: number;
         project?: string;
+        scope?: "project" | "global";
         includeLessons?: boolean;
         agentId?: string;
         sessionId?: string;
@@ -1172,6 +2131,15 @@ export function registerApiTriggers(
           body: { error: "query or expandIds is required" },
         };
       }
+      const projectScope =
+        req.body?.scope === "global"
+          ? ({ scope: "global" } as const)
+          : typeof req.body?.project === "string" && req.body.project.trim()
+            ? { project: req.body.project.trim() }
+            : null;
+      if (!projectScope) {
+        return { status_code: 400, body: { error: "project required unless scope is global" } };
+      }
       // #771: route the X-Agentmemory-Source header into the payload so
       // the followup-rate diagnostic can skip viewer-originated calls.
       // Body wins if both are set (advanced callers explicitly override).
@@ -1186,7 +2154,7 @@ export function registerApiTriggers(
         query: req.body?.query,
         expandIds: req.body?.expandIds,
         limit: req.body?.limit,
-        project: req.body?.project,
+        ...projectScope,
         includeLessons: req.body?.includeLessons,
         agentId: req.body?.agentId,
         sessionId: req.body?.sessionId,
@@ -1196,7 +2164,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::smart-search",
     config: { api_path: "/agentmemory/smart-search", http_method: "POST" },
@@ -1224,7 +2192,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::diagnostic-followup",
     config: {
@@ -1252,7 +2220,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::timeline",
     config: { api_path: "/agentmemory/timeline", http_method: "POST" },
@@ -1269,11 +2237,15 @@ export function registerApiTriggers(
           body: { error: "project query param is required" },
         };
       }
-      const result = await sdk.trigger({ function_id: "mem::profile", payload: { project } });
+      const refresh = req.query_params?.["refresh"] === "true";
+      const result = await sdk.trigger({
+        function_id: "mem::profile",
+        payload: { project, refresh },
+      });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::profile",
     config: { api_path: "/agentmemory/profile", http_method: "GET" },
@@ -1290,7 +2262,12 @@ export function registerApiTriggers(
       // Pass through the query-string pagination so callers can chunk.
       const rawMax = req.query_params?.["maxSessions"];
       const rawOffset = req.query_params?.["offset"];
-      const payload: { maxSessions?: number; offset?: number } = {};
+      const rawSections = req.query_params?.["sections"];
+      const payload: {
+        maxSessions?: number;
+        offset?: number;
+        sections?: string[];
+      } = {};
       if (typeof rawMax === "string") {
         const n = Number(rawMax);
         if (Number.isInteger(n) && n > 0) payload.maxSessions = n;
@@ -1299,6 +2276,14 @@ export function registerApiTriggers(
         const n = Number(rawOffset);
         if (Number.isInteger(n) && n >= 0) payload.offset = n;
       }
+      if (typeof rawSections === "string") {
+        const sections = rawSections
+          .split(",")
+          .map((section) => section.trim())
+          .filter(Boolean)
+          .slice(0, 20);
+        if (sections.length > 0) payload.sections = sections;
+      }
       const result = await sdk.trigger({
         function_id: "mem::export",
         payload,
@@ -1306,7 +2291,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::export",
     config: { api_path: "/agentmemory/export", http_method: "GET" },
@@ -1328,7 +2313,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::import",
     config: { api_path: "/agentmemory/import", http_method: "POST" },
@@ -1350,7 +2335,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::relations",
     config: { api_path: "/agentmemory/relations", http_method: "POST" },
@@ -1376,7 +2361,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::evolve",
     config: { api_path: "/agentmemory/evolve", http_method: "POST" },
@@ -1392,7 +2377,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::auto-forget",
     config: { api_path: "/agentmemory/auto-forget", http_method: "POST" },
@@ -1413,7 +2398,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::claude-bridge-read",
     config: { api_path: "/agentmemory/claude-bridge/read", http_method: "GET" },
@@ -1434,7 +2419,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::claude-bridge-sync",
     config: {
@@ -1446,6 +2431,8 @@ export function registerApiTriggers(
   sdk.registerFunction("api::graph-query",
     async (
       req: ApiRequest<{
+        project?: string;
+        scope?: "project" | "global";
         startNodeId?: string;
         nodeType?: string;
         maxDepth?: number;
@@ -1456,6 +2443,17 @@ export function registerApiTriggers(
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let readScope;
+      try {
+        readScope = requireProjectReadScope(req.body, "api::graph-query");
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       // Whitelist payload fields explicitly; AGENTS.md security rule:
       // REST endpoints never pass raw req.body through to sdk.trigger.
       const payload = {
@@ -1465,6 +2463,9 @@ export function registerApiTriggers(
         query: req.body?.query,
         limit: req.body?.limit,
         offset: req.body?.offset,
+        ...(readScope.kind === "global"
+          ? { scope: "global" as const }
+          : { project: readScope.project }),
       };
       try {
         const result = await sdk.trigger({ function_id: "mem::graph-query", payload });
@@ -1474,7 +2475,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-query",
     config: { api_path: "/agentmemory/graph/query", http_method: "POST" },
@@ -1484,15 +2485,38 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let readScope;
       try {
-        const result = await sdk.trigger({ function_id: "mem::graph-stats", payload: {} });
+        readScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::graph-stats",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
+      try {
+        const result = await sdk.trigger({
+          function_id: "mem::graph-stats",
+          payload:
+            readScope.kind === "global"
+              ? { scope: "global" }
+              : { project: readScope.project },
+        });
         return { status_code: 200, body: result };
       } catch {
         return graphDisabledResponse();
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-stats",
     config: { api_path: "/agentmemory/graph/stats", http_method: "GET" },
@@ -1504,21 +2528,48 @@ export function registerApiTriggers(
   // unbounded kv.list. Operator-grade endpoint exposed for the viewer
   // banner action and CLI repair.
   sdk.registerFunction("api::graph-snapshot-rebuild",
-    async (req: ApiRequest): Promise<Response> => {
+    async (
+      req: ApiRequest<{ scope?: "global"; force?: boolean }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      if (req.body?.scope !== "global") {
+        return {
+          status_code: 400,
+          body: {
+            error:
+              "graph snapshot rebuild requires explicit global scope",
+          },
+        };
+      }
       try {
-        const result = await sdk.trigger({
+        const rawResult = await sdk.trigger({
           function_id: "mem::graph-snapshot-rebuild",
-          payload: {},
+          payload: {
+            scope: "global",
+            force: req.body.force === true,
+          },
         });
-        return { status_code: 200, body: result };
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: { success: false, error: "graph_rebuild_result_unavailable" },
+          };
+        }
+        return {
+          status_code:
+            result["success"] === true
+              ? 200
+              : failedTriggerStatus(result, 400),
+          body: result,
+        };
       } catch {
         return graphDisabledResponse();
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-snapshot-rebuild",
     config: { api_path: "/agentmemory/graph/snapshot-rebuild", http_method: "POST" },
@@ -1529,30 +2580,60 @@ export function registerApiTriggers(
   // recall + history stay intact while the graph rebuilds incrementally
   // from new extracts (or a one-shot /graph/build replay).
   sdk.registerFunction("api::graph-reset",
-    async (req: ApiRequest): Promise<Response> => {
+    async (
+      req: ApiRequest<{ scope?: "global" }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      if (req.body?.scope !== "global") {
+        return {
+          status_code: 400,
+          body: { error: "graph reset requires explicit global scope" },
+        };
+      }
       try {
-        const result = await sdk.trigger({
+        const rawResult = await sdk.trigger({
           function_id: "mem::graph-reset",
-          payload: {},
+          payload: { scope: "global" },
         });
-        return { status_code: 200, body: result };
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: { success: false, error: "graph_reset_result_unavailable" },
+          };
+        }
+        return {
+          status_code:
+            result["success"] === true
+              ? 200
+              : failedTriggerStatus(result, 400),
+          body: result,
+        };
       } catch {
         return graphDisabledResponse();
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-reset",
     config: { api_path: "/agentmemory/graph/reset", http_method: "POST" },
   });
 
   sdk.registerFunction("api::graph-extract",
-    async (req: ApiRequest<{ observations: unknown[] }>): Promise<Response> => {
+    async (
+      req: ApiRequest<{ observations: unknown[]; project?: string }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const project = asNonEmptyString(req.body?.project);
+      if (!project) {
+        return {
+          status_code: 400,
+          body: { error: "project is required" },
+        };
+      }
       if (
         !Array.isArray(req.body?.observations) ||
         req.body.observations.length === 0
@@ -1563,14 +2644,37 @@ export function registerApiTriggers(
         };
       }
       try {
-        const result = await sdk.trigger({ function_id: "mem::graph-extract", payload: req.body });
-        return { status_code: 200, body: result };
+        const rawResult = await sdk.trigger({
+          function_id: "mem::graph-extract",
+          payload: {
+            observations: req.body.observations,
+            project,
+          },
+        });
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: {
+              success: false,
+              retryable: true,
+              error: "graph_extraction_result_unavailable",
+            },
+          };
+        }
+        return {
+          status_code:
+            result["success"] === true
+              ? 200
+              : failedTriggerStatus(result, 400),
+          body: result,
+        };
       } catch {
         return graphDisabledResponse();
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-extract",
     config: { api_path: "/agentmemory/graph/extract", http_method: "POST" },
@@ -1581,21 +2685,59 @@ export function registerApiTriggers(
   // session, collects observations that have a `title` (compressed only),
   // and feeds them through `mem::graph-extract` in batches.
   sdk.registerFunction("api::graph-build",
-    async (req: ApiRequest<{ batchSize?: number }>): Promise<Response> => {
+    async (
+      req: ApiRequest<{
+        batchSize?: number;
+        project?: string;
+        scope?: "project" | "global";
+      }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let readScope;
+      try {
+        readScope = requireProjectReadScope(req.body, "api::graph-build");
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const batchSize = Math.max(
         1,
         Math.min(100, Number((req.body as { batchSize?: number })?.batchSize) || 25),
       );
       try {
-        const sessions = await kv.list<Session>(KV.sessions);
+        const allSessions = await kv.list<Session>(KV.sessions);
+        const sessions =
+          readScope.kind === "global"
+            ? allSessions
+            : allSessions.filter(
+                (session) => session.project === readScope.project,
+              );
         let totalNodes = 0;
         let totalEdges = 0;
         let batchesRun = 0;
+        let batchesFailed = 0;
+        let skippedUnscopedSessions = 0;
+        const failures: Array<{
+          sessionId: string;
+          batchIndex: number;
+          error: string;
+        }> = [];
         for (const session of sessions) {
           const sid = session?.id;
           if (typeof sid !== "string" || sid.length === 0) continue;
+          const project =
+            typeof session.project === "string"
+              ? session.project.trim()
+              : "";
+          if (!project) {
+            skippedUnscopedSessions += 1;
+            continue;
+          }
           const observations = await kv.list<CompressedObservation>(KV.observations(sid));
           const compressed = observations.filter((o) => o && typeof o.title === "string" && o.title.length > 0);
           if (compressed.length === 0) continue;
@@ -1604,14 +2746,31 @@ export function registerApiTriggers(
             try {
               const result = (await sdk.trigger({
                 function_id: "mem::graph-extract",
-                payload: { observations: batch },
+                payload: { observations: batch, project },
               })) as { success?: boolean; nodesAdded?: number; edgesAdded?: number };
               if (result?.success) {
                 totalNodes += Number(result.nodesAdded) || 0;
                 totalEdges += Number(result.edgesAdded) || 0;
+              } else {
+                batchesFailed += 1;
+                failures.push({
+                  sessionId: sid,
+                  batchIndex: Math.floor(i / batchSize),
+                  error:
+                    typeof (result as { error?: unknown })?.error === "string"
+                      ? (result as { error: string }).error
+                      : "graph extraction batch failed",
+                });
               }
               batchesRun++;
             } catch (err) {
+              batchesRun++;
+              batchesFailed += 1;
+              failures.push({
+                sessionId: sid,
+                batchIndex: Math.floor(i / batchSize),
+                error: err instanceof Error ? err.message : String(err),
+              });
               logger.warn("graph-build batch failed", {
                 sessionId: sid,
                 batchIndex: Math.floor(i / batchSize),
@@ -1621,13 +2780,17 @@ export function registerApiTriggers(
           }
         }
         return {
-          status_code: 200,
+          status_code: batchesFailed === 0 ? 200 : 503,
           body: {
-            success: true,
+            success: batchesFailed === 0,
+            retryable: batchesFailed > 0,
             sessions: sessions.length,
+            skippedUnscopedSessions,
             batches: batchesRun,
+            batchesFailed,
             nodes: totalNodes,
             edges: totalEdges,
+            failures,
           },
         };
       } catch {
@@ -1635,7 +2798,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::graph-build",
     config: { api_path: "/agentmemory/graph/build", http_method: "POST" },
@@ -1645,8 +2808,23 @@ export function registerApiTriggers(
     async (req: ApiRequest<{ tier?: string }>): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const projectScope =
+        body.scope === "global"
+          ? ({ scope: "global" } as const)
+          : asNonEmptyString(body.project)
+            ? { project: asNonEmptyString(body.project) }
+            : null;
+      if (!projectScope) {
+        return {
+          status_code: 400,
+          body: {
+            error: "project is required unless scope is explicitly global",
+          },
+        };
+      }
       try {
-        const result = await sdk.trigger({ function_id: "mem::consolidate-pipeline", payload: req.body || {},
+        const result = await sdk.trigger({ function_id: "mem::consolidate-pipeline", payload: { ...body, ...projectScope },
          });
         return { status_code: 200, body: result };
       } catch {
@@ -1654,7 +2832,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::consolidate-pipeline",
     config: {
@@ -1683,7 +2861,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::team-share",
     config: { api_path: "/agentmemory/team/share", http_method: "POST" },
@@ -1703,7 +2881,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::team-feed",
     config: { api_path: "/agentmemory/team/feed", http_method: "GET" },
@@ -1721,7 +2899,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::team-profile",
     config: { api_path: "/agentmemory/team/profile", http_method: "GET" },
@@ -1739,7 +2917,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { entries, success: true } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::audit",
     config: { api_path: "/agentmemory/audit", http_method: "GET" },
@@ -1747,7 +2925,12 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::governance-delete", 
     async (
-      req: ApiRequest<{ memoryIds: string[]; reason?: string }>,
+      req: ApiRequest<{
+        memoryIds: string[];
+        reason?: string;
+        project?: string;
+        scope?: "global";
+      }>,
     ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
@@ -1757,11 +2940,29 @@ export function registerApiTriggers(
           body: { error: "memoryIds array is required" },
         };
       }
-      const result = await sdk.trigger({ function_id: "mem::governance-delete", payload: req.body });
+      const project = asNonEmptyString(req.body.project) ?? undefined;
+      const globalScope = req.body.scope === "global";
+      if (
+        (req.body.scope !== undefined && !globalScope) ||
+        Boolean(project) === globalScope
+      ) {
+        return {
+          status_code: 400,
+          body: { error: "exactly_one_project_or_global_scope_required" },
+        };
+      }
+      const result = await sdk.trigger({
+        function_id: "mem::governance-delete",
+        payload: {
+          memoryIds: req.body.memoryIds,
+          reason: req.body.reason,
+          ...(globalScope ? { scope: "global" as const } : { project }),
+        },
+      });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::governance-delete",
     config: {
@@ -1786,7 +2987,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::governance-bulk",
     config: {
@@ -1807,7 +3008,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::snapshots",
     config: { api_path: "/agentmemory/snapshots", http_method: "GET" },
@@ -1826,7 +3027,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::snapshot-create",
     config: { api_path: "/agentmemory/snapshot/create", http_method: "POST" },
@@ -1847,7 +3048,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::snapshot-restore",
     config: { api_path: "/agentmemory/snapshot/restore", http_method: "POST" },
@@ -1931,7 +3132,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::memories",
     config: { api_path: "/agentmemory/memories", http_method: "GET" },
@@ -1952,7 +3153,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { memory } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::memory-by-id",
     config: { api_path: "/agentmemory/memories/:id", http_method: "GET" },
@@ -1966,7 +3167,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { semantic } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::semantic-list",
     config: { api_path: "/agentmemory/semantic", http_method: "GET" },
@@ -1980,7 +3181,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { procedural } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::procedural-list",
     config: { api_path: "/agentmemory/procedural", http_method: "GET" },
@@ -1994,7 +3195,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: { relations } };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::relations-list",
     config: { api_path: "/agentmemory/relations", http_method: "GET" },
@@ -2008,6 +3209,7 @@ export function registerApiTriggers(
       const queryText = asNonEmptyString(body["queryText"]);
       const queryImageRef = asNonEmptyString(body["queryImageRef"]);
       const queryImageBase64 = asNonEmptyString(body["queryImageBase64"]);
+      const project = asNonEmptyString(body["project"]);
       const sessionId = asNonEmptyString(body["sessionId"]);
       if (!queryText && !queryImageRef && !queryImageBase64) {
         return {
@@ -2015,11 +3217,14 @@ export function registerApiTriggers(
           body: { error: "queryText, queryImageRef, or queryImageBase64 required" },
         };
       }
+      if (!project) {
+        return { status_code: 400, body: { error: "project is required" } };
+      }
       const topKParsed = parseOptionalPositiveInt(body["topK"]);
       if (topKParsed === null) {
         return { status_code: 400, body: { error: "topK must be a positive integer" } };
       }
-      const payload: Record<string, unknown> = {};
+      const payload: Record<string, unknown> = { project };
       if (queryText) payload["queryText"] = queryText;
       if (queryImageRef) payload["queryImageRef"] = queryImageRef;
       if (queryImageBase64) payload["queryImageBase64"] = queryImageBase64;
@@ -2033,7 +3238,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::vision-search",
     config: { api_path: "/agentmemory/vision-search", http_method: "POST" },
@@ -2045,12 +3250,16 @@ export function registerApiTriggers(
       if (authErr) return authErr;
       const body = (req.body ?? {}) as Record<string, unknown>;
       const imageRef = asNonEmptyString(body["imageRef"]);
+      const project = asNonEmptyString(body["project"]);
       const sessionId = asNonEmptyString(body["sessionId"]);
       const observationId = asNonEmptyString(body["observationId"]);
-      if (!imageRef) {
-        return { status_code: 400, body: { error: "imageRef is required" } };
+      if (!imageRef || !project) {
+        return {
+          status_code: 400,
+          body: { error: "imageRef and project are required" },
+        };
       }
-      const payload: Record<string, unknown> = { imageRef };
+      const payload: Record<string, unknown> = { imageRef, project };
       if (sessionId) payload["sessionId"] = sessionId;
       if (observationId) payload["observationId"] = observationId;
       const result = await sdk.trigger({ function_id: "mem::vision-embed", payload });
@@ -2061,7 +3270,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::vision-embed",
     config: { api_path: "/agentmemory/vision-embed", http_method: "POST" },
@@ -2071,10 +3280,12 @@ export function registerApiTriggers(
     const authErr = checkAuth(req, secret);
     if (authErr) return authErr;
     if (!isSlotsEnabled()) return slotsDisabledResponse();
-    const result = await sdk.trigger({ function_id: "mem::slot-list", payload: {} });
+    const project = asNonEmptyString(req.query_params?.["project"]);
+    if (!project) return { status_code: 400, body: { error: "project query param required" } };
+    const result = await sdk.trigger({ function_id: "mem::slot-list", payload: { project } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-list",
     config: { api_path: "/agentmemory/slots", http_method: "GET" },
@@ -2085,15 +3296,16 @@ export function registerApiTriggers(
     if (authErr) return authErr;
     if (!isSlotsEnabled()) return slotsDisabledResponse();
     const label = asNonEmptyString(req.query_params?.["label"]);
-    if (!label) return { status_code: 400, body: { error: "label query param required" } };
-    const result = await sdk.trigger({ function_id: "mem::slot-get", payload: { label } });
+    const project = asNonEmptyString(req.query_params?.["project"]);
+    if (!label || !project) return { status_code: 400, body: { error: "label and project query params required" } };
+    const result = await sdk.trigger({ function_id: "mem::slot-get", payload: { label, project } });
     const resp = result as { success?: boolean; error?: string };
     if (resp?.success === false) {
       return { status_code: resp.error?.includes("not found") ? 404 : 400, body: resp };
     }
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-get",
     config: { api_path: "/agentmemory/slot", http_method: "GET" },
@@ -2131,6 +3343,7 @@ export function registerApiTriggers(
       return { status_code: 400, body: { error: "sizeLimit must be <= 20000" } };
     }
     const payload: Record<string, unknown> = { label };
+    if (typeof body["project"] === "string") payload["project"] = body["project"];
     if (typeof body["content"] === "string") payload["content"] = body["content"];
     if (typeof body["description"] === "string") payload["description"] = body["description"];
     if (sizeLimit !== undefined) payload["sizeLimit"] = sizeLimit;
@@ -2143,7 +3356,7 @@ export function registerApiTriggers(
     }
     return { status_code: 201, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-create",
     config: { api_path: "/agentmemory/slot", http_method: "POST" },
@@ -2155,9 +3368,10 @@ export function registerApiTriggers(
     if (!isSlotsEnabled()) return slotsDisabledResponse();
     const body = (req.body ?? {}) as Record<string, unknown>;
     const label = asNonEmptyString(body["label"]);
+    const project = asNonEmptyString(body["project"]);
     const text = typeof body["text"] === "string" ? body["text"] : null;
-    if (!label || !text) return { status_code: 400, body: { error: "label and text required" } };
-    const result = await sdk.trigger({ function_id: "mem::slot-append", payload: { label, text } });
+    if (!label || !text || !project) return { status_code: 400, body: { error: "label, text, and project required" } };
+    const result = await sdk.trigger({ function_id: "mem::slot-append", payload: { label, text, project } });
     const resp = result as { success?: boolean; error?: string };
     if (resp?.success === false) {
       const notFound = resp.error?.includes("not found");
@@ -2166,7 +3380,7 @@ export function registerApiTriggers(
     }
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-append",
     config: { api_path: "/agentmemory/slot/append", http_method: "POST" },
@@ -2178,11 +3392,12 @@ export function registerApiTriggers(
     if (!isSlotsEnabled()) return slotsDisabledResponse();
     const body = (req.body ?? {}) as Record<string, unknown>;
     const label = asNonEmptyString(body["label"]);
+    const project = asNonEmptyString(body["project"]);
     const content = body["content"];
-    if (!label || typeof content !== "string") {
-      return { status_code: 400, body: { error: "label and content (string) required" } };
+    if (!label || !project || typeof content !== "string") {
+      return { status_code: 400, body: { error: "label, project, and content (string) required" } };
     }
-    const result = await sdk.trigger({ function_id: "mem::slot-replace", payload: { label, content } });
+    const result = await sdk.trigger({ function_id: "mem::slot-replace", payload: { label, content, project } });
     const resp = result as { success?: boolean; error?: string };
     if (resp?.success === false) {
       const notFound = resp.error?.includes("not found");
@@ -2191,7 +3406,7 @@ export function registerApiTriggers(
     }
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-replace",
     config: { api_path: "/agentmemory/slot/replace", http_method: "POST" },
@@ -2202,15 +3417,16 @@ export function registerApiTriggers(
     if (authErr) return authErr;
     if (!isSlotsEnabled()) return slotsDisabledResponse();
     const label = asNonEmptyString(req.query_params?.["label"]);
-    if (!label) return { status_code: 400, body: { error: "label query param required" } };
-    const result = await sdk.trigger({ function_id: "mem::slot-delete", payload: { label } });
+    const project = asNonEmptyString(req.query_params?.["project"]);
+    if (!label || !project) return { status_code: 400, body: { error: "label and project query params required" } };
+    const result = await sdk.trigger({ function_id: "mem::slot-delete", payload: { label, project } });
     const resp = result as { success?: boolean; error?: string };
     if (resp?.success === false) {
       return { status_code: resp.error?.includes("not found") ? 404 : 400, body: resp };
     }
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-delete",
     config: { api_path: "/agentmemory/slot", http_method: "DELETE" },
@@ -2227,11 +3443,12 @@ export function registerApiTriggers(
     const maxObservations = parseOptionalPositiveInt(body["maxObservations"]);
     if (maxObservations === null) return { status_code: 400, body: { error: "maxObservations must be a positive integer" } };
     const payload: Record<string, unknown> = { sessionId };
+    if (typeof body["project"] === "string") payload["project"] = body["project"];
     if (maxObservations !== undefined) payload["maxObservations"] = maxObservations;
     const result = await sdk.trigger({ function_id: "mem::slot-reflect", payload });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::slot-reflect",
     config: { api_path: "/agentmemory/slot/reflect", http_method: "POST" },
@@ -2259,7 +3476,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-create",
     config: { api_path: "/agentmemory/actions", http_method: "POST" },
@@ -2285,7 +3502,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-update",
     config: { api_path: "/agentmemory/actions/update", http_method: "POST" },
@@ -2303,7 +3520,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-list",
     config: { api_path: "/agentmemory/actions", http_method: "GET" },
@@ -2321,7 +3538,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-get",
     config: { api_path: "/agentmemory/actions/get", http_method: "GET" },
@@ -2344,7 +3561,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::action-edge",
     config: { api_path: "/agentmemory/actions/edges", http_method: "POST" },
@@ -2363,7 +3580,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::frontier",
     config: { api_path: "/agentmemory/frontier", http_method: "GET" },
@@ -2380,7 +3597,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::next",
     config: { api_path: "/agentmemory/next", http_method: "GET" },
@@ -2399,7 +3616,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::lease-acquire",
     config: { api_path: "/agentmemory/leases/acquire", http_method: "POST" },
@@ -2418,7 +3635,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::lease-release",
     config: { api_path: "/agentmemory/leases/release", http_method: "POST" },
@@ -2437,14 +3654,16 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::lease-renew",
     config: { api_path: "/agentmemory/leases/renew", http_method: "POST" },
   });
 
   sdk.registerFunction("api::routine-create",
-    async (req: ApiRequest): Promise<Response> => {
+    async (
+      req: ApiRequest<{ name: string; steps: unknown[] }>,
+    ): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
       if (!req.body?.name || !req.body?.steps) {
@@ -2457,7 +3676,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::routine-create",
     config: { api_path: "/agentmemory/routines", http_method: "POST" },
@@ -2473,7 +3692,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::routine-list",
     config: { api_path: "/agentmemory/routines", http_method: "GET" },
@@ -2492,7 +3711,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::routine-run",
     config: { api_path: "/agentmemory/routines/run", http_method: "POST" },
@@ -2510,7 +3729,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::routine-status",
     config: { api_path: "/agentmemory/routines/status", http_method: "GET" },
@@ -2535,7 +3754,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::signal-send",
     config: { api_path: "/agentmemory/signals/send", http_method: "POST" },
@@ -2559,7 +3778,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::signal-read",
     config: { api_path: "/agentmemory/signals", http_method: "GET" },
@@ -2584,7 +3803,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::checkpoint-create",
     config: { api_path: "/agentmemory/checkpoints", http_method: "POST" },
@@ -2608,7 +3827,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::checkpoint-resolve",
     config: { api_path: "/agentmemory/checkpoints/resolve", http_method: "POST" },
@@ -2625,7 +3844,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::checkpoint-list",
     config: { api_path: "/agentmemory/checkpoints", http_method: "GET" },
@@ -2635,9 +3854,13 @@ export function registerApiTriggers(
     async (
       req: ApiRequest<{ url: string; name: string; sharedScopes?: string[] }>,
     ): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
       if (!req.body?.url || !req.body?.name) {
         return { status_code: 400, body: { error: "url and name are required" } };
@@ -2646,7 +3869,7 @@ export function registerApiTriggers(
       return { status_code: 201, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-register",
     config: { api_path: "/agentmemory/mesh/peers", http_method: "POST" },
@@ -2654,15 +3877,19 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::mesh-list", 
     async (req: ApiRequest): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
       const result = await sdk.trigger({ function_id: "mem::mesh-list", payload: {} });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-list",
     config: { api_path: "/agentmemory/mesh/peers", http_method: "GET" },
@@ -2672,15 +3899,19 @@ export function registerApiTriggers(
     async (
       req: ApiRequest<{ peerId?: string; direction?: string }>,
     ): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
       const result = await sdk.trigger({ function_id: "mem::mesh-sync", payload: req.body || {} });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-sync",
     config: { api_path: "/agentmemory/mesh/sync", http_method: "POST" },
@@ -2688,15 +3919,19 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::mesh-receive", 
     async (req: ApiRequest): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
       const result = await sdk.trigger({ function_id: "mem::mesh-receive", payload: req.body || {} });
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-receive",
     config: { api_path: "/agentmemory/mesh/receive", http_method: "POST" },
@@ -2704,10 +3939,31 @@ export function registerApiTriggers(
 
   sdk.registerFunction("api::mesh-export", 
     async (req: ApiRequest): Promise<Response> => {
-      const secretErr = requireConfiguredSecret(secret, "mesh");
+      const secretErr = requireConfiguredSecret(
+        adminSecret,
+        "mesh",
+        "AGENTMEMORY_ADMIN_SECRET",
+      );
       if (secretErr) return secretErr;
-      const authErr = checkAuth(req, secret);
+      const authErr = checkAdminAuth(req);
       if (authErr) return authErr;
+      let projectScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        projectScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::mesh-export",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const since = req.query_params?.["since"] as string;
       if (since) {
         const parsed = new Date(since).getTime();
@@ -2715,37 +3971,71 @@ export function registerApiTriggers(
           return { status_code: 400, body: { error: "Invalid 'since' date format" } };
         }
       }
-      const project = req.query_params?.["project"] as string | undefined;
       const sinceTime = since ? new Date(since).getTime() : 0;
-      const df = <T>(items: T[], field: "updatedAt" | "createdAt") =>
-        items.filter((i) => new Date((i as Record<string, unknown>)[field] as string).getTime() > sinceTime);
-      const memories = await kv.list<import("../types.js").Memory>(KV.memories);
-      let actions = await kv.list<import("../types.js").Action>(KV.actions);
-      if (project) {
-        actions = actions.filter((a) => a.project === project);
-      }
+      const delta = <T>(items: T[]) =>
+        items.filter((item) => {
+          const record = item as Record<string, unknown>;
+          const timestamp = record["updatedAt"] ?? record["createdAt"];
+          return (
+            typeof timestamp === "string" &&
+            new Date(timestamp).getTime() > sinceTime
+          );
+        });
+      const scoped = <T extends { project?: string }>(items: T[]) =>
+        projectScope.kind === "global"
+          ? items
+          : items.filter((item) => item.project === projectScope.project);
+
+      const memories = scoped(
+        await kv.list<import("../types.js").Memory>(KV.memories),
+      );
+      const actions = scoped(
+        await kv.list<import("../types.js").Action>(KV.actions),
+      );
+      const semantic = scoped(
+        await kv.list<import("../types.js").SemanticMemory>(KV.semantic),
+      );
+      const procedural = scoped(
+        await kv.list<import("../types.js").ProceduralMemory>(KV.procedural),
+      );
+      const graphNodes = scoped(
+        await kv.list<import("../types.js").GraphNode>(KV.graphNodes),
+      );
+      const graphNodeIds = new Set(graphNodes.map(({ id }) => id));
+      const graphEdges = scoped(
+        await kv.list<import("../types.js").GraphEdge>(KV.graphEdges),
+      ).filter(
+        (edge) =>
+          projectScope.kind === "global" ||
+          (graphNodeIds.has(edge.sourceNodeId) &&
+            graphNodeIds.has(edge.targetNodeId)),
+      );
+      const projectMemoryIds = new Set([
+        ...memories.map(({ id }) => id),
+        ...semantic.map(({ id }) => id),
+        ...procedural.map(({ id }) => id),
+      ]);
+      const relations = (
+        await kv.list<import("../types.js").MemoryRelation>(KV.relations)
+      ).filter(
+        (relation) =>
+          projectScope.kind === "global" ||
+          (projectMemoryIds.has(relation.sourceId) &&
+            projectMemoryIds.has(relation.targetId)),
+      );
       const body: Record<string, unknown> = {
-        memories: df(memories, "updatedAt"),
-        actions: df(actions, "updatedAt"),
+        memories: delta(memories),
+        actions: delta(actions),
+        semantic: delta(semantic),
+        procedural: delta(procedural),
+        relations: delta(relations),
+        graphNodes: delta(graphNodes),
+        graphEdges: delta(graphEdges),
       };
-      if (!project) {
-        const semantic = await kv.list<import("../types.js").SemanticMemory>(KV.semantic);
-        const procedural = await kv.list<import("../types.js").ProceduralMemory>(KV.procedural);
-        const relations = await kv.list<import("../types.js").MemoryRelation>(KV.relations);
-        const graphNodes = await kv.list<import("../types.js").GraphNode>(KV.graphNodes);
-        const graphEdges = await kv.list<import("../types.js").GraphEdge>(KV.graphEdges);
-        body.semantic = df(semantic, "updatedAt");
-        body.procedural = df(procedural, "updatedAt");
-        body.relations = df(relations, "createdAt");
-        body.graphNodes = graphNodes.filter(
-          (n) => new Date(n.updatedAt || n.createdAt).getTime() > sinceTime,
-        );
-        body.graphEdges = df(graphEdges, "createdAt");
-      }
       return { status_code: 200, body };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::mesh-export",
     config: { api_path: "/agentmemory/mesh/export", http_method: "GET" },
@@ -2772,7 +4062,7 @@ export function registerApiTriggers(
       }
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::flow-compress",
     config: { api_path: "/agentmemory/flow/compress", http_method: "POST" },
@@ -2787,7 +4077,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::branch-detect",
     config: { api_path: "/agentmemory/branch/detect", http_method: "GET" },
@@ -2802,7 +4092,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::branch-worktrees",
     config: { api_path: "/agentmemory/branch/worktrees", http_method: "GET" },
@@ -2817,7 +4107,7 @@ export function registerApiTriggers(
       return { status_code: 200, body: result };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::branch-sessions",
     config: { api_path: "/agentmemory/branch/sessions", http_method: "GET" },
@@ -2847,7 +4137,7 @@ export function registerApiTriggers(
       };
     },
   );
-  sdk.registerTrigger({
+  registerApiTrigger({
     type: "http",
     function_id: "api::viewer",
     config: { api_path: "/agentmemory/viewer", http_method: "GET" },
@@ -2861,7 +4151,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-create", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-create", config: { api_path: "/agentmemory/sentinels", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-create", config: { api_path: "/agentmemory/sentinels", http_method: "POST" } });
 
   sdk.registerFunction("api::sentinel-trigger",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2871,7 +4161,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-trigger", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-trigger", config: { api_path: "/agentmemory/sentinels/trigger", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-trigger", config: { api_path: "/agentmemory/sentinels/trigger", http_method: "POST" } });
 
   sdk.registerFunction("api::sentinel-check",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2879,7 +4169,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-check", payload: {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-check", config: { api_path: "/agentmemory/sentinels/check", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-check", config: { api_path: "/agentmemory/sentinels/check", http_method: "POST" } });
 
   sdk.registerFunction("api::sentinel-cancel",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2889,7 +4179,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-cancel", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-cancel", config: { api_path: "/agentmemory/sentinels/cancel", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-cancel", config: { api_path: "/agentmemory/sentinels/cancel", http_method: "POST" } });
 
   sdk.registerFunction("api::sentinel-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2898,7 +4188,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sentinel-list", payload: { status: params.status, type: params.type } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sentinel-list", config: { api_path: "/agentmemory/sentinels", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::sentinel-list", config: { api_path: "/agentmemory/sentinels", http_method: "GET" } });
 
   sdk.registerFunction("api::sketch-create",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2908,7 +4198,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-create", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-create", config: { api_path: "/agentmemory/sketches", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-create", config: { api_path: "/agentmemory/sketches", http_method: "POST" } });
 
   sdk.registerFunction("api::sketch-add",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2918,7 +4208,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-add", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-add", config: { api_path: "/agentmemory/sketches/add", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-add", config: { api_path: "/agentmemory/sketches/add", http_method: "POST" } });
 
   sdk.registerFunction("api::sketch-promote",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2928,7 +4218,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-promote", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-promote", config: { api_path: "/agentmemory/sketches/promote", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-promote", config: { api_path: "/agentmemory/sketches/promote", http_method: "POST" } });
 
   sdk.registerFunction("api::sketch-discard",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2938,7 +4228,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-discard", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-discard", config: { api_path: "/agentmemory/sketches/discard", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-discard", config: { api_path: "/agentmemory/sketches/discard", http_method: "POST" } });
 
   sdk.registerFunction("api::sketch-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2947,7 +4237,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-list", payload: { status: params.status, project: params.project } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-list", config: { api_path: "/agentmemory/sketches", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-list", config: { api_path: "/agentmemory/sketches", http_method: "GET" } });
 
   sdk.registerFunction("api::sketch-gc",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2955,22 +4245,44 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::sketch-gc", payload: {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::sketch-gc", config: { api_path: "/agentmemory/sketches/gc", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::sketch-gc", config: { api_path: "/agentmemory/sketches/gc", http_method: "POST" } });
 
   sdk.registerFunction("api::crystallize",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
-    if (!body?.actionIds) return { status_code: 400, body: { error: "actionIds is required" } };
+    if (!body?.actionIds || !asNonEmptyString(body.project)) {
+      return {
+        status_code: 400,
+        body: { error: "actionIds and project are required" },
+      };
+    }
     const result = await sdk.trigger({ function_id: "mem::crystallize", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::crystallize", config: { api_path: "/agentmemory/crystals/create", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::crystallize", config: { api_path: "/agentmemory/crystals/create", http_method: "POST" } });
 
   sdk.registerFunction("api::crystal-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const params = req.query_params || {};
+    let projectScope: ReturnType<typeof requireProjectReadScope>;
+    try {
+      projectScope = requireProjectReadScope(
+        {
+          project: params.project,
+          scope: params.scope,
+        },
+        "api::crystal-list",
+      );
+    } catch (error) {
+      return {
+        status_code: 400,
+        body: {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      };
+    }
     const limit = parseOptionalPositiveInt(params.limit);
     if (limit === null) {
       return {
@@ -2978,19 +4290,31 @@ export function registerApiTriggers(
         body: { error: "invalid numeric parameter: limit" },
       };
     }
-    const result = await sdk.trigger({ function_id: "mem::crystal-list", payload: { project: params.project, sessionId: params.sessionId, limit } });
+    const result = await sdk.trigger({
+      function_id: "mem::crystal-list",
+      payload: {
+        ...(projectScope.kind === "global"
+          ? { scope: "global" }
+          : { project: projectScope.project }),
+        sessionId: params.sessionId,
+        limit,
+      },
+    });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::crystal-list", config: { api_path: "/agentmemory/crystals", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::crystal-list", config: { api_path: "/agentmemory/crystals", http_method: "GET" } });
 
   sdk.registerFunction("api::auto-crystallize",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
+    if (!asNonEmptyString(body?.project)) {
+      return { status_code: 400, body: { error: "project is required" } };
+    }
     const result = await sdk.trigger({ function_id: "mem::auto-crystallize", payload: body || {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::auto-crystallize", config: { api_path: "/agentmemory/crystals/auto", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::auto-crystallize", config: { api_path: "/agentmemory/crystals/auto", http_method: "POST" } });
 
   sdk.registerFunction("api::diagnose",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -2999,7 +4323,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::diagnose", payload: body || {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::diagnose", config: { api_path: "/agentmemory/diagnostics", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::diagnose", config: { api_path: "/agentmemory/diagnostics", http_method: "POST" } });
 
   sdk.registerFunction("api::heal",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3008,7 +4332,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::heal", payload: body || {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::heal", config: { api_path: "/agentmemory/diagnostics/heal", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::heal", config: { api_path: "/agentmemory/diagnostics/heal", http_method: "POST" } });
 
   sdk.registerFunction("api::facet-tag",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3018,7 +4342,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-tag", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-tag", config: { api_path: "/agentmemory/facets", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-tag", config: { api_path: "/agentmemory/facets", http_method: "POST" } });
 
   sdk.registerFunction("api::facet-untag",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3028,7 +4352,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-untag", payload: body });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-untag", config: { api_path: "/agentmemory/facets/remove", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-untag", config: { api_path: "/agentmemory/facets/remove", http_method: "POST" } });
 
   sdk.registerFunction("api::facet-query",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3037,7 +4361,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-query", payload: body || {} });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-query", config: { api_path: "/agentmemory/facets/query", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-query", config: { api_path: "/agentmemory/facets/query", http_method: "POST" } });
 
   sdk.registerFunction("api::facet-get",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3047,7 +4371,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-get", payload: { targetId: params.targetId } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-get", config: { api_path: "/agentmemory/facets", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-get", config: { api_path: "/agentmemory/facets", http_method: "GET" } });
 
   sdk.registerFunction("api::facet-stats",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3056,7 +4380,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::facet-stats", payload: { targetType: params.targetType } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::facet-stats", config: { api_path: "/agentmemory/facets/stats", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::facet-stats", config: { api_path: "/agentmemory/facets/stats", http_method: "GET" } });
 
   sdk.registerFunction("api::verify",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3066,7 +4390,7 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::verify", payload: { id: body.id } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::verify", config: { api_path: "/agentmemory/verify", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::verify", config: { api_path: "/agentmemory/verify", http_method: "POST" } });
 
   sdk.registerFunction("api::cascade-update",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3078,13 +4402,20 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::cascade-update", payload: { supersededMemoryId: body.supersededMemoryId } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::cascade-update", config: { api_path: "/agentmemory/cascade-update", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::cascade-update", config: { api_path: "/agentmemory/cascade-update", http_method: "POST" } });
 
   sdk.registerFunction("api::lesson-save",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
     if (!body?.content || typeof body.content !== "string") return { status_code: 400, body: { error: "content is required" } };
+    const projectScope =
+      body.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof body.project === "string" && body.project.trim()
+          ? { project: body.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const tags = typeof body.tags === "string" ? (body.tags as string).split(",").map((t: string) => t.trim()).filter(Boolean) : Array.isArray(body.tags) ? body.tags : [];
     const result = (await sdk.trigger({
       function_id: "mem::lesson-save",
@@ -3092,7 +4423,7 @@ export function registerApiTriggers(
         content: body.content,
         context: body.context || "",
         confidence: typeof body.confidence === "number" ? body.confidence : undefined,
-        project: typeof body.project === "string" ? body.project : undefined,
+        ...projectScope,
         tags,
         source: "manual",
       },
@@ -3100,12 +4431,19 @@ export function registerApiTriggers(
     const statusCode = result?.action === "created" ? 201 : 200;
     return { status_code: statusCode, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::lesson-save", config: { api_path: "/agentmemory/lessons", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::lesson-save", config: { api_path: "/agentmemory/lessons", http_method: "POST" } });
 
   sdk.registerFunction("api::lesson-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const params = req.query_params || {};
+    const projectScope =
+      params.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof params.project === "string" && params.project.trim()
+          ? { project: params.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const minConfidence = parseOptionalFiniteNumber(params.minConfidence);
     if (minConfidence === null) {
       return {
@@ -3121,34 +4459,65 @@ export function registerApiTriggers(
       };
     }
     const result = await sdk.trigger({ function_id: "mem::lesson-list", payload: {
-      project: params.project,
+      ...projectScope,
       source: params.source,
       minConfidence,
       limit,
     } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::lesson-list", config: { api_path: "/agentmemory/lessons", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::lesson-list", config: { api_path: "/agentmemory/lessons", http_method: "GET" } });
 
   sdk.registerFunction("api::lesson-search",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
     if (!body?.query || typeof body.query !== "string") return { status_code: 400, body: { error: "query is required" } };
-    const result = await sdk.trigger({ function_id: "mem::lesson-recall", payload: body });
+    const projectScope =
+      body.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof body.project === "string" && body.project.trim()
+          ? { project: body.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
+    const result = await sdk.trigger({
+      function_id: "mem::lesson-recall",
+      payload: { ...body, ...projectScope },
+    });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::lesson-search", config: { api_path: "/agentmemory/lessons/search", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::lesson-search", config: { api_path: "/agentmemory/lessons/search", http_method: "POST" } });
 
   sdk.registerFunction("api::lesson-strengthen",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
-    if (!body?.lessonId || typeof body.lessonId !== "string") return { status_code: 400, body: { error: "lessonId is required" } };
-    const result = await sdk.trigger({ function_id: "mem::lesson-strengthen", payload: { lessonId: body.lessonId } });
+    const projectScope =
+      body?.scope === "global"
+        ? ({ scope: "global" } as const)
+        : asNonEmptyString(body?.project)
+          ? { project: asNonEmptyString(body.project) }
+          : null;
+    if (
+      !body?.lessonId ||
+      typeof body.lessonId !== "string" ||
+      !projectScope
+    ) {
+      return {
+        status_code: 400,
+        body: {
+          error:
+            "lessonId and project are required unless scope is explicitly global",
+        },
+      };
+    }
+    const result = await sdk.trigger({
+      function_id: "mem::lesson-strengthen",
+      payload: { lessonId: body.lessonId, ...projectScope },
+    });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::lesson-strengthen", config: { api_path: "/agentmemory/lessons/strengthen", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::lesson-strengthen", config: { api_path: "/agentmemory/lessons/strengthen", http_method: "POST" } });
 
   sdk.registerFunction("api::obsidian-export", async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
@@ -3165,24 +4534,38 @@ export function registerApiTriggers(
     const result = await sdk.trigger({ function_id: "mem::obsidian-export", payload: { vaultDir, types } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::obsidian-export", config: { api_path: "/agentmemory/obsidian/export", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::obsidian-export", config: { api_path: "/agentmemory/obsidian/export", http_method: "POST" } });
 
   sdk.registerFunction("api::reflect",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = (req.body as Record<string, unknown>) || {};
+    const projectScope =
+      body.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof body.project === "string" && body.project.trim()
+          ? { project: body.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const result = await sdk.trigger({ function_id: "mem::reflect", payload: {
-      project: typeof body.project === "string" ? body.project : undefined,
+      ...projectScope,
       maxClusters: typeof body.maxClusters === "number" ? body.maxClusters : undefined,
     } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::reflect", config: { api_path: "/agentmemory/reflect", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::reflect", config: { api_path: "/agentmemory/reflect", http_method: "POST" } });
 
   sdk.registerFunction("api::insight-list",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const params = req.query_params || {};
+    const projectScope =
+      params.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof params.project === "string" && params.project.trim()
+          ? { project: params.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const minConfidence = parseOptionalFiniteNumber(params.minConfidence);
     if (minConfidence === null) {
       return {
@@ -3198,26 +4581,33 @@ export function registerApiTriggers(
       };
     }
     const result = await sdk.trigger({ function_id: "mem::insight-list", payload: {
-      project: params.project,
+      ...projectScope,
       minConfidence,
       limit,
     } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::insight-list", config: { api_path: "/agentmemory/insights", http_method: "GET" } });
+  registerApiTrigger({ type: "http", function_id: "api::insight-list", config: { api_path: "/agentmemory/insights", http_method: "GET" } });
 
   sdk.registerFunction("api::insight-search",  async (req: ApiRequest) => {
     const denied = checkAuth(req, secret);
     if (denied) return denied;
     const body = req.body as Record<string, unknown>;
     if (!body?.query || typeof body.query !== "string") return { status_code: 400, body: { error: "query is required" } };
+    const projectScope =
+      body.scope === "global"
+        ? ({ scope: "global" } as const)
+        : typeof body.project === "string" && body.project.trim()
+          ? { project: body.project.trim() }
+          : null;
+    if (!projectScope) return { status_code: 400, body: { error: "project required unless scope is global" } };
     const result = await sdk.trigger({ function_id: "mem::insight-search", payload: {
       query: body.query,
-      project: typeof body.project === "string" ? body.project : undefined,
+      ...projectScope,
       minConfidence: typeof body.minConfidence === "number" ? body.minConfidence : undefined,
       limit: typeof body.limit === "number" ? body.limit : undefined,
     } });
     return { status_code: 200, body: result };
   });
-  sdk.registerTrigger({ type: "http", function_id: "api::insight-search", config: { api_path: "/agentmemory/insights/search", http_method: "POST" } });
+  registerApiTrigger({ type: "http", function_id: "api::insight-search", config: { api_path: "/agentmemory/insights/search", http_method: "POST" } });
 }

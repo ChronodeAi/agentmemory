@@ -12,12 +12,12 @@ describe("createEmbeddingProvider", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env["GEMINI_API_KEY"];
-    delete process.env["OPENAI_API_KEY"];
-    delete process.env["VOYAGE_API_KEY"];
-    delete process.env["COHERE_API_KEY"];
-    delete process.env["OPENROUTER_API_KEY"];
-    delete process.env["EMBEDDING_PROVIDER"];
+    process.env["GEMINI_API_KEY"] = "";
+    process.env["OPENAI_API_KEY"] = "";
+    process.env["VOYAGE_API_KEY"] = "";
+    process.env["COHERE_API_KEY"] = "";
+    process.env["OPENROUTER_API_KEY"] = "";
+    process.env["EMBEDDING_PROVIDER"] = "";
   });
 
   afterEach(() => {
@@ -57,11 +57,12 @@ describe("OpenAIEmbeddingProvider", () => {
 
   beforeEach(() => {
     process.env = { ...originalEnv };
-    delete process.env["OPENAI_BASE_URL"];
-    delete process.env["OPENAI_EMBEDDING_BASE_URL"];
-    delete process.env["OPENAI_EMBEDDING_API_KEY"];
-    delete process.env["OPENAI_EMBEDDING_MODEL"];
-    delete process.env["OPENAI_EMBEDDING_DIMENSIONS"];
+    process.env["OPENAI_API_KEY"] = "";
+    process.env["OPENAI_BASE_URL"] = "";
+    process.env["OPENAI_EMBEDDING_BASE_URL"] = "";
+    process.env["OPENAI_EMBEDDING_API_KEY"] = "";
+    process.env["OPENAI_EMBEDDING_MODEL"] = "";
+    process.env["OPENAI_EMBEDDING_DIMENSIONS"] = "";
   });
 
   afterEach(() => {
@@ -71,12 +72,29 @@ describe("OpenAIEmbeddingProvider", () => {
   it("uses default base URL and model when env vars are not set", () => {
     const provider = new OpenAIEmbeddingProvider("test-key");
     expect(provider.name).toBe("openai");
+    expect(provider.processingLocation).toBe("external");
     expect(provider.dimensions).toBe(1536);
   });
 
+  it.each([
+    "http://localhost:8002/v1",
+    "http://127.0.0.1:8002/v1",
+    "http://[::1]:8002/v1",
+  ])("classifies loopback embedding endpoint %s as local", (baseUrl) => {
+    process.env["OPENAI_EMBEDDING_BASE_URL"] = baseUrl;
+    const provider = new OpenAIEmbeddingProvider("test-key");
+    expect(provider.processingLocation).toBe("local");
+  });
+
+  it("does not classify a localhost-like hosted endpoint as local", () => {
+    process.env["OPENAI_EMBEDDING_BASE_URL"] = "https://localhost.example.com/v1";
+    const provider = new OpenAIEmbeddingProvider("test-key");
+    expect(provider.processingLocation).toBe("external");
+  });
+
   it("throws when no API key is provided", () => {
-    delete process.env["OPENAI_API_KEY"];
-    delete process.env["OPENAI_EMBEDDING_API_KEY"];
+    process.env["OPENAI_API_KEY"] = "";
+    process.env["OPENAI_EMBEDDING_API_KEY"] = "";
     expect(() => new OpenAIEmbeddingProvider()).toThrow(/API key is required.*OPENAI_EMBEDDING_API_KEY.*OPENAI_API_KEY/);
   });
 

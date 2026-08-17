@@ -27,6 +27,13 @@ export type DiagnosticFixResult = {
   message?: string;
 };
 
+export function diagnosticFixConfirmed(
+  applied: DiagnosticFixResult,
+  rechecked: DiagnosticStatus,
+): boolean {
+  return applied.ok && rechecked.ok;
+}
+
 export type DoctorContext = {
   /** Base URL for the running engine, e.g. http://localhost:3111 */
   baseUrl: string;
@@ -63,6 +70,8 @@ export type Diagnostic = {
 export const DIAGNOSTIC_IDS = [
   "env-missing",
   "no-llm-provider-key",
+  "project-capability-credentials",
+  "context-delivery-credentials",
   "engine-version-mismatch",
   "viewer-unreachable",
   "stale-pidfile",
@@ -151,6 +160,10 @@ export type DoctorEffects = {
   envFileExists: () => boolean;
   /** Read ~/.agentmemory/.env and return parsed key=value pairs. */
   readEnvFile: () => Record<string, string>;
+  /** Effective runtime environment after process-over-file precedence. */
+  runtimeEnv: () => Record<string, string>;
+  /** True when a configured secret file exists and contains a value. */
+  secretFileHasValue: (path: string) => boolean;
   /** Is the iii engine PID in the pidfile still alive? */
   pidfilePidIsAlive: () => boolean | null;
   /** Does the pidfile exist on disk? */
@@ -214,6 +227,63 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
       fix: (ctx) => effects.openEditor(ctx.envPath),
     },
     {
+      id: "project-capability-credentials",
+      message: "Strict project authorization has no capability signing credential.",
+      fixPreview:
+        "Open ~/.agentmemory/.env and configure a project capability secret or secret file.",
+      moreInfo:
+        "Project-scoped hooks and MCP calls use short-lived signed capabilities. " +
+        "Strict mode is the default; without a signing credential, project writes and recalls fail closed.",
+      manualOnly: true,
+      check: async (ctx) => {
+        const env = effects.runtimeEnv();
+        const strict = !["false", "0", "off"].includes(
+          (env["AGENTMEMORY_STRICT_CAPABILITY_MODE"] ?? "")
+            .trim()
+            .toLowerCase(),
+        );
+        if (!strict) {
+          return { ok: true, detail: "compatibility mode enabled" };
+        }
+        if ((env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"] ?? "").trim()) {
+          return { ok: true, detail: "signing secret configured" };
+        }
+        const secretFile =
+          (env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE"] ?? "").trim() ||
+          join(dirname(ctx.envPath), "project-capability-secret");
+        return effects.secretFileHasValue(secretFile)
+          ? { ok: true, detail: `secret file: ${secretFile}` }
+          : { ok: false, detail: "no project capability signing credential" };
+      },
+      fix: (ctx) => effects.openEditor(ctx.envPath),
+    },
+    {
+      id: "context-delivery-credentials",
+      message: "Context injection is enabled without an acknowledgement credential.",
+      fixPreview:
+        "Open ~/.agentmemory/.env and configure a context acknowledgement secret or secret file.",
+      moreInfo:
+        "Injected context is not counted as delivered until the provider returns a signed acknowledgement. " +
+        "When injection is enabled, a distinct acknowledgement credential is required to prevent false delivery telemetry.",
+      manualOnly: true,
+      check: async (ctx) => {
+        const env = effects.runtimeEnv();
+        if (env["AGENTMEMORY_INJECT_CONTEXT"] !== "true") {
+          return { ok: true, detail: "context injection disabled" };
+        }
+        if ((env["AGENTMEMORY_CONTEXT_ACK_SECRET"] ?? "").trim()) {
+          return { ok: true, detail: "acknowledgement secret configured" };
+        }
+        const secretFile =
+          (env["AGENTMEMORY_CONTEXT_ACK_SECRET_FILE"] ?? "").trim() ||
+          join(dirname(ctx.envPath), "context-ack-secret");
+        return effects.secretFileHasValue(secretFile)
+          ? { ok: true, detail: `secret file: ${secretFile}` }
+          : { ok: false, detail: "no context acknowledgement credential" };
+      },
+      fix: (ctx) => effects.openEditor(ctx.envPath),
+    },
+    {
       id: "engine-version-mismatch",
       message: "iii binary on PATH doesn't match the version agentmemory pins to.",
       fixPreview:
@@ -235,8 +305,8 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
       fix: async () => {
         const r = await effects.runIiiInstaller();
         if (!r.ok) return r;
-        // Best-effort restart: stop then start.
-        await effects.runStop();
+        const stopped = await effects.runStop();
+        if (!stopped.ok) return stopped;
         return effects.runStart();
       },
     },
@@ -321,6 +391,16 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
         const bin = effects.findIiiBinary();
         if (!bin) return { ok: true, detail: "iii not on PATH (handled elsewhere)" };
         const localBin = effects.localBinIiiPath();
+        const privateVersion = effects.iiiBinaryVersion(localBin);
+        if (privateVersion) {
+          return {
+            ok: true,
+            detail:
+              bin === localBin
+                ? undefined
+                : `using private iii v${privateVersion} at ${localBin}`,
+          };
+        }
         return {
           ok: bin === localBin,
           detail: bin === localBin ? undefined : `iii at: ${bin}`,
@@ -377,3 +457,4 @@ export function dryRunPlan(
   }
   return lines;
 }
+import { dirname, join } from "node:path";

@@ -74,10 +74,23 @@ describe("mem::enrich — project isolation for bug memories", () => {
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     sdk = mockSdk();
     kv = mockKV();
     registerEnrichFunction(sdk as never, kv as never);
+    for (const [id, project] of [
+      ["sess-api-001", "api"],
+      ["sess-web-001", "web"],
+    ]) {
+      await kv.set("mem:sessions", id, {
+        id,
+        project,
+        cwd: `/tmp/${project}`,
+        startedAt: new Date().toISOString(),
+        status: "active",
+        observationCount: 0,
+      });
+    }
     sdk.overrideTrigger("mem::file-context", async () => ({ context: "" }));
     sdk.overrideTrigger("mem::search", async () => ({ results: [] }));
   });
@@ -108,7 +121,7 @@ describe("mem::enrich — project isolation for bug memories", () => {
     expect(result.context).toContain("express-jwt");
   });
 
-  it("surfaces an unscoped (legacy) bug memory regardless of caller project", async () => {
+  it("does not implicitly surface an unscoped legacy bug memory", async () => {
     await kv.set("mem:memories", "mem_bug_1", makeBugMemory({ project: undefined }));
 
     const result = await sdk.trigger("mem::enrich", {
@@ -117,32 +130,32 @@ describe("mem::enrich — project isolation for bug memories", () => {
       project: "web",
     }) as { context: string };
 
-    // Unscoped memories remain visible everywhere for backward-compat
-    expect(result.context).toContain("agentmemory-past-errors");
-    expect(result.context).toContain("express-jwt");
+    expect(result.context).not.toContain("agentmemory-past-errors");
+    expect(result.context).not.toContain("express-jwt");
   });
 
-  it("surfaces an unscoped bug memory when caller provides no project", async () => {
+  it("rejects an omitted project even for an unscoped legacy memory", async () => {
     await kv.set("mem:memories", "mem_bug_1", makeBugMemory({ project: undefined }));
 
     const result = await sdk.trigger("mem::enrich", {
       sessionId: "sess-api-001",
       files: ["src/middleware/auth.ts"],
-    }) as { context: string };
+    }) as { context: string; error?: string };
 
-    expect(result.context).toContain("agentmemory-past-errors");
+    expect(result.context).toBe("");
+    expect(result.error).toBe("project is required");
   });
 
-  it("surfaces a scoped bug memory when caller provides no project", async () => {
+  it("rejects an omitted project for a scoped memory", async () => {
     await kv.set("mem:memories", "mem_bug_1", makeBugMemory({ project: "api" }));
 
-    // No project on the caller — guard does not engage, memory is visible
     const result = await sdk.trigger("mem::enrich", {
       sessionId: "sess-api-001",
       files: ["src/middleware/auth.ts"],
-    }) as { context: string };
+    }) as { context: string; error?: string };
 
-    expect(result.context).toContain("agentmemory-past-errors");
+    expect(result.context).toBe("");
+    expect(result.error).toBe("project is required");
   });
 
   it("isolates multiple memories from different projects correctly", async () => {
@@ -214,6 +227,14 @@ describe("mem::enrich — project forwarded to mem::search", () => {
     const sdk = mockSdk();
     const kv = mockKV();
     registerEnrichFunction(sdk as never, kv as never);
+    await kv.set("mem:sessions", "sess-api-001", {
+      id: "sess-api-001",
+      project: "api",
+      cwd: "/tmp/api",
+      startedAt: new Date().toISOString(),
+      status: "active",
+      observationCount: 0,
+    });
 
     let capturedSearchPayload: Record<string, unknown> = {};
     sdk.overrideTrigger("mem::file-context", async () => ({ context: "" }));
@@ -231,7 +252,7 @@ describe("mem::enrich — project forwarded to mem::search", () => {
     expect(capturedSearchPayload.project).toBe("api");
   });
 
-  it("does not pass project to search when caller provides none", async () => {
+  it("rejects an omitted project before invoking search", async () => {
     const sdk = mockSdk();
     const kv = mockKV();
     registerEnrichFunction(sdk as never, kv as never);
@@ -243,11 +264,13 @@ describe("mem::enrich — project forwarded to mem::search", () => {
       return { results: [] };
     });
 
-    await sdk.trigger("mem::enrich", {
+    const result = await sdk.trigger("mem::enrich", {
       sessionId: "sess-api-001",
       files: ["src/middleware/auth.ts"],
-    });
+    }) as { context: string; error?: string };
 
     expect(capturedSearchPayload.project).toBeUndefined();
+    expect(result.context).toBe("");
+    expect(result.error).toBe("project is required");
   });
 });

@@ -7,7 +7,7 @@ User: "Did we ever decide how to cache sessions?"
 Invocation:
 
 ```json
-memory_smart_search { "query": "session caching decision", "limit": 10 }
+memory_smart_search { "project": "github.com/example/repository", "query": "session caching decision", "limit": 10 }
 ```
 
 Response:
@@ -34,7 +34,7 @@ User: "Recall anything about the rate limiter."
 Invocation:
 
 ```json
-memory_smart_search { "query": "rate limiter", "limit": 10 }
+memory_smart_search { "project": "github.com/example/repository", "query": "rate limiter", "limit": 10 }
 ```
 
 Response:
@@ -59,7 +59,7 @@ User: "Recall the GraphQL schema migration."
 Invocation:
 
 ```json
-memory_smart_search { "query": "graphql schema migration", "limit": 10 }
+memory_smart_search { "project": "github.com/example/repository", "query": "graphql schema migration", "limit": 10 }
 ```
 
 Response:

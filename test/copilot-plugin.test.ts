@@ -112,8 +112,10 @@ describe("Copilot MCP config (.mcp.copilot.json)", () => {
     }>(mcpPath);
     const server = config.mcpServers.agentmemory;
     expect(server.type).toBe("local");
-    expect(server.command).toBe("npx");
-    expect(server.args).toEqual(["-y", "@agentmemory/mcp"]);
+    expect(server.command).toBe("node");
+    expect(server.args).toEqual([
+      "${COPILOT_PLUGIN_ROOT}/scripts/standalone.mjs",
+    ]);
     expect(server.env["AGENTMEMORY_URL"]).toBe(
       "${AGENTMEMORY_URL:-http://localhost:3111}",
     );
@@ -249,6 +251,8 @@ describe("Copilot hook scripts", () => {
           ...process.env,
           AGENTMEMORY_URL: `http://127.0.0.1:${address.port}`,
           AGENTMEMORY_SECRET: "",
+          AGENTMEMORY_PROJECT_CAPABILITY_SECRET:
+            "copilot-hook-capability-secret",
           ...env,
         },
         stdio: ["pipe", "pipe", "pipe"],
@@ -295,7 +299,7 @@ describe("Copilot hook scripts", () => {
     expect(result.requests[0]?.path).toBe("/agentmemory/session/start");
     expect(result.requests[0]?.body).toMatchObject({
       sessionId: "copilot-session",
-      project: "C:\\repo",
+      project: expect.stringMatching(/^local\/[a-f0-9]{24}$/),
       cwd: "C:\\repo",
     });
   });
@@ -351,7 +355,7 @@ describe("Copilot hook scripts", () => {
       sessionId: "copilot-session",
       data: {
         tool_name: "edit",
-        tool_input: JSON.stringify({ filePath: "src/index.ts" }),
+        tool_input: { filePath: "src/index.ts" },
         error: "failed",
       },
     });
@@ -376,5 +380,20 @@ describe("Copilot hook scripts", () => {
         message: "Approve edit",
       },
     });
+  });
+
+  it("session-end delegates consolidation to one server-side session pipeline", async () => {
+    const result = await runHook(
+      "scripts/session-end.mjs",
+      {
+        sessionId: "copilot-session",
+        cwd: "C:\\repo",
+      },
+      { CONSOLIDATION_ENABLED: "true" },
+    );
+
+    expect(result.requests.map((request) => request.path)).toEqual([
+      "/agentmemory/session/end",
+    ]);
   });
 });

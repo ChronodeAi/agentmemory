@@ -25,12 +25,51 @@ import {
   V040_TOOLS,
 } from "../src/mcp/tools-registry.js";
 import { InMemoryKV } from "../src/mcp/in-memory-kv.js";
-import { handleToolCall } from "../src/mcp/standalone.js";
+import { handleToolCall as rawHandleToolCall } from "../src/mcp/standalone.js";
 import {
   resetHandleForTests,
   setLivezProbe,
 } from "../src/mcp/rest-proxy.js";
 import { writeFileSync } from "node:fs";
+
+const PROJECT_SCOPED_TOOLS = new Set([
+  "memory_save",
+  "memory_recall",
+  "memory_smart_search",
+  "memory_sessions",
+  "memory_governance_delete",
+]);
+
+const ADVERTISED_PROJECT_SCOPED_TOOLS = [
+  "memory_recall",
+  "memory_save",
+  "memory_file_history",
+  "memory_sessions",
+  "memory_smart_search",
+  "memory_commit_lookup",
+  "memory_commits",
+  "memory_graph_query",
+  "memory_consolidate",
+  "memory_lesson_save",
+  "memory_lesson_recall",
+  "memory_reflect",
+  "memory_insight_list",
+  "memory_governance_delete",
+];
+
+function handleToolCall(
+  toolName: string,
+  args: Record<string, unknown>,
+  kv?: InMemoryKV,
+) {
+  return rawHandleToolCall(
+    toolName,
+    PROJECT_SCOPED_TOOLS.has(toolName)
+      ? { scope: "global", ...args }
+      : args,
+    kv,
+  );
+}
 
 // Issue #449: hard-coded fetch() against :3111 in the livez probe was racing
 // with vitest's mock setup, making this file the "10-11 pre-existing failures"
@@ -88,6 +127,37 @@ describe("Tools Registry", () => {
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.properties).toBeDefined();
     }
+  });
+
+  it("advertises the same project-scope requirement enforced at runtime", () => {
+    const tools = new Map(getAllTools().map((tool) => [tool.name, tool]));
+    for (const name of ADVERTISED_PROJECT_SCOPED_TOOLS) {
+      const schema = tools.get(name)?.inputSchema;
+      expect(schema, name).toBeDefined();
+      expect(schema?.oneOf, name).toEqual(
+        expect.arrayContaining([
+          { required: ["project"] },
+          {
+            required: ["scope"],
+            properties: { scope: { const: "global" } },
+          },
+        ]),
+      );
+    }
+  });
+
+  it("rejects ambiguous project plus global scope in local fallback", async () => {
+    await expect(
+      rawHandleToolCall(
+        "memory_save",
+        {
+          content: "ambiguous scope",
+          project: "github.com/example/project",
+          scope: "global",
+        },
+        new InMemoryKV(),
+      ),
+    ).rejects.toThrow("mutually exclusive");
   });
 });
 
@@ -343,6 +413,7 @@ describe("handleToolCall", () => {
       await kv.set("mem:sessions", `ses_${i}`, {
         id: `ses_${i}`,
         project: "demo",
+        childAgentIds: [`child_${i}`],
       });
     }
     const result = await handleToolCall(
@@ -352,6 +423,19 @@ describe("handleToolCall", () => {
     );
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.sessions).toHaveLength(2);
+    expect(parsed.total).toBe(5);
+    expect(parsed.sessions[0].childAgentIds).toBeUndefined();
+
+    const full = JSON.parse(
+      (
+        await handleToolCall(
+          "memory_sessions",
+          { limit: 1, format: "full" },
+          kv,
+        )
+      ).content[0].text,
+    );
+    expect(full.sessions[0].childAgentIds).toHaveLength(1);
   });
 
   it("parseLimit clamps bad/malicious limit values to a safe range", async () => {

@@ -15,8 +15,9 @@ import { parseJsonlText } from "../replay/jsonl-parser.js";
 import { projectTimeline, type Timeline } from "../replay/timeline.js";
 import { safeAudit } from "./audit.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
-import { getSearchIndex } from "./search.js";
+import { getSearchIndex, scheduleIndexSave } from "./search.js";
 import { logger } from "../logger.js";
+import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
 
 export const MAX_FILES_DEFAULT = 200;
 export const MAX_FILES_UPPER_BOUND = 1000;
@@ -366,6 +367,7 @@ export function registerReplayFunctions(sdk: ISdk, kv: StateKV): void {
 
       const sessionIds: string[] = [];
       let observationCount = 0;
+      let indexedObservationCount = 0;
 
       for (const file of files) {
         if (isSensitive(file)) continue;
@@ -437,9 +439,13 @@ export function registerReplayFunctions(sdk: ISdk, kv: StateKV): void {
         await Promise.all(
           parsed.observations.map(async (obs) => {
             const synthetic = buildSyntheticCompression(obs);
+            synthetic.recalledOnly = isRetrievalGeneratedObservation(synthetic);
             compressed.push(synthetic);
             await kv.set(KV.observations(parsed.sessionId), obs.id, synthetic);
-            searchIndex.add(synthetic);
+            if (!synthetic.recalledOnly) {
+              searchIndex.add(synthetic);
+              indexedObservationCount += 1;
+            }
           }),
         );
         observationCount += parsed.observations.length;
@@ -461,6 +467,7 @@ export function registerReplayFunctions(sdk: ISdk, kv: StateKV): void {
         files: files.length,
         observations: observationCount,
       });
+      if (indexedObservationCount > 0) scheduleIndexSave();
 
       return {
         success: true,

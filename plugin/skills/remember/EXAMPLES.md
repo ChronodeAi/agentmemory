@@ -8,6 +8,7 @@ Invocation:
 
 ```json
 memory_save {
+  "project": "github.com/example/repository",
   "content": "We decided to drop Redis and use the iii-engine state store for session caching to remove a moving part.",
   "concepts": "session-caching, iii-state-store, dropped-redis",
   "files": ""
@@ -33,6 +34,7 @@ Invocation:
 
 ```json
 memory_save {
+  "project": "github.com/example/repository",
   "content": "The rate limiter in middleware/limit.ts counts per-IP, not per-user, so logged-in users on shared IPs collide.",
   "concepts": "rate-limiter, per-ip-bug, shared-ip-collision",
   "files": "src/middleware/limit.ts"
@@ -58,6 +60,7 @@ Ask once for the substance, then save:
 
 ```json
 memory_save {
+  "project": "github.com/example/repository",
   "content": "Staging deploys must run the migration job before the app rollout, never after.",
   "concepts": "staging-deploy, migration-ordering, rollout-sequence",
   "files": ""

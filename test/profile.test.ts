@@ -78,7 +78,7 @@ describe("Profile Function", () => {
       facts: [],
       narrative: "Auth changes",
       concepts: ["typescript", "authentication"],
-      files: ["/project/src/auth.ts", "/project/src/middleware.ts"],
+      files: ["/tmp/my-project/src/auth.ts", "/tmp/my-project/src/middleware.ts"],
       importance: 8,
     };
     const obs2: CompressedObservation = {
@@ -90,7 +90,7 @@ describe("Profile Function", () => {
       facts: [],
       narrative: "DB changes",
       concepts: ["typescript", "database"],
-      files: ["/project/src/db.ts"],
+      files: ["/tmp/my-project/src/db.ts"],
       importance: 6,
     };
     const obs3: CompressedObservation = {
@@ -102,13 +102,36 @@ describe("Profile Function", () => {
       facts: [],
       narrative: "Error occurred",
       concepts: ["error"],
-      files: ["/project/src/db.ts"],
+      files: ["/tmp/my-project/src/db.ts"],
       importance: 4,
     };
 
     await kv.set("mem:obs:ses_1", "obs_1", obs1);
     await kv.set("mem:obs:ses_1", "obs_2", obs2);
     await kv.set("mem:obs:ses_1", "obs_3", obs3);
+    await kv.set("mem:obs:ses_1", "obs_external", {
+      ...obs1,
+      id: "obs_external",
+      concepts: ["agentmemory"],
+      files: ["/Users/base/projects/agentmemory/src/index.ts"],
+    });
+    await kv.set("mem:obs:ses_1", "obs_noise", {
+      ...obs1,
+      id: "obs_noise",
+      type: "command_run",
+      concepts: ["web scraping"],
+      files: ["/tmp/my-project/tool-output.ts"],
+    });
+    await kv.set("mem:obs:ses_1", "obs_excluded", {
+      ...obs1,
+      id: "obs_excluded",
+      concepts: ["stale working evidence"],
+      files: ["/tmp/my-project/.aiwg/working/polygres-verification.md"],
+    });
+    await kv.set("mem:obs:ses_1", "obs_db_repeat", {
+      ...obs2,
+      id: "obs_db_repeat",
+    });
   });
 
   it("generates profile with topConcepts sorted by frequency", async () => {
@@ -118,7 +141,7 @@ describe("Profile Function", () => {
 
     expect(result.cached).toBe(false);
     expect(result.profile.topConcepts[0].concept).toBe("typescript");
-    expect(result.profile.topConcepts[0].frequency).toBe(2);
+    expect(result.profile.topConcepts[0].frequency).toBe(3);
   });
 
   it("generates profile with topFiles sorted by frequency", async () => {
@@ -126,8 +149,18 @@ describe("Profile Function", () => {
       project: "my-project",
     })) as { profile: ProjectProfile };
 
-    expect(result.profile.topFiles[0].file).toBe("/project/src/db.ts");
+    expect(result.profile.topFiles[0].file).toBe("/tmp/my-project/src/db.ts");
     expect(result.profile.topFiles[0].frequency).toBe(2);
+    expect(result.profile.topFiles).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          file: "/Users/base/projects/agentmemory/src/index.ts",
+        }),
+        expect.objectContaining({
+          file: "/tmp/my-project/.aiwg/working/polygres-verification.md",
+        }),
+      ]),
+    );
   });
 
   it("extracts conventions from file patterns", async () => {
@@ -135,9 +168,18 @@ describe("Profile Function", () => {
       project: "my-project",
     })) as { profile: ProjectProfile };
 
-    expect(result.profile.conventions).toContain("TypeScript project");
+    expect(result.profile.conventions).toContain(
+      "Observed TypeScript source activity",
+    );
     expect(result.profile.conventions).toContain(
       "Standard src/ directory structure",
+    );
+    expect(result.profile.topConcepts).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ concept: "agentmemory" }),
+        expect.objectContaining({ concept: "web scraping" }),
+        expect.objectContaining({ concept: "stale working evidence" }),
+      ]),
     );
   });
 

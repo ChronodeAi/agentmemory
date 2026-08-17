@@ -70,29 +70,28 @@ workers:
       enabled: true
       service_name: agentmemory
       exporter: memory
-      sampling_ratio: 1.0
+      sampling_ratio: 0.1
       metrics_enabled: true
       logs_enabled: true
-      logs_console_output: true
+      logs_console_output: false
 EOF
 chown "$RUN_AS" "$III_CONFIG"
 
-if [ ! -s "$HMAC_FILE" ]; then
+if [ -n "${AGENTMEMORY_SECRET:-}" ]; then
+  SECRET="$AGENTMEMORY_SECRET"
+elif [ -s "$HMAC_FILE" ]; then
+  SECRET="$(cat "$HMAC_FILE")"
+else
   SECRET="$(openssl rand -hex 32)"
   umask 077
   printf '%s\n' "$SECRET" > "$HMAC_FILE"
   chmod 600 "$HMAC_FILE"
   chown "$RUN_AS" "$HMAC_FILE"
-  echo "================================================================"
   echo "agentmemory: generated HMAC secret on first boot"
-  echo "AGENTMEMORY_SECRET=$SECRET"
-  echo "Copy this value now. It will not be printed again."
-  echo "Stored at: $HMAC_FILE (chmod 600)"
-  echo "To rotate: delete $HMAC_FILE on the persistent volume and restart."
-  echo "================================================================"
+  echo "agentmemory: secret stored at $HMAC_FILE with mode 600; it was not written to logs"
 fi
 
-AGENTMEMORY_SECRET="$(cat "$HMAC_FILE")"
+AGENTMEMORY_SECRET="$SECRET"
 export AGENTMEMORY_SECRET
 
 exec gosu "$RUN_AS" agentmemory "$@"

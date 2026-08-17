@@ -3,9 +3,10 @@
 import { InMemoryKV } from "./in-memory-kv.js";
 import { createStdioTransport } from "./transport.js";
 import { getAllTools } from "./tools-registry.js";
-import { getStandalonePersistPath } from "../config.js";
 import { VERSION } from "../version.js";
 import { generateId } from "../state/schema.js";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import {
   resolveHandle,
   invalidateHandle,
@@ -23,11 +24,26 @@ const IMPLEMENTED_TOOLS = new Set([
   "memory_governance_delete",
 ]);
 
+const READ_ONLY_LOCAL_FALLBACK_TOOLS = new Set([
+  "memory_recall",
+  "memory_smart_search",
+  "memory_sessions",
+  "memory_export",
+  "memory_audit",
+]);
+
 const SERVER_INFO = {
   name: "agentmemory",
   version: VERSION,
   protocolVersion: "2024-11-05",
 };
+
+function getStandalonePersistPath(): string {
+  return (
+    process.env["STANDALONE_PERSIST_PATH"]?.trim() ||
+    join(homedir(), ".agentmemory", "standalone.json")
+  );
+}
 
 const kv = new InMemoryKV(getStandalonePersistPath());
 let modeAnnounced = false;
@@ -93,6 +109,50 @@ function textResponse(payload: unknown, pretty = false): {
   };
 }
 
+function compactSessionPayload(payload: unknown): unknown {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    return payload;
+  }
+  const record = payload as Record<string, unknown>;
+  if (!Array.isArray(record["sessions"])) return payload;
+  const sessions = record["sessions"].map((value) => {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      return value;
+    }
+    const session = value as Record<string, unknown>;
+    const summary =
+      session["summary"] &&
+      typeof session["summary"] === "object" &&
+      !Array.isArray(session["summary"])
+        ? (session["summary"] as Record<string, unknown>)
+        : undefined;
+    return {
+      id: session["id"],
+      agentId: session["agentId"],
+      project: session["project"],
+      cwd: session["cwd"],
+      status: session["status"],
+      startedAt: session["startedAt"],
+      updatedAt: session["updatedAt"],
+      endedAt: session["endedAt"],
+      observationCount: session["observationCount"],
+      retainedObservationCount: session["retainedObservationCount"],
+      commitShas: session["commitShas"],
+      firstPrompt: session["firstPrompt"],
+      ...(summary
+        ? {
+            summary: {
+              title: summary["title"],
+              narrative: summary["narrative"],
+              createdAt: summary["createdAt"],
+            },
+          }
+        : {}),
+    };
+  });
+  return { ...record, sessions };
+}
+
 interface Validated {
   tool: string;
   content?: string;
@@ -105,6 +165,31 @@ interface Validated {
   tokenBudget?: number;
   memoryIds?: string[];
   reason?: string;
+  project?: string;
+  scope?: "global";
+}
+
+function applyProjectScope(
+  validated: Validated,
+  args: Record<string, unknown>,
+): void {
+  const project =
+    typeof args["project"] === "string" && args["project"].trim()
+      ? args["project"].trim()
+      : undefined;
+  if (args["scope"] === "global") {
+    if (project) {
+      throw new Error("project and global scope are mutually exclusive");
+    }
+    validated.scope = "global";
+    return;
+  }
+  if (!project) {
+    throw new Error(
+      "project is required unless scope is explicitly global",
+    );
+  }
+  validated.project = project;
 }
 
 function validate(toolName: string, args: Record<string, unknown>): Validated {
@@ -122,6 +207,7 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
       v.type = (args["type"] as string) || "fact";
       v.concepts = normalizeList(args["concepts"]);
       v.files = normalizeList(args["files"]);
+      applyProjectScope(v, args);
       return v;
     }
     case "memory_recall":
@@ -143,10 +229,13 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
         const n = Number(budget);
         if (Number.isFinite(n) && n > 0) v.tokenBudget = Math.floor(n);
       }
+      applyProjectScope(v, args);
       return v;
     }
     case "memory_sessions": {
       v.limit = parseLimit(args["limit"], 20);
+      v.format = args["format"] === "full" ? "full" : "compact";
+      applyProjectScope(v, args);
       return v;
     }
     case "memory_governance_delete": {
@@ -154,6 +243,7 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
       if (ids.length === 0) throw new Error("memoryIds is required");
       v.memoryIds = ids;
       v.reason = (args["reason"] as string) || "plugin skill request";
+      applyProjectScope(v, args);
       return v;
     }
     case "memory_export":
@@ -180,6 +270,8 @@ async function handleProxy(
           type: v.type,
           concepts: v.concepts,
           files: v.files,
+          project: v.project,
+          scope: v.scope,
         }),
       });
       return textResponse(result);
@@ -191,6 +283,8 @@ async function handleProxy(
         format: v.format ?? "full",
       };
       if (v.tokenBudget != null) body["token_budget"] = v.tokenBudget;
+      if (v.project) body["project"] = v.project;
+      if (v.scope) body["scope"] = v.scope;
       const result = await handle.call("/agentmemory/search", {
         method: "POST",
         body: JSON.stringify(body),
@@ -199,6 +293,8 @@ async function handleProxy(
     }
     case "memory_smart_search": {
       const body: Record<string, unknown> = { query: v.query, limit: v.limit };
+      if (v.project) body["project"] = v.project;
+      if (v.scope) body["scope"] = v.scope;
       if (v.format != null) body["format"] = v.format;
       if (v.tokenBudget != null) body["token_budget"] = v.tokenBudget;
       const result = await handle.call("/agentmemory/smart-search", {
@@ -209,15 +305,28 @@ async function handleProxy(
     }
     case "memory_sessions": {
       const result = await handle.call(
-        `/agentmemory/sessions?limit=${v.limit}`,
+        `/agentmemory/sessions?limit=${v.limit}&${
+          v.scope === "global"
+            ? "scope=global"
+            : `project=${encodeURIComponent(v.project ?? "")}`
+        }`,
         { method: "GET" },
       );
-      return textResponse(result, true);
+      return textResponse(
+        v.format === "full" ? result : compactSessionPayload(result),
+        true,
+      );
     }
     case "memory_governance_delete": {
       const result = await handle.call("/agentmemory/governance/memories", {
         method: "DELETE",
-        body: JSON.stringify({ memoryIds: v.memoryIds, reason: v.reason }),
+        body: JSON.stringify({
+          memoryIds: v.memoryIds,
+          reason: v.reason,
+          ...(v.scope === "global"
+            ? { scope: "global" }
+            : { project: v.project }),
+        }),
       });
       return textResponse(result);
     }
@@ -258,6 +367,7 @@ async function handleLocal(
         version: 1,
         isLatest: true,
         sessionIds: [],
+        project: v.project,
       });
       kvInstance.persist();
       return textResponse({ saved: id });
@@ -270,6 +380,10 @@ async function handleLocal(
       const all =
         await kvInstance.list<Record<string, unknown>>("mem:memories");
       const results = all
+        .filter(
+          (memory) =>
+            v.scope === "global" || memory["project"] === v.project,
+        )
         .filter((m) => {
           const text = [
             typeof m["title"] === "string" ? m["title"] : "",
@@ -291,14 +405,31 @@ async function handleLocal(
       const sessions =
         await kvInstance.list<Record<string, unknown>>("mem:sessions");
       const limit = v.limit ?? 20;
-      return textResponse({ sessions: sessions.slice(0, limit) }, true);
+      const scoped = sessions.filter(
+        (session) =>
+          v.scope === "global" || session["project"] === v.project,
+      );
+      const payload = {
+        sessions: scoped.slice(0, limit),
+        total: scoped.length,
+      };
+      return textResponse(
+        v.format === "full" ? payload : compactSessionPayload(payload),
+        true,
+      );
     }
 
     case "memory_governance_delete": {
       let deleted = 0;
       for (const id of v.memoryIds || []) {
-        const existing = await kvInstance.get("mem:memories", id);
-        if (existing) {
+        const existing = await kvInstance.get<Record<string, unknown>>(
+          "mem:memories",
+          id,
+        );
+        if (
+          existing &&
+          (v.scope === "global" || existing["project"] === v.project)
+        ) {
           await kvInstance.delete("mem:memories", id);
           deleted++;
         }
@@ -339,7 +470,7 @@ async function handleProxyGeneric(
   handle: ProxyHandle,
 ): Promise<{ content: Array<{ type: string; text: string }> }> {
   // Forward to the server's full MCP surface so non-Claude clients can
-  // reach all 53 tools (lessons, sentinels, slots, signals, graph, …)
+  // reach all 58 tools (lessons, sentinels, slots, signals, graph, ...)
   // instead of being capped at the 7 IMPLEMENTED_TOOLS set baked into
   // this shim. The server validates arguments per tool.
   const result = (await handle.call("/agentmemory/mcp/call", {
@@ -385,10 +516,17 @@ export async function handleToolCall(
     try {
       return await handleProxy(validated, handle);
     } catch (err) {
+      const mayFallback = READ_ONLY_LOCAL_FALLBACK_TOOLS.has(toolName);
       process.stderr.write(
-        `[@agentmemory/mcp] proxy call failed for ${toolName}: ${err instanceof Error ? err.message : String(err)}; invalidating handle and falling back to local KV\n`,
+        `[@agentmemory/mcp] proxy call failed for ${toolName}: ${err instanceof Error ? err.message : String(err)}; invalidating handle${mayFallback ? " and falling back to local read-only data" : " without replaying the mutation locally"}\n`,
       );
       invalidateHandle();
+      if (!mayFallback) {
+        throw new Error(
+          `proxy mutation outcome is ambiguous for ${toolName}; local fallback was not attempted`,
+          { cause: err },
+        );
+      }
     }
   }
   return handleLocal(validated, kvInstance);
@@ -445,6 +583,18 @@ export async function handleToolsList(): Promise<{ tools: unknown[] }> {
   return { tools: fallback };
 }
 
+let shutdownPromise: Promise<never> | null = null;
+
+async function finishShutdown(): Promise<never> {
+  if (!shutdownPromise) {
+    shutdownPromise = Promise.resolve().then(() => {
+      kv.persist();
+      process.exit(0);
+    });
+  }
+  return shutdownPromise;
+}
+
 const transport = createStdioTransport(async (method, params) => {
   switch (method) {
     case "initialize":
@@ -484,18 +634,17 @@ const transport = createStdioTransport(async (method, params) => {
     default:
       throw new Error(`Unknown method: ${method}`);
   }
-});
+}, { onInputClose: finishShutdown });
 
 process.stderr.write(
   `[@agentmemory/mcp] Standalone MCP server v${SERVER_INFO.version} starting...\n`,
 );
 transport.start();
 
-process.on("SIGINT", () => {
-  kv.persist();
-  process.exit(0);
-});
-process.on("SIGTERM", () => {
-  kv.persist();
-  process.exit(0);
-});
+async function shutdown(): Promise<never> {
+  await transport.stop();
+  return finishShutdown();
+}
+
+process.on("SIGINT", () => void shutdown());
+process.on("SIGTERM", () => void shutdown());

@@ -1,40 +1,8 @@
-//#region src/state/schema.ts
-const KV = {
-	sessions: "mem:sessions",
-	observations: (sessionId) => `mem:obs:${sessionId}`,
-	memories: "mem:memories",
-	summaries: "mem:summaries",
-	config: "mem:config",
-	metrics: "mem:metrics",
-	health: "mem:health",
-	embeddings: (obsId) => `mem:emb:${obsId}`,
-	bm25Index: "mem:index:bm25",
-	relations: "mem:relations",
-	profiles: "mem:profiles",
-	claudeBridge: "mem:claude-bridge",
-	graphNodes: "mem:graph:nodes",
-	graphEdges: "mem:graph:edges",
-	semantic: "mem:semantic",
-	procedural: "mem:procedural",
-	teamShared: (teamId) => `mem:team:${teamId}:shared`,
-	teamUsers: (teamId, userId) => `mem:team:${teamId}:users:${userId}`,
-	teamProfile: (teamId) => `mem:team:${teamId}:profile`,
-	audit: "mem:audit",
-	actions: "mem:actions",
-	actionEdges: "mem:action-edges",
-	leases: "mem:leases",
-	routines: "mem:routines",
-	routineRuns: "mem:routine-runs",
-	signals: "mem:signals",
-	checkpoints: "mem:checkpoints",
-	mesh: "mem:mesh",
-	sketches: "mem:sketches",
-	facets: "mem:facets",
-	sentinels: "mem:sentinels",
-	crystals: "mem:crystals"
-};
-
-//#endregion
+import { n as generateId, t as KV } from "./schema-Dttua2Zo.mjs";
+import "node:fs";
+import "node:path";
+import { randomUUID } from "node:crypto";
+import "node:os";
 //#region src/state/keyed-mutex.ts
 const locks = /* @__PURE__ */ new Map();
 function withKeyedLock(key, fn) {
@@ -46,7 +14,65 @@ function withKeyedLock(key, fn) {
 	});
 	return next;
 }
-
+Object.freeze({
+	id: randomUUID(),
+	startedAt: (/* @__PURE__ */ new Date()).toISOString(),
+	pid: process.pid
+});
+process.env["AGENTMEMORY_VERBOSE"] === "1" || process.env["AGENTMEMORY_VERBOSE"];
+//#endregion
+//#region src/functions/audit.ts
+let auditPersistence = createAuditPersistenceHealth();
+function createAuditPersistenceHealth() {
+	return {
+		status: "idle",
+		attempts: 0,
+		succeeded: 0,
+		failed: 0,
+		pending: 0,
+		recovered: 0,
+		unresolvedFailures: 0
+	};
+}
+function auditErrorCode(error) {
+	const code = error?.code;
+	if (typeof code === "string" && code.trim()) return code.trim().slice(0, 96);
+	const message = error instanceof Error ? error.message : String(error);
+	return /timeout|timed out|invocation stopped/i.test(message) ? "TIMEOUT" : "AUDIT_PERSISTENCE_FAILED";
+}
+function createAuditEntry(operation, functionId, targetIds, details = {}, qualityScore, userId) {
+	return {
+		id: generateId("aud"),
+		timestamp: (/* @__PURE__ */ new Date()).toISOString(),
+		operation,
+		userId,
+		functionId,
+		targetIds,
+		details,
+		qualityScore
+	};
+}
+async function writeAuditEntry(kv, entry) {
+	auditPersistence.attempts += 1;
+	auditPersistence.lastAttemptAt = (/* @__PURE__ */ new Date()).toISOString();
+	try {
+		await kv.set(KV.audit, entry.id, entry);
+		auditPersistence.succeeded += 1;
+		auditPersistence.status = auditPersistence.pending > 0 ? "recovering" : "ready";
+		auditPersistence.lastSuccessAt = (/* @__PURE__ */ new Date()).toISOString();
+		if (auditPersistence.pending === 0) auditPersistence.lastErrorCode = void 0;
+		return entry;
+	} catch (error) {
+		auditPersistence.failed += 1;
+		auditPersistence.status = "failed";
+		auditPersistence.lastFailureAt = (/* @__PURE__ */ new Date()).toISOString();
+		auditPersistence.lastErrorCode = auditErrorCode(error);
+		throw error;
+	}
+}
+async function recordAudit(kv, operation, functionId, targetIds, details = {}, qualityScore, userId) {
+	return writeAuditEntry(kv, createAuditEntry(operation, functionId, targetIds, details, qualityScore, userId));
+}
 //#endregion
 //#region src/functions/diagnostics.ts
 const ALL_CATEGORIES = [
@@ -57,6 +83,12 @@ const ALL_CATEGORIES = [
 	"signals",
 	"sessions",
 	"memories",
+	"lessons",
+	"summaries",
+	"semantic",
+	"procedural",
+	"crystals",
+	"insights",
 	"mesh"
 ];
 const TWENTY_FOUR_HOURS_MS = 1440 * 60 * 1e3;
@@ -235,15 +267,18 @@ function registerDiagnosticsFunction(sdk, kv) {
 		if (categories.includes("sessions")) {
 			const sessions = await kv.list(KV.sessions);
 			let sessionIssues = 0;
-			for (const session of sessions) if (session.status === "active" && now - new Date(session.startedAt).getTime() > TWENTY_FOUR_HOURS_MS) {
-				checks.push({
-					name: `abandoned-session:${session.id}`,
-					category: "sessions",
-					status: "warn",
-					message: `Session ${session.id} has been active for over 24 hours`,
-					fixable: false
-				});
-				sessionIssues++;
+			for (const session of sessions) {
+				const touchedAt = new Date(session.updatedAt ?? session.resumedAt ?? session.startedAt).getTime();
+				if (session.status === "active" && Number.isFinite(touchedAt) && now - touchedAt > TWENTY_FOUR_HOURS_MS) {
+					checks.push({
+						name: `abandoned-session:${session.id}`,
+						category: "sessions",
+						status: "warn",
+						message: `Session ${session.id} has had no activity for over 24 hours`,
+						fixable: false
+					});
+					sessionIssues++;
+				}
 			}
 			if (sessionIssues === 0) checks.push({
 				name: "sessions-ok",
@@ -281,11 +316,161 @@ function registerDiagnosticsFunction(sdk, kv) {
 				});
 				memoryIssues++;
 			}
+			const latestMemories = memories.filter((m) => m.isLatest);
+			const unscopedCount = latestMemories.filter((m) => !m.project).length;
+			if (unscopedCount === 0) checks.push({
+				name: "memory-project-coverage",
+				category: "memories",
+				status: "pass",
+				message: `All ${latestMemories.length} latest memories have a project scope`,
+				fixable: false
+			});
+			else if (unscopedCount <= 10) checks.push({
+				name: "memory-project-coverage",
+				category: "memories",
+				status: "warn",
+				message: `${unscopedCount} of ${latestMemories.length} latest memories have no project scope — run POST /agentmemory/migrate {"step":"infer-memory-projects"} to backfill`,
+				fixable: true
+			});
+			else checks.push({
+				name: "memory-project-coverage",
+				category: "memories",
+				status: "fail",
+				message: `${unscopedCount} of ${latestMemories.length} latest memories have no project scope — run POST /agentmemory/migrate {"step":"infer-memory-projects"} to backfill`,
+				fixable: true
+			});
 			if (memoryIssues === 0) checks.push({
 				name: "memories-ok",
 				category: "memories",
 				status: "pass",
-				message: `All ${memories.length} memories are consistent`,
+				message: `All ${memories.length} memories are structurally consistent`,
+				fixable: false
+			});
+		}
+		if (categories.includes("lessons")) {
+			const lessons = await kv.list(KV.lessons);
+			const live = lessons.filter((l) => !l.deleted);
+			let lessonIssues = 0;
+			for (const l of live) if (!Number.isFinite(l.confidence) || l.confidence < 0 || l.confidence > 1) {
+				checks.push({
+					name: `lesson-bad-confidence:${l.id}`,
+					category: "lessons",
+					status: "warn",
+					message: `Lesson ${l.id} has confidence ${l.confidence} (expected finite number in 0..1)`,
+					fixable: false
+				});
+				lessonIssues++;
+			}
+			if (lessonIssues === 0) checks.push({
+				name: "lessons-ok",
+				category: "lessons",
+				status: "pass",
+				message: `All ${live.length} lessons are healthy (${lessons.length - live.length} tombstoned)`,
+				fixable: false
+			});
+		}
+		if (categories.includes("summaries")) {
+			const summaries = await kv.list(KV.summaries);
+			let summaryIssues = 0;
+			for (const s of summaries) if (typeof s.title !== "string" || s.title.trim().length === 0) {
+				checks.push({
+					name: `summary-missing-title:${s.sessionId}`,
+					category: "summaries",
+					status: "warn",
+					message: `Summary for session ${s.sessionId} has no title`,
+					fixable: false
+				});
+				summaryIssues++;
+			}
+			if (summaryIssues === 0) checks.push({
+				name: "summaries-ok",
+				category: "summaries",
+				status: "pass",
+				message: `All ${summaries.length} session summaries are consistent`,
+				fixable: false
+			});
+		}
+		if (categories.includes("semantic")) {
+			const semantic = await kv.list(KV.semantic);
+			let semanticIssues = 0;
+			for (const s of semantic) if (!Number.isFinite(s.confidence) || s.confidence < 0 || s.confidence > 1) {
+				checks.push({
+					name: `semantic-bad-confidence:${s.id}`,
+					category: "semantic",
+					status: "warn",
+					message: `Semantic fact ${s.id} has confidence ${s.confidence} (expected finite number in 0..1)`,
+					fixable: false
+				});
+				semanticIssues++;
+			}
+			if (semanticIssues === 0) checks.push({
+				name: "semantic-ok",
+				category: "semantic",
+				status: "pass",
+				message: `All ${semantic.length} semantic memories are consistent`,
+				fixable: false
+			});
+		}
+		if (categories.includes("procedural")) {
+			const procedural = await kv.list(KV.procedural);
+			let proceduralIssues = 0;
+			for (const p of procedural) if (!Array.isArray(p.steps) || p.steps.length === 0) {
+				checks.push({
+					name: `procedural-empty-steps:${p.id}`,
+					category: "procedural",
+					status: "warn",
+					message: `Procedural memory "${p.name}" (${p.id}) has no steps`,
+					fixable: false
+				});
+				proceduralIssues++;
+			}
+			if (proceduralIssues === 0) checks.push({
+				name: "procedural-ok",
+				category: "procedural",
+				status: "pass",
+				message: `All ${procedural.length} procedural memories are consistent`,
+				fixable: false
+			});
+		}
+		if (categories.includes("crystals")) {
+			const crystals = await kv.list(KV.crystals);
+			let crystalIssues = 0;
+			for (const c of crystals) if (typeof c.narrative !== "string" || c.narrative.trim().length === 0) {
+				checks.push({
+					name: `crystal-empty-narrative:${c.id}`,
+					category: "crystals",
+					status: "warn",
+					message: `Crystal ${c.id} has empty narrative`,
+					fixable: false
+				});
+				crystalIssues++;
+			}
+			if (crystalIssues === 0) checks.push({
+				name: "crystals-ok",
+				category: "crystals",
+				status: "pass",
+				message: `All ${crystals.length} crystals are consistent`,
+				fixable: false
+			});
+		}
+		if (categories.includes("insights")) {
+			const insights = await kv.list(KV.insights);
+			let insightIssues = 0;
+			for (const i of insights) if (!Number.isFinite(i.confidence) || i.confidence < 0 || i.confidence > 1) {
+				checks.push({
+					name: `insight-bad-confidence:${i.id}`,
+					category: "insights",
+					status: "warn",
+					message: `Insight ${i.id} has confidence ${i.confidence} (expected finite number in 0..1)`,
+					fixable: false
+				});
+				insightIssues++;
+			}
+			if (insightIssues === 0) checks.push({
+				name: "insights-ok",
+				category: "insights",
+				status: "pass",
+				message: `All ${insights.length} insights are consistent`,
 				fixable: false
 			});
 		}
@@ -370,6 +555,11 @@ function registerDiagnosticsFunction(sdk, kv) {
 								fresh.status = "pending";
 								fresh.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
 								await kv.set(KV.actions, fresh.id, fresh);
+								await recordAudit(kv, "heal", "mem::heal", [fresh.id], {
+									reason: "blocked-deps-done",
+									previousStatus: "blocked",
+									newStatus: "pending"
+								});
 								return true;
 							})) {
 								details.push(`Unblocked action "${action.title}" (${action.id})`);
@@ -403,6 +593,11 @@ function registerDiagnosticsFunction(sdk, kv) {
 								fresh.status = "blocked";
 								fresh.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
 								await kv.set(KV.actions, fresh.id, fresh);
+								await recordAudit(kv, "heal", "mem::heal", [fresh.id], {
+									reason: "pending-unsatisfied-deps",
+									previousStatus: "pending",
+									newStatus: "blocked"
+								});
 								return true;
 							})) {
 								details.push(`Blocked action "${action.title}" (${action.id})`);
@@ -429,12 +624,22 @@ function registerDiagnosticsFunction(sdk, kv) {
 						if (!fresh || fresh.status !== "active" || new Date(fresh.expiresAt).getTime() > Date.now()) return false;
 						fresh.status = "expired";
 						await kv.set(KV.leases, fresh.id, fresh);
+						await recordAudit(kv, "heal", "mem::heal", [fresh.id], {
+							entityType: "lease",
+							reason: "expired-lease",
+							newStatus: "expired"
+						});
 						const action = await kv.get(KV.actions, fresh.actionId);
 						if (action && action.status === "active" && action.assignedTo === fresh.agentId) {
 							action.status = "pending";
 							action.assignedTo = void 0;
 							action.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
 							await kv.set(KV.actions, action.id, action);
+							await recordAudit(kv, "heal", "mem::heal", [action.id], {
+								entityType: "action",
+								reason: "release-expired-lease",
+								newStatus: "pending"
+							});
 						}
 						return true;
 					})) {
@@ -450,6 +655,11 @@ function registerDiagnosticsFunction(sdk, kv) {
 						continue;
 					}
 					await kv.delete(KV.leases, lease.id);
+					await recordAudit(kv, "heal", "mem::heal", [lease.id], {
+						entityType: "lease",
+						reason: "orphaned-lease",
+						action: "delete"
+					});
 					details.push(`Deleted orphaned lease ${lease.id}`);
 					fixed++;
 				}
@@ -469,6 +679,11 @@ function registerDiagnosticsFunction(sdk, kv) {
 					if (!fresh.expiresAt || new Date(fresh.expiresAt).getTime() > Date.now()) return false;
 					fresh.status = "expired";
 					await kv.set(KV.sentinels, fresh.id, fresh);
+					await recordAudit(kv, "heal", "mem::heal", [fresh.id], {
+						entityType: "sentinel",
+						reason: "expired-sentinel",
+						newStatus: "expired"
+					});
 					return true;
 				})) {
 					details.push(`Expired sentinel "${sentinel.name}" (${sentinel.id})`);
@@ -489,11 +704,30 @@ function registerDiagnosticsFunction(sdk, kv) {
 					if (!fresh || fresh.status !== "active" || new Date(fresh.expiresAt).getTime() > Date.now()) return false;
 					const allEdges = await kv.list(KV.actionEdges);
 					const actionIdSet = new Set(fresh.actionIds);
-					for (const edge of allEdges) if (actionIdSet.has(edge.sourceActionId) || actionIdSet.has(edge.targetActionId)) await kv.delete(KV.actionEdges, edge.id);
-					for (const actionId of fresh.actionIds) await kv.delete(KV.actions, actionId);
+					for (const edge of allEdges) if (actionIdSet.has(edge.sourceActionId) || actionIdSet.has(edge.targetActionId)) {
+						await kv.delete(KV.actionEdges, edge.id);
+						await recordAudit(kv, "heal", "mem::heal", [edge.id], {
+							entityType: "actionEdge",
+							reason: "sketch-gc-discard",
+							action: "delete"
+						});
+					}
+					for (const actionId of fresh.actionIds) {
+						await kv.delete(KV.actions, actionId);
+						await recordAudit(kv, "heal", "mem::heal", [actionId], {
+							entityType: "action",
+							reason: "sketch-gc-discard",
+							action: "delete"
+						});
+					}
 					fresh.status = "discarded";
 					fresh.discardedAt = (/* @__PURE__ */ new Date()).toISOString();
 					await kv.set(KV.sketches, fresh.id, fresh);
+					await recordAudit(kv, "heal", "mem::heal", [fresh.id], {
+						entityType: "sketch",
+						reason: "expired-sketch",
+						newStatus: "discarded"
+					});
 					return true;
 				})) {
 					details.push(`Discarded expired sketch "${sketch.title}" (${sketch.id})`);
@@ -510,6 +744,11 @@ function registerDiagnosticsFunction(sdk, kv) {
 					continue;
 				}
 				await kv.delete(KV.signals, signal.id);
+				await recordAudit(kv, "heal", "mem::heal", [signal.id], {
+					entityType: "signal",
+					reason: "expired-signal",
+					action: "delete"
+				});
 				details.push(`Deleted expired signal ${signal.id}`);
 				fixed++;
 			}
@@ -530,6 +769,11 @@ function registerDiagnosticsFunction(sdk, kv) {
 					fresh.isLatest = false;
 					fresh.updatedAt = (/* @__PURE__ */ new Date()).toISOString();
 					await kv.set(KV.memories, fresh.id, fresh);
+					await recordAudit(kv, "heal", "mem::heal", [fresh.id], {
+						entityType: "memory",
+						reason: "superseded-memory-mark-non-latest",
+						action: "update"
+					});
 					return true;
 				})) {
 					details.push(`Set isLatest=false on memory "${memory.title}" (${memory.id})`);
@@ -545,7 +789,5 @@ function registerDiagnosticsFunction(sdk, kv) {
 		};
 	});
 }
-
 //#endregion
 export { registerDiagnosticsFunction };
-//# sourceMappingURL=diagnostics.mjs.map

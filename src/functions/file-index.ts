@@ -5,6 +5,7 @@ import { StateKV } from "../state/kv.js";
 import { recordAudit } from "./audit.js";
 import { recordAccessBatch } from "./access-tracker.js";
 import { logger } from "../logger.js";
+import { requireProjectReadScope } from "../project-scope.js";
 
 interface FileHistory {
   file: string;
@@ -19,15 +20,36 @@ interface FileHistory {
   }>;
 }
 
+function failedFileOutcome(error: unknown) {
+  return {
+    context: "",
+    sourceIds: [] as string[],
+    outcome: {
+      source: "file_history" as const,
+      status: "failed" as const,
+      itemCount: 0,
+      error: error instanceof Error ? error.message : String(error),
+    },
+  };
+}
+
 export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::file-context", 
     async (
-      data: { sessionId?: string; files?: string[]; project?: string } | undefined,
+      data:
+        | {
+            sessionId?: string;
+            files?: string[];
+            project?: string;
+            scope?: "project" | "global";
+          }
+        | undefined,
     ) => {
       const sessionId =
         data && typeof data.sessionId === "string" ? data.sessionId.trim() : "";
+      const projectScope = requireProjectReadScope(data, "mem::file-context");
       const normalizedProject =
-        typeof data?.project === "string" ? data.project.trim() : undefined;
+        projectScope.kind === "project" ? projectScope.project : undefined;
       const files = Array.isArray(data?.files)
         ? data!.files
             .map((file) => (typeof file === "string" ? file.trim() : ""))
@@ -40,15 +62,30 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
           hasProject: !!normalizedProject,
           fileCount: files.length,
         });
-        return { context: "", files: [] };
+        return {
+          context: "",
+          sourceIds: [],
+          files: [],
+          outcome: {
+            source: "file_history",
+            status: "unavailable",
+            itemCount: 0,
+            error: "no files requested",
+          },
+        };
       }
       const results: FileHistory[] = [];
 
-      const sessions = await kv.list<Session>(KV.sessions);
+      let sessions: Session[];
+      try {
+        sessions = await kv.list<Session>(KV.sessions);
+      } catch (error) {
+        return failedFileOutcome(error);
+      }
       let otherSessions = sessionId
         ? sessions.filter((s) => s.id !== sessionId)
         : sessions;
-      if (normalizedProject) {
+      if (projectScope.kind === "project") {
         otherSessions = otherSessions.filter((s) => s.project === normalizedProject);
       }
       otherSessions = otherSessions
@@ -59,11 +96,18 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
         .slice(0, 15);
 
       const obsCache = new Map<string, CompressedObservation[]>();
-      for (const session of otherSessions) {
-        obsCache.set(
-          session.id,
-          await kv.list<CompressedObservation>(KV.observations(session.id)),
+      let observationLists: CompressedObservation[][];
+      try {
+        observationLists = await Promise.all(
+          otherSessions.map((session) =>
+            kv.list<CompressedObservation>(KV.observations(session.id)),
+          ),
         );
+      } catch (error) {
+        return failedFileOutcome(error);
+      }
+      for (let index = 0; index < otherSessions.length; index++) {
+        obsCache.set(otherSessions[index].id, observationLists[index]);
       }
 
       for (const file of files) {
@@ -105,7 +149,15 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
       }
 
       if (results.length === 0) {
-        return { context: "" };
+        return {
+          context: "",
+          sourceIds: [],
+          outcome: {
+            source: "file_history",
+            status: "unavailable",
+            itemCount: 0,
+          },
+        };
       }
 
       const lines: string[] = ["<agentmemory-file-context>"];
@@ -128,7 +180,15 @@ export function registerFileIndexFunction(sdk: ISdk, kv: StateKV): void {
         files: files.length,
         results: results.length,
       });
-      return { context };
+      return {
+        context,
+        sourceIds: accessedIds,
+        outcome: {
+          source: "file_history",
+          status: "ok",
+          itemCount: accessedIds.length,
+        },
+      };
     },
   );
 }

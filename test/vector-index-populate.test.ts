@@ -9,7 +9,14 @@ vi.mock("../src/state/keyed-mutex.js", () => ({
 }));
 
 import { registerRememberFunction } from "../src/functions/remember.js";
-import { setVectorIndex, setEmbeddingProvider, getVectorIndex } from "../src/functions/search.js";
+import {
+  getSearchIndex,
+  getSearchIndexRuntimeStatus,
+  getVectorIndex,
+  setEmbeddingProvider,
+  setIndexPersistence,
+  setVectorIndex,
+} from "../src/functions/search.js";
 import { VectorIndex } from "../src/state/vector-index.js";
 import type { EmbeddingProvider } from "../src/types.js";
 
@@ -43,7 +50,15 @@ function mockSdk() {
     trigger: async (input: { function_id: string; payload: unknown }) => {
       const fn = functions.get(input.function_id);
       if (!fn) throw new Error(`unknown fn ${input.function_id}`);
-      return fn(input.payload);
+      const payload =
+        input.function_id === "mem::remember" &&
+        input.payload &&
+        typeof input.payload === "object" &&
+        !("project" in input.payload) &&
+        !("scope" in input.payload)
+          ? { scope: "global", ...input.payload }
+          : input.payload;
+      return fn(payload);
     },
   };
 }
@@ -60,12 +75,14 @@ describe("vector index population on remember", () => {
   let vectorIndex: VectorIndex;
 
   beforeEach(() => {
+    getSearchIndex().clear();
     vectorIndex = new VectorIndex();
     setVectorIndex(vectorIndex);
     setEmbeddingProvider(mockEmbedder);
   });
 
   afterEach(() => {
+    setIndexPersistence(null);
     setVectorIndex(null);
     setEmbeddingProvider(null);
   });
@@ -117,5 +134,44 @@ describe("vector index population on remember", () => {
 
     expect((result as { success: boolean }).success).toBe(true);
     expect(getVectorIndex()).toBeNull();
+  });
+
+  it("persists a privacy-excluded project memory without remote embedding", async () => {
+    const remoteEmbed = vi.fn(async () => new Float32Array([0.1, 0.2, 0.3]));
+    setEmbeddingProvider({
+      name: "remote-test",
+      dimensions: 3,
+      embed: remoteEmbed,
+      embedBatch: async (texts: string[]) =>
+        texts.map(() => new Float32Array([0.1, 0.2, 0.3])),
+    });
+    const scheduleSave = vi.fn();
+    setIndexPersistence({
+      scheduleSave,
+      save: vi.fn(async () => undefined),
+    });
+    const sdk = mockSdk();
+    const kv = mockKV();
+    registerRememberFunction(sdk as never, kv as never);
+
+    const result = await sdk.trigger({
+      function_id: "mem::remember",
+      payload: {
+        content: "Project-only memory that must remain local",
+        type: "fact",
+        project: "demo",
+      },
+    });
+
+    expect((result as { success: boolean }).success).toBe(true);
+    expect(remoteEmbed).not.toHaveBeenCalled();
+    expect(getSearchIndex().size).toBe(1);
+    expect(vectorIndex.size).toBe(0);
+    expect(getSearchIndexRuntimeStatus()).toEqual({
+      status: "ready",
+      keywordEntries: 1,
+      vectorEntries: 0,
+    });
+    expect(scheduleSave).toHaveBeenCalledOnce();
   });
 });

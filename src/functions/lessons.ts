@@ -1,8 +1,13 @@
 import type { ISdk } from "iii-sdk";
 import type { StateKV } from "../state/kv.js";
-import { KV, fingerprintId } from "../state/schema.js";
+import {
+  KV,
+  fingerprintId,
+  jaccardSimilarity,
+} from "../state/schema.js";
 import type { Lesson } from "../types.js";
-import { recordAudit } from "./audit.js";
+import { recordAudit, safeAudit } from "./audit.js";
+import { requireProjectReadScope } from "../project-scope.js";
 
 function reinforceLesson(lesson: Lesson): void {
   const now = new Date().toISOString();
@@ -15,6 +20,16 @@ function reinforceLesson(lesson: Lesson): void {
   lesson.updatedAt = now;
 }
 
+function isSemanticDuplicate(a: string, b: string): boolean {
+  const tokens = (value: string) =>
+    value
+      .toLowerCase()
+      .split(/[^a-z0-9]+/)
+      .filter((token) => token.length > 2);
+  if (tokens(a).length < 3 || tokens(b).length < 3) return false;
+  return jaccardSimilarity(a.toLowerCase(), b.toLowerCase()) >= 0.82;
+}
+
 export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::lesson-save", 
     async (data: {
@@ -22,29 +37,68 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
       context?: string;
       confidence?: number;
       project?: string;
+      scope?: "project" | "global";
       tags?: string[];
       source?: "crystal" | "manual" | "consolidation";
       sourceIds?: string[];
+      idempotencyKey?: string;
     }) => {
       if (!data.content?.trim()) {
         return { success: false, error: "content is required" };
       }
+      const projectScope = requireProjectReadScope(data, "mem::lesson-save");
+      const project =
+        projectScope.kind === "project" ? projectScope.project : undefined;
 
-      const fp = fingerprintId("lsn", data.content.trim().toLowerCase());
-      const existing = await kv.get<Lesson>(KV.lessons, fp);
+      const fp = fingerprintId(
+        "lsn",
+        `${projectScope.kind}:${project ?? "global"}:${data.content.trim().toLowerCase()}`,
+      );
+      const exact = await kv.get<Lesson>(KV.lessons, fp);
+      const existing =
+        exact ??
+        (
+          await kv.list<Lesson>(KV.lessons)
+        ).find(
+          (lesson) =>
+            !lesson.deleted &&
+            lesson.project === project &&
+            isSemanticDuplicate(lesson.content, data.content.trim()),
+        );
+
+      const idempotencyKey = data.idempotencyKey?.trim().slice(0, 256);
 
       if (existing && !existing.deleted) {
+        if (
+          idempotencyKey &&
+          existing.appliedIdempotencyKeys?.includes(idempotencyKey)
+        ) {
+          return {
+            success: true,
+            action: "idempotent",
+            lesson: existing,
+          };
+        }
         reinforceLesson(existing);
         if (data.context && !existing.context) {
           existing.context = data.context;
         }
+        existing.sourceIds = [
+          ...new Set([...existing.sourceIds, ...(data.sourceIds ?? [])]),
+        ];
+        if (idempotencyKey) {
+          existing.appliedIdempotencyKeys = [
+            ...new Set([
+              ...(existing.appliedIdempotencyKeys ?? []),
+              idempotencyKey,
+            ]),
+          ];
+        }
         await kv.set(KV.lessons, existing.id, existing);
 
-        try {
-          await recordAudit(kv, "lesson_strengthen", "mem::lesson-save", [
-            existing.id,
-          ]);
-        } catch {}
+        await safeAudit(kv, "lesson_strengthen", "mem::lesson-save", [
+          existing.id,
+        ]);
 
         return {
           success: true,
@@ -69,7 +123,10 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
         reinforcements: 0,
         source: data.source || "manual",
         sourceIds: data.sourceIds || [],
-        project: data.project,
+        ...(idempotencyKey
+          ? { appliedIdempotencyKeys: [idempotencyKey] }
+          : {}),
+        project,
         tags: data.tags || [],
         createdAt: now,
         updatedAt: now,
@@ -78,9 +135,7 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
 
       await kv.set(KV.lessons, lesson.id, lesson);
 
-      try {
-        await recordAudit(kv, "lesson_save", "mem::lesson-save", [lesson.id]);
-      } catch {}
+      await safeAudit(kv, "lesson_save", "mem::lesson-save", [lesson.id]);
 
       return { success: true, action: "created", lesson };
     },
@@ -90,12 +145,17 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
     async (data: {
       query: string;
       project?: string;
+      scope?: "project" | "global";
       minConfidence?: number;
       limit?: number;
     }) => {
       if (!data.query?.trim()) {
         return { success: false, error: "query is required" };
       }
+      const projectScope = requireProjectReadScope(
+        data,
+        "mem::lesson-recall",
+      );
 
       const query = data.query.toLowerCase();
       const minConfidence = data.minConfidence ?? 0.1;
@@ -107,8 +167,8 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
         (l) => !l.deleted && l.confidence >= minConfidence,
       );
 
-      if (data.project) {
-        lessons = lessons.filter((l) => l.project === data.project);
+      if (projectScope.kind === "project") {
+        lessons = lessons.filter((l) => l.project === projectScope.project);
       }
 
       const scored = lessons
@@ -133,12 +193,13 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
 
       scored.sort((a, b) => b.score - a.score);
 
-      try {
-        await recordAudit(kv, "lesson_recall", "mem::lesson-recall", [], {
-          query: data.query,
-          resultCount: scored.length,
-        });
-      } catch {}
+      await safeAudit(kv, "lesson_recall", "mem::lesson-recall", [], {
+        query: data.query,
+        resultCount: scored.length,
+        project:
+          projectScope.kind === "project" ? projectScope.project : undefined,
+        scope: projectScope.kind,
+      });
 
       return {
         success: true,
@@ -153,10 +214,12 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction("mem::lesson-list", 
     async (data: {
       project?: string;
+      scope?: "project" | "global";
       source?: string;
       minConfidence?: number;
       limit?: number;
     }) => {
+      const projectScope = requireProjectReadScope(data, "mem::lesson-list");
       const limit = data.limit ?? 50;
       const minConfidence = data.minConfidence ?? 0;
       let lessons = await kv.list<Lesson>(KV.lessons);
@@ -165,8 +228,8 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
         (l) => !l.deleted && l.confidence >= minConfidence,
       );
 
-      if (data.project) {
-        lessons = lessons.filter((l) => l.project === data.project);
+      if (projectScope.kind === "project") {
+        lessons = lessons.filter((l) => l.project === projectScope.project);
       }
       if (data.source) {
         lessons = lessons.filter((l) => l.source === data.source);
@@ -179,13 +242,26 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
   );
 
   sdk.registerFunction("mem::lesson-strengthen", 
-    async (data: { lessonId: string }) => {
+    async (data: {
+      lessonId: string;
+      project?: string;
+      scope?: "project" | "global";
+    }) => {
       if (!data.lessonId) {
         return { success: false, error: "lessonId is required" };
       }
+      const projectScope = requireProjectReadScope(
+        data,
+        "mem::lesson-strengthen",
+      );
 
       const lesson = await kv.get<Lesson>(KV.lessons, data.lessonId);
-      if (!lesson || lesson.deleted) {
+      if (
+        !lesson ||
+        lesson.deleted ||
+        (projectScope.kind === "project" &&
+          lesson.project !== projectScope.project)
+      ) {
         return { success: false, error: "lesson not found" };
       }
 
@@ -193,11 +269,9 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
 
       await kv.set(KV.lessons, lesson.id, lesson);
 
-      try {
-        await recordAudit(kv, "lesson_strengthen", "mem::lesson-strengthen", [
-          lesson.id,
-        ]);
-      } catch {}
+      await safeAudit(kv, "lesson_strengthen", "mem::lesson-strengthen", [
+        lesson.id,
+      ]);
 
       return { success: true, lesson };
     },

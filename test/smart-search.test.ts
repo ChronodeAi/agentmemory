@@ -12,6 +12,8 @@ import type {
   Session,
 } from "../src/types.js";
 
+const PROJECT = "my-project";
+
 function mockKV() {
   const store = new Map<string, Map<string, unknown>>();
   return {
@@ -46,6 +48,15 @@ function mockSdk() {
       const payload = typeof idOrInput === "string" ? data : idOrInput.payload;
       const fn = functions.get(id);
       if (!fn) throw new Error(`No function: ${id}`);
+      if (
+        id === "mem::smart-search" &&
+        payload &&
+        typeof payload === "object" &&
+        !("project" in payload) &&
+        !("scope" in payload)
+      ) {
+        return fn({ scope: "global", ...payload });
+      }
       return fn(payload);
     },
   };
@@ -73,6 +84,7 @@ describe("Smart Search Function", () => {
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
   let searchResults: HybridSearchResult[];
+  let searchFn: ReturnType<typeof vi.fn>;
 
   beforeEach(async () => {
     sdk = mockSdk();
@@ -100,7 +112,7 @@ describe("Smart Search Function", () => {
 
     const session: Session = {
       id: "ses_1",
-      project: "my-project",
+      project: PROJECT,
       cwd: "/tmp",
       startedAt: "2026-02-01T00:00:00Z",
       status: "completed",
@@ -110,13 +122,14 @@ describe("Smart Search Function", () => {
     await kv.set("mem:obs:ses_1", "obs_1", obs1);
     await kv.set("mem:obs:ses_1", "obs_2", obs2);
 
-    const searchFn = async (_query: string, _limit: number) => searchResults;
+    searchFn = vi.fn(async () => searchResults);
     registerSmartSearchFunction(sdk as never, kv as never, searchFn);
   });
 
   it("compact mode returns CompactSearchResult array", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       query: "auth",
+      project: PROJECT,
     })) as { mode: string; results: CompactSearchResult[] };
 
     expect(result.mode).toBe("compact");
@@ -127,6 +140,14 @@ describe("Smart Search Function", () => {
     expect(result.results[0]).toHaveProperty("score");
     expect(result.results[0]).toHaveProperty("timestamp");
     expect(result.results[0]).not.toHaveProperty("narrative");
+    expect(searchFn).toHaveBeenCalledWith(
+      "auth",
+      expect.any(Number),
+      expect.objectContaining({
+        project: PROJECT,
+        sourceProvenance: "smart_search_query",
+      }),
+    );
   });
 
   it("expand mode returns full observations for given IDs", async () => {
@@ -157,6 +178,43 @@ describe("Smart Search Function", () => {
     })) as { mode: string; results: CompactSearchResult[] };
 
     expect(result.results.length).toBeLessThanOrEqual(2);
+  });
+
+  it("accepts reciprocal-rank scores when retrieval has lexical evidence", async () => {
+    searchResults = [
+      {
+        observation: makeObs(),
+        bm25Score: 12,
+        vectorScore: 0,
+        combinedScore: 1 / 61,
+        sessionId: "ses_1",
+      },
+    ];
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: "auth",
+    })) as { results: CompactSearchResult[] };
+
+    expect(result.results).toHaveLength(1);
+    expect(result.results[0]?.obsId).toBe("obs_1");
+  });
+
+  it("omits vector-only results below the relevance floor", async () => {
+    searchResults = [
+      {
+        observation: makeObs(),
+        bm25Score: 0,
+        vectorScore: 0.1,
+        combinedScore: 1 / 61,
+        sessionId: "ses_1",
+      },
+    ];
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: "unrelated",
+    })) as { results: CompactSearchResult[] };
+
+    expect(result.results).toEqual([]);
   });
 
   it("expand returns empty for nonexistent observation IDs", async () => {

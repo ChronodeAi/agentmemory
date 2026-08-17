@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, existsSync } from "node:fs";
+import { spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
+import {
+  cpSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const repoRoot = resolve(__dirname, "..");
@@ -28,6 +38,61 @@ describe("Plugin hook manifests", () => {
       for (const command of commands) {
         expect(command).toMatch(/^node "\$\{CLAUDE_PLUGIN_ROOT\}\/scripts\/[^\s"]+\.mjs"$/);
       }
+    }
+  });
+
+  it("ships self-contained scripts without stale source-map sidecars", () => {
+    const scriptsDirectory = join(pluginRoot, "scripts");
+    const entries = readdirSync(scriptsDirectory);
+    expect(
+      entries.filter(
+        (entry) => entry.endsWith(".map") || entry.endsWith(".d.mts"),
+      ),
+    ).toEqual([]);
+    for (const entry of entries.filter((name) => name.endsWith(".mjs"))) {
+      expect(readFileSync(join(scriptsDirectory, entry), "utf8")).not.toContain(
+        "sourceMappingURL",
+      );
+    }
+  });
+
+  it("executes every hook from an isolated published plugin tree", () => {
+    const isolatedRoot = mkdtempSync(
+      join(tmpdir(), "agentmemory-hook-publish-tree-"),
+    );
+    const isolatedPlugin = join(isolatedRoot, "plugin");
+    const home = join(isolatedRoot, "home");
+    cpSync(pluginRoot, isolatedPlugin, { recursive: true });
+    const { NODE_PATH: _nodePath, ...cleanEnv } = process.env;
+    const commands = ["hooks.json", "hooks.codex.json"].flatMap((manifest) =>
+      hookCommands(join(isolatedPlugin, "hooks", manifest)),
+    );
+    const scripts = new Set(
+      commands.map((command) => {
+        const match = command.match(/\/scripts\/([^\"]+\.mjs)\"$/);
+        expect(match, command).not.toBeNull();
+        return match![1];
+      }),
+    );
+
+    try {
+      for (const script of scripts) {
+        const result = spawnSync(
+          process.execPath,
+          [join(isolatedPlugin, "scripts", script)],
+          {
+            cwd: isolatedPlugin,
+            env: { ...cleanEnv, HOME: home },
+            input: "not-json\n",
+            encoding: "utf8",
+            timeout: 5_000,
+          },
+        );
+        expect(result.error, `${script}: ${result.stderr}`).toBeUndefined();
+        expect(result.status, `${script}: ${result.stderr}`).toBe(0);
+      }
+    } finally {
+      rmSync(isolatedRoot, { recursive: true, force: true });
     }
   });
 });
@@ -81,6 +146,11 @@ describe("Codex plugin manifest (developers.openai.com/codex/plugins)", () => {
       >;
     }>(join(pluginRoot, ".mcp.json"));
 
+    expect(mcp.mcpServers.agentmemory?.command).toBe("node");
+    expect(mcp.mcpServers.agentmemory?.args).toEqual([
+      "${CLAUDE_PLUGIN_ROOT}/scripts/standalone.mjs",
+    ]);
+
     // env interpolation must include defaults so Claude Code (and
     // any other MCP host that fails parse on unset ${VAR}) doesn't drop
     // the server silently when the user hasn't exported the var.
@@ -92,7 +162,101 @@ describe("Codex plugin manifest (developers.openai.com/codex/plugins)", () => {
     );
   });
 
-  it("hooks.codex.json contains only events Codex supports (no Subagent / SessionEnd / Notification / TaskCompleted / PostToolUseFailure)", () => {
+  it("launches the bundled MCP server and completes initialize", async () => {
+    const isolatedRoot = mkdtempSync(
+      join(tmpdir(), "agentmemory-plugin-publish-tree-"),
+    );
+    const isolatedPlugin = join(isolatedRoot, "plugin");
+    const home = join(isolatedRoot, "home");
+    cpSync(pluginRoot, isolatedPlugin, { recursive: true });
+    const { NODE_PATH: _nodePath, ...cleanEnv } = process.env;
+    const child = spawn(
+      process.execPath,
+      [join(isolatedPlugin, "scripts/standalone.mjs")],
+      {
+        env: {
+          ...cleanEnv,
+          HOME: home,
+          AGENTMEMORY_URL: "http://127.0.0.1:9",
+          AGENTMEMORY_SECRET: "",
+        },
+        cwd: isolatedPlugin,
+        stdio: ["pipe", "pipe", "pipe"],
+      },
+    );
+    let stderr = "";
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      stderr += chunk;
+    });
+
+    try {
+      const response = await new Promise<Record<string, unknown>>(
+        (resolveResponse, rejectResponse) => {
+          const timer = setTimeout(() => {
+            rejectResponse(
+              new Error(`bundled MCP initialize timed out: ${stderr.slice(-500)}`),
+            );
+          }, 5_000);
+          let stdout = "";
+          child.stdout.setEncoding("utf8");
+          child.stdout.on("data", (chunk: string) => {
+            stdout += chunk;
+            const newline = stdout.indexOf("\n");
+            if (newline < 0) return;
+            clearTimeout(timer);
+            resolveResponse(
+              JSON.parse(stdout.slice(0, newline)) as Record<string, unknown>,
+            );
+          });
+          child.once("error", (error) => {
+            clearTimeout(timer);
+            rejectResponse(error);
+          });
+          child.once("exit", (code) => {
+            if (code === null || code === 0) return;
+            clearTimeout(timer);
+            rejectResponse(
+              new Error(`bundled MCP exited ${code}: ${stderr.slice(-500)}`),
+            );
+          });
+          child.stdin.write(
+            `${JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              method: "initialize",
+              params: {
+                protocolVersion: "2025-03-26",
+                capabilities: {},
+                clientInfo: { name: "agentmemory-test", version: "1.0.0" },
+              },
+            })}\n`,
+          );
+        },
+      );
+      const packageVersion = readJson<{ version: string }>(
+        join(repoRoot, "package.json"),
+      ).version;
+      expect(response).toMatchObject({
+        jsonrpc: "2.0",
+        id: 1,
+        result: {
+          serverInfo: {
+            name: "agentmemory",
+            version: packageVersion,
+          },
+        },
+      });
+    } finally {
+      if (child.exitCode === null && child.signalCode === null) {
+        child.kill("SIGTERM");
+        await once(child, "exit");
+      }
+      rmSync(isolatedRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("hooks.codex.json covers the full Codex coding lifecycle", () => {
     const hooksPath = join(pluginRoot, "hooks/hooks.codex.json");
     const hooks = readJson<{ hooks: Record<string, unknown> }>(hooksPath);
     const events = Object.keys(hooks.hooks);
@@ -101,10 +265,13 @@ describe("Codex plugin manifest (developers.openai.com/codex/plugins)", () => {
       "UserPromptSubmit",
       "PreToolUse",
       "PostToolUse",
-      "PermissionRequest",
+      "PostToolUseFailure",
       "PreCompact",
-      "PostCompact",
+      "SubagentStart",
+      "SubagentStop",
+      "TaskCompleted",
       "Stop",
+      "SessionEnd",
     ]);
     for (const event of events) {
       expect(codexSupported.has(event), `unexpected event "${event}" in hooks.codex.json`).toBe(true);
@@ -113,8 +280,13 @@ describe("Codex plugin manifest (developers.openai.com/codex/plugins)", () => {
     expect(events).toContain("UserPromptSubmit");
     expect(events).toContain("PreToolUse");
     expect(events).toContain("PostToolUse");
+    expect(events).toContain("PostToolUseFailure");
     expect(events).toContain("PreCompact");
+    expect(events).toContain("SubagentStart");
+    expect(events).toContain("SubagentStop");
+    expect(events).toContain("TaskCompleted");
     expect(events).toContain("Stop");
+    expect(events).toContain("SessionEnd");
   });
 
   it("hook command scripts referenced in hooks.codex.json exist on disk", () => {

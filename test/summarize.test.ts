@@ -9,6 +9,7 @@ vi.mock("../src/state/schema.js", () => ({
     sessions: "sessions",
     summaries: "summaries",
     observations: (sessionId: string) => `obs:${sessionId}`,
+    factLedger: (sessionId: string) => `facts:${sessionId}`,
     audit: "audit",
   },
 }));
@@ -142,8 +143,10 @@ async function setupHandler(opts: {
     await kv.set(`obs:${opts.sessionId}`, o.id, o);
   }
   registerSummarizeFunction(sdk as any, kv as any, opts.provider);
-  const handler = sdk.functions.get("mem::summarize")!;
-  return { handler, kv };
+  const rawHandler = sdk.functions.get("mem::summarize")!;
+  const handler = (payload: Record<string, unknown>) =>
+    rawHandler({ ...payload, project: "test-project" });
+  return { handler, rawHandler, kv };
 }
 
 describe("mem::summarize chunking", () => {
@@ -156,6 +159,27 @@ describe("mem::summarize chunking", () => {
 
   afterEach(() => {
     process.env = { ...ORIGINAL_ENV };
+  });
+
+  it("rejects missing or mismatched project scope", async () => {
+    const provider = makeProvider([summaryXml({ title: "unused" })]);
+    const { rawHandler } = await setupHandler({
+      sessionId: "ses_scope",
+      obsCount: 1,
+      provider,
+    });
+
+    await expect(rawHandler({ sessionId: "ses_scope" })).resolves.toMatchObject({
+      success: false,
+      error: "project is required",
+    });
+    await expect(
+      rawHandler({ sessionId: "ses_scope", project: "other-project" }),
+    ).resolves.toMatchObject({
+      success: false,
+      error: "session_project_mismatch",
+    });
+    expect(provider.calls).toHaveLength(0);
   });
 
   it("small session takes the single-call path (no chunking, no reduce)", async () => {
@@ -180,6 +204,141 @@ describe("mem::summarize chunking", () => {
     expect(provider.calls[0].user).toContain("Session observations (10 total)");
     const stored: any = await kv.get("summaries", "ses_small");
     expect(stored?.title).toBe("Small session");
+  });
+
+  it("derives modified files from observed mutations instead of model output", async () => {
+    const provider = makeProvider([
+      summaryXml({
+        title: "Mutation truth",
+        files: ["src/read-only.ts", "src/hallucinated.ts"],
+      }),
+    ]);
+    const { handler, kv } = await setupHandler({
+      sessionId: "ses_mutation_truth",
+      obsCount: 3,
+      provider,
+    });
+    const read = makeObs(0, "ses_mutation_truth");
+    read.files = ["src/read-only.ts"];
+    const edit = makeObs(1, "ses_mutation_truth");
+    edit.files = ["src/edited.ts"];
+    edit.provenance = {
+      project: "test-project",
+      worktreeId: `wt_${"1".repeat(32)}`,
+      baseHeadSha: "2".repeat(40),
+      dirty: true,
+      transitions: [
+        {
+          path: "src/edited.ts",
+          operation: "edit",
+          digest: "3".repeat(40),
+          digestKind: "git-blob",
+        },
+      ],
+    };
+    const deleted = makeObs(2, "ses_mutation_truth");
+    deleted.files = ["src/deleted.ts"];
+    deleted.provenance = {
+      ...edit.provenance,
+      transitions: [
+        {
+          path: "src/deleted.ts",
+          operation: "delete",
+          digest: "4".repeat(40),
+          digestKind: "git-blob",
+        },
+      ],
+    };
+    await kv.set("obs:ses_mutation_truth", read.id, read);
+    await kv.set("obs:ses_mutation_truth", edit.id, edit);
+    await kv.set("obs:ses_mutation_truth", deleted.id, deleted);
+
+    const result: any = await handler({ sessionId: "ses_mutation_truth" });
+
+    expect(result.success).toBe(true);
+    expect(result.summary.filesModified).toEqual([
+      "src/edited.ts",
+      "src/deleted.ts",
+    ]);
+  });
+
+  it("uses the same mutation-only file evidence for local summaries", async () => {
+    const provider = makeProvider([summaryXml({ title: "unused" })]);
+    const { handler, kv } = await setupHandler({
+      sessionId: "ses_local_files",
+      obsCount: 2,
+      provider,
+    });
+    const session = await kv.get<Session>("sessions", "ses_local_files");
+    await kv.set("sessions", "ses_local_files", {
+      ...session!,
+      privacy: "strict",
+    });
+    const read = makeObs(0, "ses_local_files");
+    read.files = ["src/read-only.ts"];
+    const edit = makeObs(1, "ses_local_files");
+    edit.files = ["src/edited.ts"];
+    edit.provenance = {
+      project: "test-project",
+      worktreeId: `wt_${"5".repeat(32)}`,
+      baseHeadSha: "6".repeat(40),
+      dirty: true,
+      transitions: [
+        {
+          path: "src/edited.ts",
+          operation: "edit",
+          digest: "7".repeat(40),
+          digestKind: "git-blob",
+        },
+      ],
+    };
+    await kv.set("obs:ses_local_files", read.id, read);
+    await kv.set("obs:ses_local_files", edit.id, edit);
+
+    const result: any = await handler({ sessionId: "ses_local_files" });
+
+    expect(result.success).toBe(true);
+    expect(result.mode).toBe("local");
+    expect(result.summary.filesModified).toEqual(["src/edited.ts"]);
+    expect(provider.calls).toHaveLength(0);
+  });
+
+  it("retains archived mutation provenance in later summaries", async () => {
+    const provider = makeProvider([
+      summaryXml({ title: "Archived mutation", files: [] }),
+    ]);
+    const { handler, kv } = await setupHandler({
+      sessionId: "ses_archived_mutation",
+      obsCount: 1,
+      provider,
+    });
+    await kv.set("facts:ses_archived_mutation", "obs_archived", {
+      observationId: "obs_archived",
+      sessionId: "ses_archived_mutation",
+      timestamp: "2026-08-12T00:00:00.000Z",
+      facts: [],
+      files: ["src/archived.ts"],
+      provenance: {
+        project: "test-project",
+        worktreeId: `wt_${"8".repeat(32)}`,
+        baseHeadSha: "9".repeat(40),
+        dirty: true,
+        transitions: [
+          {
+            path: "src/archived.ts",
+            operation: "edit",
+            digest: "a".repeat(40),
+            digestKind: "git-blob",
+          },
+        ],
+      },
+      compactedAt: "2026-08-12T00:01:00.000Z",
+    });
+
+    const result: any = await handler({ sessionId: "ses_archived_mutation" });
+
+    expect(result.success).toBe(true);
+    expect(result.summary.filesModified).toEqual(["src/archived.ts"]);
   });
 
   it("large session map-reduces: N chunk calls + 1 reduce call", async () => {

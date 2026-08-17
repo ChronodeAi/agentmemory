@@ -1,16 +1,11 @@
 #!/usr/bin/env node
+import { t as resolveProject } from "./_project-BNYA1N7W.mjs";
+import { n as reportHookDeliveryFailure, t as deliverProjectRequest } from "./_delivery--9SDKTY7.mjs";
 //#region src/hooks/stop.ts
 function isSdkChildContext(payload) {
 	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
 	if (!payload || typeof payload !== "object") return false;
 	return payload.entrypoint === "sdk-ts";
-}
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
-function authHeaders() {
-	const h = { "Content-Type": "application/json" };
-	if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-	return h;
 }
 async function main() {
 	let input = "";
@@ -24,22 +19,21 @@ async function main() {
 	if (!data || typeof data !== "object") return;
 	if (isSdkChildContext(data)) return;
 	const sessionId = data.session_id || data.sessionId || "unknown";
-	fetch(`${REST_URL}/agentmemory/summarize`, {
-		method: "POST",
-		headers: authHeaders(),
-		body: JSON.stringify({ sessionId }),
-		signal: AbortSignal.timeout(12e4)
-	}).catch(() => {});
-	fetch(`${REST_URL}/agentmemory/session/end`, {
-		method: "POST",
-		headers: authHeaders(),
-		body: JSON.stringify({ sessionId }),
-		signal: AbortSignal.timeout(5e3)
-	}).catch(() => {});
-	setTimeout(() => process.exit(0), 1500).unref();
+	const project = resolveProject(data.cwd);
+	try {
+		await deliverProjectRequest("/agentmemory/session/end", project, {
+			sessionId,
+			project
+		}, {
+			attempts: 2,
+			timeoutMs: 1500
+		});
+	} catch (error) {
+		reportHookDeliveryFailure("stop-time session closure", error);
+	}
 }
-main().catch(() => process.exit(0));
+main().catch((error) => {
+	reportHookDeliveryFailure("stop hook", error);
+});
 //#endregion
 export {};
-
-//# sourceMappingURL=stop.mjs.map

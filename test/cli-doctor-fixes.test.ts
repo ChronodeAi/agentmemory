@@ -5,10 +5,11 @@
 // formatting. The full interactive prompt loop lives in src/cli.ts and is
 // driven by clack — exercising it would require a TTY and is out of scope.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   buildDiagnostics,
   DIAGNOSTIC_IDS,
+  diagnosticFixConfirmed,
   dryRunPlan,
   parseEnvFile,
   placeholderProviderKeys,
@@ -33,6 +34,11 @@ function stubEffects(overrides: Partial<DoctorEffects> = {}): DoctorEffects {
   return {
     envFileExists: () => true,
     readEnvFile: () => ({ ANTHROPIC_API_KEY: "sk-ant-real-key-value" }),
+    runtimeEnv: () => ({
+      ANTHROPIC_API_KEY: "sk-ant-real-key-value",
+      AGENTMEMORY_PROJECT_CAPABILITY_SECRET: "project-signing-secret",
+    }),
+    secretFileHasValue: () => false,
     pidfileExists: () => false,
     pidfilePidIsAlive: () => null,
     findIiiBinary: () => "/Users/test/.local/bin/iii",
@@ -50,9 +56,23 @@ function stubEffects(overrides: Partial<DoctorEffects> = {}): DoctorEffects {
 }
 
 describe("doctor v2 diagnostic catalog", () => {
+  it("counts a repair only after its recheck passes", () => {
+    expect(
+      diagnosticFixConfirmed({ ok: true }, { ok: true }),
+    ).toBe(true);
+    expect(
+      diagnosticFixConfirmed({ ok: true }, { ok: false }),
+    ).toBe(false);
+    expect(
+      diagnosticFixConfirmed({ ok: false }, { ok: true }),
+    ).toBe(false);
+  });
+
   it("exports a stable list of diagnostic ids", () => {
     expect(DIAGNOSTIC_IDS).toContain("env-missing");
     expect(DIAGNOSTIC_IDS).toContain("no-llm-provider-key");
+    expect(DIAGNOSTIC_IDS).toContain("project-capability-credentials");
+    expect(DIAGNOSTIC_IDS).toContain("context-delivery-credentials");
     expect(DIAGNOSTIC_IDS).toContain("engine-version-mismatch");
     expect(DIAGNOSTIC_IDS).toContain("viewer-unreachable");
     expect(DIAGNOSTIC_IDS).toContain("stale-pidfile");
@@ -112,6 +132,80 @@ describe("doctor v2 diagnostic catalog", () => {
     expect(status.ok).toBe(true);
   });
 
+  it("project capability credentials fail closed in strict mode", async () => {
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        runtimeEnv: () => ({ AGENTMEMORY_STRICT_CAPABILITY_MODE: "true" }),
+      }),
+    );
+    const check = diagnostics.find(
+      (diagnostic) => diagnostic.id === "project-capability-credentials",
+    )!;
+    await expect(check.check(stubCtx())).resolves.toMatchObject({
+      ok: false,
+      detail: "no project capability signing credential",
+    });
+  });
+
+  it("accepts project capability and context acknowledgement secret files", async () => {
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        runtimeEnv: () => ({
+          AGENTMEMORY_STRICT_CAPABILITY_MODE: "true",
+          AGENTMEMORY_INJECT_CONTEXT: "true",
+          AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE: "/tmp/project-secret",
+          AGENTMEMORY_CONTEXT_ACK_SECRET_FILE: "/tmp/context-secret",
+        }),
+        secretFileHasValue: (path) =>
+          path === "/tmp/project-secret" || path === "/tmp/context-secret",
+      }),
+    );
+    const projectCheck = diagnostics.find(
+      (diagnostic) => diagnostic.id === "project-capability-credentials",
+    )!;
+    const contextCheck = diagnostics.find(
+      (diagnostic) => diagnostic.id === "context-delivery-credentials",
+    )!;
+    await expect(projectCheck.check(stubCtx())).resolves.toMatchObject({
+      ok: true,
+    });
+    await expect(contextCheck.check(stubCtx())).resolves.toMatchObject({
+      ok: true,
+    });
+  });
+
+  it("requires acknowledgement credentials only when injection is enabled", async () => {
+    const disabled = buildDiagnostics(
+      stubEffects({
+        runtimeEnv: () => ({
+          AGENTMEMORY_PROJECT_CAPABILITY_SECRET: "project-secret",
+          AGENTMEMORY_INJECT_CONTEXT: "false",
+        }),
+      }),
+    ).find(
+      (diagnostic) => diagnostic.id === "context-delivery-credentials",
+    )!;
+    await expect(disabled.check(stubCtx())).resolves.toMatchObject({
+      ok: true,
+      detail: "context injection disabled",
+    });
+
+    const enabled = buildDiagnostics(
+      stubEffects({
+        runtimeEnv: () => ({
+          AGENTMEMORY_PROJECT_CAPABILITY_SECRET: "project-secret",
+          AGENTMEMORY_INJECT_CONTEXT: "true",
+        }),
+      }),
+    ).find(
+      (diagnostic) => diagnostic.id === "context-delivery-credentials",
+    )!;
+    await expect(enabled.check(stubCtx())).resolves.toMatchObject({
+      ok: false,
+      detail: "no context acknowledgement credential",
+    });
+  });
+
   it("engine-version-mismatch fails when iii reports the wrong version", async () => {
     const diagnostics = buildDiagnostics(
       stubEffects({ iiiBinaryVersion: () => "0.99.99" }),
@@ -128,6 +222,24 @@ describe("doctor v2 diagnostic catalog", () => {
     const check = diagnostics.find((d) => d.id === "engine-version-mismatch")!;
     const status = await check.check(stubCtx());
     expect(status.ok).toBe(true);
+  });
+
+  it("engine-version repair does not restart after a failed stop", async () => {
+    const runStart = vi.fn(async () => ({ ok: true, message: "started" }));
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        runStop: async () => ({ ok: false, message: "worker survived" }),
+        runStart,
+      }),
+    );
+    const diagnostic = diagnostics.find(
+      (entry) => entry.id === "engine-version-mismatch",
+    )!;
+    await expect(diagnostic.fix(stubCtx())).resolves.toEqual({
+      ok: false,
+      message: "worker survived",
+    });
+    expect(runStart).not.toHaveBeenCalled();
   });
 
   it("viewer-unreachable fails when viewer probe returns false", async () => {
@@ -173,13 +285,30 @@ describe("doctor v2 diagnostic catalog", () => {
     const diagnostics = buildDiagnostics(
       stubEffects({
         findIiiBinary: () => "/opt/homebrew/bin/iii",
-        localBinIiiPath: () => "/Users/test/.local/bin/iii",
+        localBinIiiPath: () => "/Users/test/.agentmemory/bin/iii",
+        iiiBinaryVersion: (path) =>
+          path === "/opt/homebrew/bin/iii" ? "0.13.0" : null,
       }),
     );
     const check = diagnostics.find((d) => d.id === "iii-on-path-not-local-bin")!;
     const status = await check.check(stubCtx());
     expect(status.ok).toBe(false);
     expect(check.manualOnly).toBe(true);
+  });
+
+  it("accepts a pinned private iii when PATH resolves another install", async () => {
+    const diagnostics = buildDiagnostics(
+      stubEffects({
+        findIiiBinary: () => "/opt/homebrew/bin/iii",
+        localBinIiiPath: () => "/Users/test/.agentmemory/bin/iii",
+        iiiBinaryVersion: (path) =>
+          path === "/Users/test/.agentmemory/bin/iii" ? "0.11.2" : "0.13.0",
+      }),
+    );
+    const check = diagnostics.find((d) => d.id === "iii-on-path-not-local-bin")!;
+    const status = await check.check(stubCtx());
+    expect(status.ok).toBe(true);
+    expect(status.detail).toContain("using private iii v0.11.2");
   });
 
   it("dryRunPlan lists each failing diagnostic with the fix preview", () => {

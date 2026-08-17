@@ -10,10 +10,10 @@ The user wants a recap. Time window args: $ARGUMENTS
 ## Quick start
 
 ```json
-memory_sessions { "limit": 30 }
+memory_sessions { "project": "github.com/example/repository", "limit": 30 }
 ```
 
-Then per surviving session: `memory_recall { "query": "<top concepts>", "limit": 3 }`.
+Then per surviving session: `memory_recall { "query": "<top concepts>", "project": "github.com/example/repository", "limit": 3 }`.
 
 Expected output:
 
@@ -33,11 +33,13 @@ a real answer, not a prompt to invent activity.
 
 1. Parse `$ARGUMENTS`: `today` = current local date; `this week` = last 7 days;
    `last <n>` or bare numeric = most recent N; empty = `last 10`.
-2. Call `memory_sessions`, filter to the current project (match `cwd` against the
-   working directory), apply the window, sort by `startedAt` descending.
+2. Resolve the active repository's canonical project ID and call
+   `memory_sessions` with that `project`. Apply the window and sort by
+   `startedAt` descending.
 3. Group survivors by local calendar date (YYYY-MM-DD).
 4. Per session list id (first 8), title or first prompt, observation count,
-   status. Indent 2-3 highlights (importance >= 7) from `memory_recall`.
+   status. Indent 2-3 highlights (importance >= 7) from `memory_recall`, using
+   the same `project`.
 5. End with "N sessions across M days, K observations."
 
 ## Anti-patterns

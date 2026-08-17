@@ -1,6 +1,7 @@
 import type { ISdk } from "iii-sdk";
 import type {
   CompressedObservation,
+  FactLedgerEntry,
   SessionSummary,
   MemoryProvider,
   Session,
@@ -35,6 +36,40 @@ const CHUNK_CONCURRENCY_DEFAULT = 6;
 // Bail on the merged summary if more than this fraction of chunks fail
 // to parse — a half-blind narrative is worse than a clean error.
 const MAX_SKIP_RATIO = 0.5;
+
+function observedModifiedFiles(
+  observations: Array<
+    Pick<CompressedObservation, "timestamp" | "provenance">
+  >,
+): string[] {
+  const files = new Set<string>();
+  const chronological = observations
+    .map((observation, index) => ({ observation, index }))
+    .sort(
+      (a, b) =>
+        a.observation.timestamp.localeCompare(b.observation.timestamp) ||
+        a.index - b.index,
+    );
+  for (const { observation } of chronological) {
+    for (const transition of observation.provenance?.transitions ?? []) {
+      const normalized = transition.path.trim();
+      if (normalized) files.add(normalized);
+    }
+  }
+  return Array.from(files).slice(0, 100);
+}
+
+function reconcileModifiedFiles(
+  summary: SessionSummary,
+  observations: Array<
+    Pick<CompressedObservation, "timestamp" | "provenance">
+  >,
+): SessionSummary {
+  return {
+    ...summary,
+    filesModified: observedModifiedFiles(observations),
+  };
+}
 
 function getChunkSize(): number {
   const raw = process.env.SUMMARIZE_CHUNK_SIZE;
@@ -72,7 +107,7 @@ async function summarizeChunkWithRetry(
         buildSummaryPrompt(chunk),
       );
       const parsed = parseSummaryXml(xml, sessionId, project, chunk.length);
-      if (parsed) return parsed;
+      if (parsed) return reconcileModifiedFiles(parsed, chunk);
       logger.warn("Summarize chunk parse failed", {
         sessionId,
         chunk: `${idx + 1}/${total}`,
@@ -233,12 +268,16 @@ export function registerSummarizeFunction(
   metricsStore?: MetricsStore,
 ): void {
   sdk.registerFunction("mem::summarize", 
-    async (data: { sessionId: string } | undefined) => {
+    async (data: { sessionId: string; project: string } | undefined) => {
       const startMs = Date.now();
       if (!data || typeof data.sessionId !== "string" || !data.sessionId.trim()) {
         return { success: false, error: "sessionId is required" };
       }
+      if (typeof data.project !== "string" || !data.project.trim()) {
+        return { success: false, error: "project is required" };
+      }
       const sessionId = data.sessionId.trim();
+      const project = data.project.trim();
 
       const session = await kv.get<Session>(KV.sessions, sessionId);
       if (!session) {
@@ -247,17 +286,74 @@ export function registerSummarizeFunction(
         });
         return { success: false, error: "session_not_found" };
       }
+      if (session.project !== project) {
+        logger.warn("Session project mismatch for summarize", {
+          sessionId,
+          requestedProject: project,
+        });
+        return { success: false, error: "session_project_mismatch" };
+      }
 
       const observations = await kv.list<CompressedObservation>(
         KV.observations(sessionId),
       );
       const compressed = observations.filter((o) => o.title);
+      const archived = await kv.list<FactLedgerEntry>(KV.factLedger(sessionId));
+      const mutationEvidence = [...archived, ...compressed];
 
       if (compressed.length === 0) {
         logger.info("No observations to summarize", {
           sessionId,
         });
         return { success: false, error: "no_observations" };
+      }
+
+      if (
+        session.privacy === "strict" ||
+        session.externalProcessing === false
+      ) {
+        const ranked = compressed
+          .slice()
+          .sort((a, b) => b.importance - a.importance)
+          .slice(0, 12);
+        const files = observedModifiedFiles(mutationEvidence);
+        const concepts = Array.from(
+          new Set(ranked.flatMap((observation) => observation.concepts ?? [])),
+        );
+        const summary: SessionSummary = {
+          sessionId,
+          project: session.project,
+          createdAt: new Date().toISOString(),
+          title:
+            session.firstPrompt?.slice(0, 120) ??
+            ranked[0]?.title ??
+            `Session ${sessionId.slice(0, 8)}`,
+          narrative: ranked
+            .map(
+              (observation) =>
+                `${observation.title}: ${observation.narrative}`,
+            )
+            .join("\n")
+            .slice(0, 8000),
+          keyDecisions: ranked
+            .filter((observation) => observation.type === "decision")
+            .map((observation) => observation.title)
+            .slice(0, 20),
+          filesModified: files,
+          concepts: concepts.slice(0, 100),
+          observationCount: compressed.length,
+        };
+        await kv.set(KV.summaries, sessionId, summary);
+        await safeAudit(kv, "compress", "mem::summarize", [sessionId], {
+          mode: "local",
+          observationCount: compressed.length,
+        });
+        return {
+          success: true,
+          summary,
+          qualityScore: 0,
+          mode: "local",
+        };
       }
 
       if (provider.name === "noop") {
@@ -303,12 +399,15 @@ export function registerSummarizeFunction(
             });
             continue;
           }
-          summary = parseSummaryXml(
+          const parsed = parseSummaryXml(
             response,
             sessionId,
             session.project,
             compressed.length,
           );
+          summary = parsed
+            ? reconcileModifiedFiles(parsed, mutationEvidence)
+            : null;
           if (summary) break;
           logger.warn("Failed to parse summary XML", { sessionId, attempt });
         }

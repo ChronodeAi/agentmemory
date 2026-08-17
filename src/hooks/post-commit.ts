@@ -1,7 +1,18 @@
 #!/usr/bin/env node
 
 import { execFile } from "node:child_process";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
+import {
+  credentialFreeWorktreeId,
+  parseCommitTransitions,
+} from "./_capture.js";
+import {
+  deliverProjectRequest,
+  reportHookDeliveryFailure,
+} from "./_delivery.js";
+import { resolveProject } from "./_project.js";
 
 const exec = promisify(execFile);
 
@@ -11,15 +22,7 @@ function isSdkChildContext(payload: unknown): boolean {
   return (payload as { entrypoint?: unknown }).entrypoint === "sdk-ts";
 }
 
-const REST_URL = process.env["AGENTMEMORY_URL"] || "http://localhost:3111";
-const SECRET = process.env["AGENTMEMORY_SECRET"] || "";
 const TIMEOUT_MS = 1500;
-
-function authHeaders(): Record<string, string> {
-  const h: Record<string, string> = { "Content-Type": "application/json" };
-  if (SECRET) h["Authorization"] = `Bearer ${SECRET}`;
-  return h;
-}
 
 async function git(args: string[], cwd: string): Promise<string | null> {
   try {
@@ -28,6 +31,65 @@ async function git(args: string[], cwd: string): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+export async function collectCommitLinkage(
+  cwd: string,
+  sha: string,
+  sessionId?: string,
+  project = resolveProject(cwd),
+) {
+  const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
+  const message = await git(["log", "-1", "--pretty=%B", sha], cwd);
+  const author = await git(["log", "-1", "--pretty=%an <%ae>", sha], cwd);
+  const authoredAt = await git(["log", "-1", "--pretty=%aI", sha], cwd);
+  const worktreeRoot = await git(["rev-parse", "--show-toplevel"], cwd);
+  const baseHeadSha = await git(["rev-parse", `${sha}^`], cwd);
+  const transitionStatus = await git(
+    ["diff-tree", "--root", "--no-commit-id", "--name-status", "-r", "-M", sha],
+    cwd,
+  );
+  const parsedTransitions = parseCommitTransitions(transitionStatus || "");
+  const fileTransitions = await Promise.all(
+    parsedTransitions.map(async (transition) => {
+      const blobPath =
+        transition.operation === "delete"
+          ? transition.previousPath || transition.path
+          : transition.path;
+      const blobRef =
+        transition.operation === "delete"
+          ? `${sha}^:${blobPath}`
+          : `${sha}:${blobPath}`;
+      const digest = await git(["rev-parse", blobRef], cwd);
+      return {
+        ...transition,
+        ...(digest ? { digest, digestKind: "git-blob" as const } : {}),
+      };
+    }),
+  );
+  const files =
+    fileTransitions.length > 0
+      ? fileTransitions.map((transition) => transition.path)
+      : undefined;
+
+  return {
+    sessionId,
+    project,
+    sha,
+    commitSha: sha,
+    baseHeadSha: baseHeadSha || undefined,
+    worktreeId: worktreeRoot
+      ? credentialFreeWorktreeId(project, worktreeRoot)
+      : undefined,
+    branch: branch || undefined,
+    repo: project,
+    message: message || undefined,
+    author: author || undefined,
+    authoredAt: authoredAt || undefined,
+    files,
+    fileTransitions:
+      fileTransitions.length > 0 ? fileTransitions : undefined,
+  };
 }
 
 async function main() {
@@ -48,52 +110,61 @@ async function main() {
   if (!data || typeof data !== "object") data = {};
   if (isSdkChildContext(data)) return;
 
+  const toolName =
+    typeof data.tool_name === "string"
+      ? data.tool_name
+      : typeof data.toolName === "string"
+        ? data.toolName
+        : "";
+  const rawToolInput = data.tool_input ?? data.toolArgs;
+  const toolInput =
+    typeof rawToolInput === "string"
+      ? rawToolInput
+      : rawToolInput && typeof rawToolInput === "object"
+        ? JSON.stringify(rawToolInput)
+        : "";
+  const directGitHook =
+    !input.trim() ||
+    process.env["AGENTMEMORY_GIT_HOOK"] === "1" ||
+    Boolean(process.env["AGENTMEMORY_COMMIT_SHA"]);
+  const successfulCommitTool =
+    /(?:bash|shell|exec|command)/i.test(toolName) &&
+    /(?:^|[;&|]\s*|\s)git(?:\s+-C\s+\S+)?\s+commit(?:\s|$)/i.test(toolInput) &&
+    data.error === undefined &&
+    data.errorMessage === undefined;
+  if (!directGitHook && !successfulCommitTool) return;
+
   const cwd =
     (data.cwd as string) ||
     process.env["AGENTMEMORY_CWD"] ||
     process.cwd();
   const sessionId =
-    (data.session_id as string) ||
+    ((data.session_id || data.sessionId) as string) ||
     process.env["AGENTMEMORY_SESSION_ID"] ||
     undefined;
+  const project = resolveProject(cwd);
 
   const sha =
     process.env["AGENTMEMORY_COMMIT_SHA"] ||
     (await git(["rev-parse", "HEAD"], cwd));
   if (!sha) return;
 
-  const branch = await git(["rev-parse", "--abbrev-ref", "HEAD"], cwd);
-  const repo = await git(["config", "--get", "remote.origin.url"], cwd);
-  const message = await git(["log", "-1", "--pretty=%B", sha], cwd);
-  const author = await git(["log", "-1", "--pretty=%an <%ae>", sha], cwd);
-  const authoredAt = await git(["log", "-1", "--pretty=%aI", sha], cwd);
-  const filesRaw = await git(
-    ["diff-tree", "--no-commit-id", "--name-only", "-r", sha],
-    cwd,
+  const body = await collectCommitLinkage(cwd, sha, sessionId, project);
+
+  await deliverProjectRequest(
+    "/agentmemory/session/commit",
+    project,
+    body,
+    { attempts: 2, timeoutMs: TIMEOUT_MS },
   );
-  const files = filesRaw ? filesRaw.split("\n").filter(Boolean) : undefined;
-
-  const body = {
-    sessionId,
-    sha,
-    branch: branch || undefined,
-    repo: repo || undefined,
-    message: message || undefined,
-    author: author || undefined,
-    authoredAt: authoredAt || undefined,
-    files,
-  };
-
-  try {
-    await fetch(`${REST_URL}/agentmemory/session/commit`, {
-      method: "POST",
-      headers: authHeaders(),
-      body: JSON.stringify(body),
-      signal: AbortSignal.timeout(TIMEOUT_MS),
-    });
-  } catch {
-    // best-effort
-  }
 }
 
-main().catch(() => process.exit(0));
+const invokedPath = process.argv[1]
+  ? pathToFileURL(resolve(process.argv[1])).href
+  : "";
+if (import.meta.url === invokedPath) {
+  main().catch((error) => {
+    reportHookDeliveryFailure("commit linkage", error);
+    process.exitCode = 1;
+  });
+}
