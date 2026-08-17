@@ -214,6 +214,8 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
   });
 
   it("proxies memory_governance_delete to the DELETE REST endpoint", async () => {
+    process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"] =
+      "governance-delete-test-secret";
     const calls: Array<{ url: string; method: string; body?: unknown }> = [];
     installFetch((url, init) => {
       const method = init?.method || "GET";
