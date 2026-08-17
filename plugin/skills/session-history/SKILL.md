@@ -9,7 +9,7 @@ The user wants an overview of recent sessions on this project.
 ## Quick start
 
 ```json
-memory_sessions { "limit": 20 }
+memory_sessions { "project": "github.com/example/repository", "limit": 20 }
 ```
 
 Expected output:
@@ -28,7 +28,8 @@ real answer, never a cue to invent past work.
 
 ## Workflow
 
-1. Call `memory_sessions` with `limit: 20` for a meaningful window.
+1. Resolve the active repository's canonical project ID. Call
+   `memory_sessions` with that `project` and `limit: 20`.
 2. Present in reverse chronological order: session id (first 8), project, start
    time, status.
 3. For sessions with observations, show the key highlights (type plus title).

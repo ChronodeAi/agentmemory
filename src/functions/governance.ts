@@ -113,7 +113,12 @@ function summarize(results: DeleteResult[]): {
 export function registerGovernanceFunction(sdk: ISdk, kv: StateKV): void {
   sdk.registerFunction(
     "mem::governance-delete",
-    async (data: { memoryIds: string[]; reason?: string }) => {
+    async (data: {
+      memoryIds: string[];
+      reason?: string;
+      project?: string;
+      scope?: "global";
+    }) => {
       if (!Array.isArray(data.memoryIds) || data.memoryIds.length === 0) {
         return { success: false, error: "memoryIds array is required" };
       }
@@ -121,11 +126,21 @@ export function registerGovernanceFunction(sdk: ISdk, kv: StateKV): void {
         const requestedIds = [...new Set(data.memoryIds)];
         const confirmed: Memory[] = [];
         const missingIds: string[] = [];
+        const outOfScopeIds: string[] = [];
         const lookupFailures: Array<{ id: string; error: string }> = [];
         for (const id of requestedIds) {
           try {
             const memory = await kv.get<Memory>(KV.memories, id);
-            if (memory) confirmed.push(memory);
+            if (
+              memory &&
+              (data.scope === "global" ||
+                !data.project ||
+                memory.project === data.project)
+            ) {
+              confirmed.push(memory);
+            } else if (memory) {
+              outOfScopeIds.push(id);
+            }
             else missingIds.push(id);
           } catch (error) {
             lookupFailures.push({ id, error: "lookup_failed" });
@@ -143,6 +158,7 @@ export function registerGovernanceFunction(sdk: ISdk, kv: StateKV): void {
           confirmedCandidates: confirmed.map((memory) => ({ id: memory.id })),
           candidateIds: confirmed.map((memory) => memory.id),
           missingIds,
+          outOfScopeIds,
           lookupFailedIds: lookupFailures.map((failure) => failure.id),
           operationId,
           phase: "intent",
@@ -160,12 +176,20 @@ export function registerGovernanceFunction(sdk: ISdk, kv: StateKV): void {
           );
         }
         const summary = summarize(results);
-        const failures = [...lookupFailures, ...summary.failures];
+        const failures = [
+          ...lookupFailures,
+          ...outOfScopeIds.map((id) => ({
+            id,
+            error: "project_scope_mismatch",
+          })),
+          ...summary.failures,
+        ];
         if (summary.deletedIds.length > 0) await flushIndexSave();
         await safeAudit(kv, "delete", "mem::governance-delete", summary.deletedIds, {
           reason: data.reason || "manual deletion",
           deleted: summary.deletedIds.length,
           missingIds,
+          outOfScopeIds,
           failedIds: [...new Set(failures.map((failure) => failure.id))],
           cleanupUnknownIds: summary.cleanupUnknownIds,
           operationId,

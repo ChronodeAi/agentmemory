@@ -8,15 +8,15 @@ export type McpToolDef = {
       { type: string; description: string; enum?: string[] }
     >;
     required?: string[];
-    anyOf?: Array<{
+    oneOf?: Array<{
       required: string[];
       properties?: Record<string, { const: string }>;
     }>;
   };
 };
 
-const PROJECT_SCOPE_ANY_OF: NonNullable<
-  McpToolDef["inputSchema"]["anyOf"]
+const PROJECT_SCOPE_ONE_OF: NonNullable<
+  McpToolDef["inputSchema"]["oneOf"]
 > = [
   { required: ["project"] },
   {
@@ -61,7 +61,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["query"],
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -122,7 +122,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["content"],
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -148,7 +148,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["files"],
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -188,7 +188,7 @@ export const CORE_TOOLS: McpToolDef[] = [
             "Use 'project' (default) or explicitly 'global' for a cross-project query.",
         },
       },
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -215,7 +215,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["query"],
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -320,7 +320,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["sha"],
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -344,7 +344,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         repo: { type: "string", description: "Filter by remote URL" },
         limit: { type: "number", description: "Max results (default 100, max 500)" },
       },
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
 ];
@@ -395,7 +395,7 @@ export const V040_TOOLS: McpToolDef[] = [
         limit: { type: "number", description: "Maximum nodes to return" },
         offset: { type: "number", description: "Pagination offset" },
       },
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -419,7 +419,7 @@ export const V040_TOOLS: McpToolDef[] = [
           description: "Target tier: episodic, semantic, or procedural",
         },
       },
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -472,8 +472,19 @@ export const V040_TOOLS: McpToolDef[] = [
           description: "Comma-separated memory IDs to delete",
         },
         reason: { type: "string", description: "Reason for deletion" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
       },
       required: ["memoryIds"],
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -923,7 +934,7 @@ export const V070_TOOLS: McpToolDef[] = [
         tags: { type: "string", description: "Comma-separated tags" },
       },
       required: ["content"],
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -947,7 +958,7 @@ export const V070_TOOLS: McpToolDef[] = [
         limit: { type: "number", description: "Max results (default 10)" },
       },
       required: ["query"],
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -989,7 +1000,7 @@ export const V073_TOOLS: McpToolDef[] = [
           description: "Max concept clusters to process (default 10, max 20)",
         },
       },
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -1011,7 +1022,7 @@ export const V073_TOOLS: McpToolDef[] = [
         },
         limit: { type: "number", description: "Max results (default 50)" },
       },
-      anyOf: PROJECT_SCOPE_ANY_OF,
+      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
 ];

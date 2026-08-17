@@ -235,6 +235,7 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     const res = await handleToolCall("memory_governance_delete", {
       memoryIds: "mem_1, mem_2",
       reason: "cleanup stale test data",
+      project: "github.com/example/project",
     });
 
     expect(JSON.parse(res.content[0].text)).toEqual({ success: true, deleted: 2 });
@@ -245,6 +246,7 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
         body: {
           memoryIds: ["mem_1", "mem_2"],
           reason: "cleanup stale test data",
+          project: "github.com/example/project",
         },
       },
     ]);

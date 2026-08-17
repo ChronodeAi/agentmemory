@@ -248,7 +248,7 @@ function createStdioTransport(handler, options = {}) {
 }
 //#endregion
 //#region src/mcp/tools-registry.ts
-const PROJECT_SCOPE_ANY_OF = [{ required: ["project"] }, {
+const PROJECT_SCOPE_ONE_OF = [{ required: ["project"] }, {
 	required: ["scope"],
 	properties: { scope: { const: "global" } }
 }];
@@ -285,7 +285,7 @@ const CORE_TOOLS = [
 				}
 			},
 			required: ["query"],
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -338,7 +338,7 @@ const CORE_TOOLS = [
 				}
 			},
 			required: ["content"],
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -365,7 +365,7 @@ const CORE_TOOLS = [
 				}
 			},
 			required: ["files"],
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -402,7 +402,7 @@ const CORE_TOOLS = [
 					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
 				}
 			},
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -433,7 +433,7 @@ const CORE_TOOLS = [
 				}
 			},
 			required: ["query"],
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -564,7 +564,7 @@ const CORE_TOOLS = [
 				}
 			},
 			required: ["sha"],
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -594,7 +594,7 @@ const CORE_TOOLS = [
 					description: "Max results (default 100, max 500)"
 				}
 			},
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	}
 ];
@@ -651,7 +651,7 @@ const V040_TOOLS = [
 					description: "Pagination offset"
 				}
 			},
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -673,7 +673,7 @@ const V040_TOOLS = [
 					description: "Target tier: episodic, semantic, or procedural"
 				}
 			},
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -735,9 +735,19 @@ const V040_TOOLS = [
 				reason: {
 					type: "string",
 					description: "Reason for deletion"
+				},
+				project: {
+					type: "string",
+					description: "Canonical project ID. Required unless scope is explicitly global."
+				},
+				scope: {
+					type: "string",
+					enum: ["global"],
+					description: "Explicit administrative cross-project scope"
 				}
 			},
-			required: ["memoryIds"]
+			required: ["memoryIds"],
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -1269,7 +1279,7 @@ const V070_TOOLS = [
 				}
 			},
 			required: ["content"],
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -1301,7 +1311,7 @@ const V070_TOOLS = [
 				}
 			},
 			required: ["query"],
-			anyOf: PROJECT_SCOPE_ANY_OF
+			oneOf: PROJECT_SCOPE_ONE_OF
 		}
 	},
 	{
@@ -1342,7 +1352,7 @@ const V073_TOOLS = [{
 				description: "Max concept clusters to process (default 10, max 20)"
 			}
 		},
-		anyOf: PROJECT_SCOPE_ANY_OF
+		oneOf: PROJECT_SCOPE_ONE_OF
 	}
 }, {
 	name: "memory_insight_list",
@@ -1368,7 +1378,7 @@ const V073_TOOLS = [{
 				description: "Max results (default 50)"
 			}
 		},
-		anyOf: PROJECT_SCOPE_ANY_OF
+		oneOf: PROJECT_SCOPE_ONE_OF
 	}
 }];
 const V010_SLOTS_TOOLS = [
@@ -1998,6 +2008,7 @@ function compactSessionPayload(payload) {
 function applyProjectScope(validated, args) {
 	const project = typeof args["project"] === "string" && args["project"].trim() ? args["project"].trim() : void 0;
 	if (args["scope"] === "global") {
+		if (project) throw new Error("project and global scope are mutually exclusive");
 		validated.scope = "global";
 		return;
 	}
@@ -2045,6 +2056,7 @@ function validate(toolName, args) {
 			if (ids.length === 0) throw new Error("memoryIds is required");
 			v.memoryIds = ids;
 			v.reason = args["reason"] || "plugin skill request";
+			applyProjectScope(v, args);
 			return v;
 		}
 		case "memory_export": return v;
@@ -2103,7 +2115,8 @@ async function handleProxy(v, handle) {
 			method: "DELETE",
 			body: JSON.stringify({
 				memoryIds: v.memoryIds,
-				reason: v.reason
+				reason: v.reason,
+				...v.scope === "global" ? { scope: "global" } : { project: v.project }
 			})
 		}));
 		case "memory_export": return textResponse(await handle.call("/agentmemory/export", { method: "GET" }), true);
@@ -2165,9 +2178,12 @@ async function handleLocal(v, kvInstance) {
 		}
 		case "memory_governance_delete": {
 			let deleted = 0;
-			for (const id of v.memoryIds || []) if (await kvInstance.get("mem:memories", id)) {
-				await kvInstance.delete("mem:memories", id);
-				deleted++;
+			for (const id of v.memoryIds || []) {
+				const existing = await kvInstance.get("mem:memories", id);
+				if (existing && (v.scope === "global" || existing["project"] === v.project)) {
+					await kvInstance.delete("mem:memories", id);
+					deleted++;
+				}
 			}
 			kvInstance.persist();
 			return textResponse({

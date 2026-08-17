@@ -178,6 +178,9 @@ function applyProjectScope(
       ? args["project"].trim()
       : undefined;
   if (args["scope"] === "global") {
+    if (project) {
+      throw new Error("project and global scope are mutually exclusive");
+    }
     validated.scope = "global";
     return;
   }
@@ -240,6 +243,7 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
       if (ids.length === 0) throw new Error("memoryIds is required");
       v.memoryIds = ids;
       v.reason = (args["reason"] as string) || "plugin skill request";
+      applyProjectScope(v, args);
       return v;
     }
     case "memory_export":
@@ -316,7 +320,13 @@ async function handleProxy(
     case "memory_governance_delete": {
       const result = await handle.call("/agentmemory/governance/memories", {
         method: "DELETE",
-        body: JSON.stringify({ memoryIds: v.memoryIds, reason: v.reason }),
+        body: JSON.stringify({
+          memoryIds: v.memoryIds,
+          reason: v.reason,
+          ...(v.scope === "global"
+            ? { scope: "global" }
+            : { project: v.project }),
+        }),
       });
       return textResponse(result);
     }
@@ -412,8 +422,14 @@ async function handleLocal(
     case "memory_governance_delete": {
       let deleted = 0;
       for (const id of v.memoryIds || []) {
-        const existing = await kvInstance.get("mem:memories", id);
-        if (existing) {
+        const existing = await kvInstance.get<Record<string, unknown>>(
+          "mem:memories",
+          id,
+        );
+        if (
+          existing &&
+          (v.scope === "global" || existing["project"] === v.project)
+        ) {
           await kvInstance.delete("mem:memories", id);
           deleted++;
         }

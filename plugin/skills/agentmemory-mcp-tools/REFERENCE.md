@@ -26,7 +26,7 @@ agentmemory exposes 59 MCP tools. 8 are in the lean core set (`--tools core` or 
 | `memory_facet_tag` |  | `targetId`*: string, `targetType`*: string, `dimension`*: string, `value`*: string | Attach a structured tag (dimension:value) to an action, memory, or observation for multi-dimensional categorization. |
 | `memory_file_history` |  | `files`*: string, `sessionId`: string, `project`: string, `scope`: string | Get past observations about specific files. |
 | `memory_frontier` |  | `project`: string, `scope`: string, `agentId`: string, `limit`: number | Get all unblocked actions ranked by priority and urgency. Returns the frontier of actionable work with no unsatisfied dependencies. |
-| `memory_governance_delete` |  | `memoryIds`*: string, `reason`: string | Delete specific memories with audit trail. |
+| `memory_governance_delete` |  | `memoryIds`*: string, `reason`: string, `project`: string, `scope`: string | Delete specific memories with audit trail. |
 | `memory_graph_query` |  | `project`: string, `scope`: string, `startNodeId`: string, `nodeType`: string, `maxDepth`: number, `query`: string, `limit`: number, `offset`: number | Query the knowledge graph for entities and relationships. |
 | `memory_heal` |  | `categories`: string, `dryRun`: string | Auto-fix all fixable issues found by diagnostics. Unblocks stuck actions, expires stale leases, cleans up orphaned data. |
 | `memory_insight_list` |  | `project`: string, `scope`: string, `minConfidence`: number, `limit`: number | List synthesized insights, higher-order observations derived from patterns across memories, lessons, and crystals. |

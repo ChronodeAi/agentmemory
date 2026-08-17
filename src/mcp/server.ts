@@ -768,10 +768,21 @@ export function registerMcpEndpoints(
               .split(",")
               .map((id) => id.trim())
               .filter(Boolean);
+            const projectScope = parseProjectScope(args);
+            if (!projectScope) {
+              return {
+                status_code: 400,
+                body: {
+                  error:
+                    "project is required unless scope is explicitly global",
+                },
+              };
+            }
             try {
               const result = await sdk.trigger({ function_id: "mem::governance-delete", payload: {
                 memoryIds: ids,
                 reason: args.reason as string,
+                ...projectScope,
               } });
               return {
                 status_code: 200,

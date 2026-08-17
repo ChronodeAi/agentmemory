@@ -37,6 +37,7 @@ const PROJECT_SCOPED_TOOLS = new Set([
   "memory_recall",
   "memory_smart_search",
   "memory_sessions",
+  "memory_governance_delete",
 ]);
 
 const ADVERTISED_PROJECT_SCOPED_TOOLS = [
@@ -53,6 +54,7 @@ const ADVERTISED_PROJECT_SCOPED_TOOLS = [
   "memory_lesson_recall",
   "memory_reflect",
   "memory_insight_list",
+  "memory_governance_delete",
 ];
 
 function handleToolCall(
@@ -132,7 +134,7 @@ describe("Tools Registry", () => {
     for (const name of ADVERTISED_PROJECT_SCOPED_TOOLS) {
       const schema = tools.get(name)?.inputSchema;
       expect(schema, name).toBeDefined();
-      expect(schema?.anyOf, name).toEqual(
+      expect(schema?.oneOf, name).toEqual(
         expect.arrayContaining([
           { required: ["project"] },
           {
@@ -142,6 +144,20 @@ describe("Tools Registry", () => {
         ]),
       );
     }
+  });
+
+  it("rejects ambiguous project plus global scope in local fallback", async () => {
+    await expect(
+      rawHandleToolCall(
+        "memory_save",
+        {
+          content: "ambiguous scope",
+          project: "github.com/example/project",
+          scope: "global",
+        },
+        new InMemoryKV(),
+      ),
+    ).rejects.toThrow("mutually exclusive");
   });
 });
 

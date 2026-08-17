@@ -112,6 +112,36 @@ describe("Governance Functions", () => {
     expect(remaining.length).toBe(3);
   });
 
+  it("does not delete a memory outside the requested project", async () => {
+    await kv.set("mem:memories", "mem_project_a", {
+      ...makeMemory("mem_project_a"),
+      project: "github.com/example/a",
+    });
+    await kv.set("mem:memories", "mem_project_b", {
+      ...makeMemory("mem_project_b"),
+      project: "github.com/example/b",
+    });
+
+    const result = (await sdk.trigger("mem::governance-delete", {
+      memoryIds: ["mem_project_a", "mem_project_b"],
+      project: "github.com/example/a",
+    })) as {
+      success: boolean;
+      deleted: number;
+      failures: Array<{ id: string; error: string }>;
+    };
+
+    expect(result).toMatchObject({
+      success: false,
+      deleted: 1,
+      failures: [
+        { id: "mem_project_b", error: "project_scope_mismatch" },
+      ],
+    });
+    expect(await kv.get("mem:memories", "mem_project_a")).toBeNull();
+    expect(await kv.get("mem:memories", "mem_project_b")).not.toBeNull();
+  });
+
   it("records an outcome after a partial lookup failure", async () => {
     const originalGet = kv.get;
     kv.get = vi.fn(async <T>(scope: string, key: string): Promise<T | null> => {
