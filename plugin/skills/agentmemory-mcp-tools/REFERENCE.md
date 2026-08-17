@@ -12,7 +12,7 @@ agentmemory exposes 59 MCP tools. 8 are in the lean core set (`--tools core` or 
 | `memory_audit` |  | `operation`: string, `limit`: number | View the audit trail of memory operations. |
 | `memory_checkpoint` |  | `operation`*: string, `name`: string, `checkpointId`: string, `status`: string, `type`: string, `linkedActionIds`: string | Create or resolve an external checkpoint (CI result, approval, deploy status) that gates action progress. |
 | `memory_claude_bridge_sync` |  | `direction`*: string | Sync memory state to/from Claude Code's native MEMORY.md file. |
-| `memory_commit_link` |  | `sha`*: string, `sessionId`: string, `project`*: string | Link a verified Git commit SHA to its canonical project and optional coding session. |
+| `memory_commit_link` |  | `sha`*: string, `sessionId`: string, `project`*: string, `baseHeadSha`: string, `worktreeId`: string, `fileTransitions`: array | Link a verified Git commit SHA to its canonical project and optional coding session. |
 | `memory_commit_lookup` |  | `sha`*: string, `project`: string, `scope`: string | Look up the agent session(s) that produced a specific git commit, given its SHA. Returns the commit metadata and linked sessions. |
 | `memory_commits` |  | `project`: string, `scope`: string, `branch`: string, `repo`: string, `limit`: number | List recent commits linked to agent sessions, optionally filtered by branch or repo. |
 | `memory_compress_file` |  | `filePath`*: string, `project`*: string | Compress a markdown file to reduce token usage while preserving headings, URLs, and code blocks. Creates a .original.md backup before writing. |

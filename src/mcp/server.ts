@@ -1543,7 +1543,14 @@ export function registerMcpEndpoints(
             }
             const result = await sdk.trigger({
               function_id: "mem::commit-link",
-              payload: { project, sha, sessionId: asNonEmptyString(args.sessionId) },
+              payload: {
+                project,
+                sha,
+                sessionId: asNonEmptyString(args.sessionId),
+                baseHeadSha: asNonEmptyString(args.baseHeadSha),
+                worktreeId: asNonEmptyString(args.worktreeId),
+                fileTransitions: args.fileTransitions,
+              },
             });
             return { status_code: 200, body: { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] } };
           }

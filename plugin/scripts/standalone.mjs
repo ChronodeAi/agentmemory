@@ -1605,6 +1605,41 @@ const CODING_MEMORY_TOOLS = [
 				project: {
 					type: "string",
 					description: "Canonical project ID"
+				},
+				baseHeadSha: {
+					type: "string",
+					description: "Optional parent commit SHA for provenance"
+				},
+				worktreeId: {
+					type: "string",
+					description: "Optional credential-free worktree identifier"
+				},
+				fileTransitions: {
+					type: "array",
+					description: "Optional verified Git file transitions",
+					items: {
+						type: "object",
+						properties: {
+							path: { type: "string" },
+							operation: {
+								type: "string",
+								enum: [
+									"write",
+									"edit",
+									"delete",
+									"rename",
+									"copy"
+								]
+							},
+							previousPath: { type: "string" },
+							digest: { type: "string" },
+							digestKind: {
+								type: "string",
+								enum: ["git-blob"]
+							}
+						},
+						required: ["path", "operation"]
+					}
 				}
 			},
 			required: ["sha", "project"]
@@ -1694,7 +1729,7 @@ function getAllTools() {
 }
 //#endregion
 //#region src/version.ts
-const VERSION = "0.9.28-chronode.9";
+const VERSION = "0.9.28-chronode.10";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
 //#endregion

@@ -21,6 +21,7 @@ import {
 import type { AccessLog } from "./access-tracker.js";
 import { recordAudit } from "./audit.js";
 import { timingSafeCompare } from "../auth.js";
+import { parseCommitProvenanceTransitions } from "../commit-provenance.js";
 
 interface InjectionMetrics {
   samplesMs: number[];
@@ -1471,14 +1472,38 @@ export function registerCodingMemoryFunctions(
 
   sdk.registerFunction(
     "mem::commit-link",
-    async (data: { sha?: string; sessionId?: string; project?: string }) => {
+    async (data: {
+      sha?: string;
+      sessionId?: string;
+      project?: string;
+      baseHeadSha?: string;
+      worktreeId?: string;
+      fileTransitions?: unknown;
+    }) => {
       const sha = typeof data.sha === "string" ? data.sha.trim() : "";
       const project =
         typeof data.project === "string" ? data.project.trim() : "";
       const sessionId =
         typeof data.sessionId === "string" ? data.sessionId.trim() : undefined;
+      const baseHeadSha =
+        typeof data.baseHeadSha === "string"
+          ? data.baseHeadSha.trim() || undefined
+          : undefined;
+      const worktreeId =
+        typeof data.worktreeId === "string"
+          ? data.worktreeId.trim() || undefined
+          : undefined;
+      const fileTransitions = parseCommitProvenanceTransitions(
+        data.fileTransitions,
+      );
       if (!sha || !project) {
         return { success: false, error: "sha and project are required" };
+      }
+      if (fileTransitions === null) {
+        return {
+          success: false,
+          error: "fileTransitions must contain valid commit provenance",
+        };
       }
       if (sessionId) {
         const session = await kv.get<Session>(KV.sessions, sessionId);
@@ -1503,6 +1528,9 @@ export function registerCodingMemoryFunctions(
             linkedAt: new Date().toISOString(),
           }),
           project,
+          baseHeadSha: baseHeadSha ?? existing?.baseHeadSha,
+          worktreeId: worktreeId ?? existing?.worktreeId,
+          fileTransitions: fileTransitions ?? existing?.fileTransitions,
           sessionIds: Array.from(sessionIds),
         };
         await kv.set(KV.commits, sha, value);

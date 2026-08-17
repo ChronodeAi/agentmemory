@@ -281,6 +281,41 @@ describe("context delivery acknowledgement surfaces", () => {
     });
   });
 
+  it("carries rich provenance through the manual commit-link REST route", async () => {
+    const { functions, trigger } = registerSurfaces(
+      registerApiTriggers as never,
+    );
+    const transition = {
+      path: "src/index.ts",
+      operation: "edit",
+      digest: "a".repeat(40),
+      digestKind: "git-blob",
+    };
+
+    await functions.get("api::commit-link")!({
+      body: {
+        project: "github.com/chronodeai/agentmemory",
+        sessionId: "session-1",
+        sha: "b".repeat(40),
+        baseHeadSha: "c".repeat(40),
+        worktreeId: "wt_1234567890abcdef1234567890abcdef",
+        fileTransitions: [transition],
+      },
+    });
+
+    expect(trigger).toHaveBeenCalledWith({
+      function_id: "mem::commit-link",
+      payload: {
+        project: "github.com/chronodeai/agentmemory",
+        sessionId: "session-1",
+        sha: "b".repeat(40),
+        baseHeadSha: "c".repeat(40),
+        worktreeId: "wt_1234567890abcdef1234567890abcdef",
+        fileTransitions: [transition],
+      },
+    });
+  });
+
   it("maps REST capture and acknowledgement rejection to non-success status", async () => {
     const { functions, trigger } = registerSurfaces(
       registerApiTriggers as never,
@@ -409,6 +444,69 @@ describe("context delivery acknowledgement surfaces", () => {
         sessionId: "session-1",
         packetId: "ctxpkt-1",
         providerReceipt: "provider-receipt-1",
+      },
+    });
+  });
+
+  it("carries rich provenance through the manual commit-link MCP tool", async () => {
+    const commitTool = getAllTools().find(
+      (tool) => tool.name === "memory_commit_link",
+    );
+    expect(commitTool?.inputSchema.properties).toHaveProperty("fileTransitions");
+
+    const { functions, trigger } = registerSurfaces(
+      ((sdk: unknown, kv: unknown) =>
+        registerMcpEndpoints(
+          sdk as never,
+          kv as never,
+          "synthetic-secret",
+          "admin-secret",
+          "capability-secret",
+          true,
+          "agentmemory",
+        )) as never,
+    );
+    const project = "github.com/chronodeai/agentmemory";
+    const capability = createProjectCapabilityToken(
+      {
+        version: 1,
+        audience: "agentmemory",
+        project,
+        expiresAt: Math.floor(Date.now() / 1000) + 60,
+      },
+      "capability-secret",
+    );
+    const transition = {
+      path: "src/index.ts",
+      operation: "edit",
+      digest: "a".repeat(40),
+      digestKind: "git-blob",
+    };
+    const response = (await functions.get("mcp::tools::call")!({
+      headers: { authorization: `Bearer ${capability}` },
+      body: {
+        name: "memory_commit_link",
+        arguments: {
+          project,
+          sessionId: "session-1",
+          sha: "b".repeat(40),
+          baseHeadSha: "c".repeat(40),
+          worktreeId: "wt_1234567890abcdef1234567890abcdef",
+          fileTransitions: [transition],
+        },
+      },
+    })) as { status_code: number };
+
+    expect(response.status_code).toBe(200);
+    expect(trigger).toHaveBeenCalledWith({
+      function_id: "mem::commit-link",
+      payload: {
+        project,
+        sessionId: "session-1",
+        sha: "b".repeat(40),
+        baseHeadSha: "c".repeat(40),
+        worktreeId: "wt_1234567890abcdef1234567890abcdef",
+        fileTransitions: [transition],
       },
     });
   });

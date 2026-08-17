@@ -692,11 +692,27 @@ describe("coding memory lifecycle functions", () => {
       sha: "abcdef1234567890",
       sessionId,
       project,
+      baseHeadSha: "1234567890abcdef",
+      worktreeId: "wt_1234567890abcdef1234567890abcdef",
+      fileTransitions: [
+        {
+          path: "src/index.ts",
+          operation: "edit",
+          digest: "fedcba0987654321",
+          digestKind: "git-blob",
+        },
+      ],
     });
     const second = await sdk.trigger("mem::commit-link", {
       sha: "abcdef1234567890",
       sessionId,
       project,
+    });
+    const malformed = await sdk.trigger("mem::commit-link", {
+      sha: "bad-provenance",
+      sessionId,
+      project,
+      fileTransitions: [{ path: "src/new.ts", operation: "rename" }],
     });
     const health = await sdk.trigger("mem::project-health", {
       project,
@@ -716,6 +732,10 @@ describe("coding memory lifecycle functions", () => {
 
     expect(first.success).toBe(true);
     expect(second.success).toBe(true);
+    expect(malformed).toMatchObject({
+      success: false,
+      error: "fileTransitions must contain valid commit provenance",
+    });
     expect(health.success).toBe(true);
     expect(health.commitCoverage).toBe(1);
     expect(health.scopeCoverage).toBe(1);
@@ -724,8 +744,8 @@ describe("coding memory lifecycle functions", () => {
     expect(health.commitCoverageDetails).toMatchObject({
       eligibleSessions: 1,
       linkedSessions: 1,
-      richProvenanceSessions: 0,
-      missingRichProvenanceSessionIds: [sessionId],
+      richProvenanceSessions: 1,
+      missingRichProvenanceSessionIds: [],
     });
   });
 });

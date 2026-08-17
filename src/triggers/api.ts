@@ -1,12 +1,12 @@
 import { type ISdk, type ApiRequest } from "iii-sdk";
 import type {
   CommitLink,
-  CommitProvenanceTransition,
   CompressedObservation,
   HookPayload,
   Session,
   SessionSummary,
 } from "../types.js";
+import { parseCommitProvenanceTransitions } from "../commit-provenance.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import { KV, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
@@ -134,43 +134,6 @@ function asNonEmptyString(value: unknown): string | null {
   if (typeof value !== "string") return null;
   const trimmed = value.trim();
   return trimmed ? trimmed : null;
-}
-
-function parseCommitProvenanceTransitions(
-  value: unknown,
-): CommitProvenanceTransition[] | undefined | null {
-  if (value === undefined) return undefined;
-  if (!Array.isArray(value)) return null;
-  const operations = new Set(["write", "edit", "delete", "rename", "copy"]);
-  const parsed: CommitProvenanceTransition[] = [];
-  for (const entry of value) {
-    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
-      return null;
-    }
-    const record = entry as Record<string, unknown>;
-    const path = asNonEmptyString(record.path);
-    const operation = asNonEmptyString(record.operation);
-    const previousPath = asNonEmptyString(record.previousPath) ?? undefined;
-    const digest = asNonEmptyString(record.digest) ?? undefined;
-    const digestKind = asNonEmptyString(record.digestKind) ?? undefined;
-    if (
-      !path ||
-      !operation ||
-      !operations.has(operation) ||
-      Boolean(digest) !== Boolean(digestKind) ||
-      (digestKind !== undefined && digestKind !== "git-blob") ||
-      ((operation === "rename" || operation === "copy") && !previousPath)
-    ) {
-      return null;
-    }
-    parsed.push({
-      path,
-      operation: operation as CommitProvenanceTransition["operation"],
-      ...(previousPath ? { previousPath } : {}),
-      ...(digest ? { digest, digestKind: "git-blob" } : {}),
-    });
-  }
-  return parsed;
 }
 
 function parseOptionalFiniteNumber(value: unknown): number | undefined | null {
@@ -814,6 +777,9 @@ export function registerApiTriggers(
           project,
           sha,
           sessionId: asNonEmptyString(body.sessionId) ?? undefined,
+          baseHeadSha: asNonEmptyString(body.baseHeadSha) ?? undefined,
+          worktreeId: asNonEmptyString(body.worktreeId) ?? undefined,
+          fileTransitions: body.fileTransitions,
         },
       });
       return { status_code: 200, body: result };

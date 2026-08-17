@@ -6,8 +6,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Added
+
+- Added structured commit provenance (`baseHeadSha`, `worktreeId`, and file transitions) across automatic capture, REST, and MCP commit-link paths, with project health reporting rich-provenance coverage separately from basic SHA linkage.
+- Added bounded workflow promotion candidates for substantive completed sessions. Recalled-only material is ineligible for promotion without fresh evidence.
+
 ### Fixed
 
+- Made saved-memory state authoritative during smart search, including for observations linked to a real session. Superseded, deleted, expired, quarantined, and recalled-only memories no longer bypass eligibility checks through their session record.
 - Debounced CPU-only health alerts until pressure is observed in two consecutive health samples. Short iii-engine work bursts remain visible as notes without flapping the dashboard between healthy and degraded; sustained CPU pressure and all mixed or non-CPU failures retain their existing severity.
 - Published the existing bounded `memory_sessions.limit` control in the MCP schema and return compact session records by default. Explicit `format: full` preserves forensic detail without forcing child-agent and pipeline metadata into routine agent context.
 - Deferred Git-derived project identity until process, user, and repository configuration layers are checked, so an explicit project ID retains precedence even when a local remote cannot be normalized safely.

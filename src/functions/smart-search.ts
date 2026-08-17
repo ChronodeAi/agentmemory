@@ -289,20 +289,21 @@ export function registerSmartSearchFunction(
           : Promise.resolve([]),
       ]);
 
-      const projectFiltered: typeof hybridResults = [];
-      for (const result of hybridResults) {
-        if (
-          hasRetrievalEvidence(result) &&
-          (await hybridResultMatchesProject(
-            kv,
-            result,
-            projectScope,
-            retrievalQuarantine,
-          ))
-        ) {
-          projectFiltered.push(result);
-        }
-      }
+      const eligibility = await Promise.all(
+        hybridResults.map(
+          async (result) =>
+            hasRetrievalEvidence(result) &&
+            (await hybridResultMatchesProject(
+              kv,
+              result,
+              projectScope,
+              retrievalQuarantine,
+            )),
+        ),
+      );
+      const projectFiltered = hybridResults.filter(
+        (_result, index) => eligibility[index],
+      );
       const filteredHybrid = (
         filterAgentId
           ? projectFiltered.filter(
@@ -437,6 +438,21 @@ async function observationMatchesProject(
   scope: ProjectReadScope,
   retrievalQuarantine: Set<string>,
 ): Promise<boolean> {
+  const memory = await kv
+    .get<Memory>(KV.memories, item.obsId)
+    .catch(() => null);
+  if (memory) {
+    if (
+      retrievalQuarantine.has(quarantineKey(KV.memories, item.obsId)) ||
+      !recordMatchesProject(memory.project, scope)
+    ) {
+      return false;
+    }
+    return evaluateContextCandidate(
+      memory as unknown as Record<string, unknown>,
+      { contextClass: "advisory", candidateId: item.obsId },
+    ).eligible;
+  }
   const session = await kv
     .get<Session>(KV.sessions, item.sessionId)
     .catch(() => null);
@@ -460,19 +476,7 @@ async function observationMatchesProject(
       { contextClass: "advisory", candidateId: item.obsId },
     ).eligible;
   }
-  if (
-    retrievalQuarantine.has(quarantineKey(KV.memories, item.obsId))
-  ) {
-    return false;
-  }
-  const memory = await kv
-    .get<Memory>(KV.memories, item.obsId)
-    .catch(() => null);
-  if (!memory || !recordMatchesProject(memory.project, scope)) return false;
-  return evaluateContextCandidate(
-    memory as unknown as Record<string, unknown>,
-    { contextClass: "advisory", candidateId: item.obsId },
-  ).eligible;
+  return false;
 }
 
 async function hybridResultMatchesProject(
