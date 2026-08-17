@@ -1271,21 +1271,24 @@
           headers.Authorization = 'Bearer ' + viewerToken;
         }
         var fetchOpts = Object.assign({}, opts || {}, { headers: headers });
+        var readErrorBody = fetchOpts.readErrorBody;
+        delete fetchOpts.readErrorBody;
         var res = await fetch(url, fetchOpts);
         if (!res.ok) {
           if (res.status === 401) showViewerAuthPrompt();
-          // Health uses 503 to report a valid, structured critical snapshot.
-          // Preserve that body so the dashboard renders "critical" instead of
-          // treating an unhealthy service as an unknown network failure.
-          if (path === 'health' && res.status === 503) {
-            var criticalHealth = await res.json();
-            if (criticalHealth && typeof criticalHealth === 'object') {
-              hideViewerAuthPrompt();
-              return criticalHealth;
-            }
-          }
           console.warn('[viewer] API ' + (fetchOpts.method || 'GET') + ' ' + path + ' returned ' + res.status);
-          return null;
+          // Non-2xx responses resolve to null so callers can keep treating
+          // null as "request failed" (e.g. loadGraph's disabled/error state).
+          // The health endpoint opts out via readErrorBody: it intentionally
+          // responds 503 with a valid JSON body when status is "critical"
+          // (see #1019), and the dashboard badge needs that body.
+          if (!readErrorBody) return null;
+          try {
+            return await res.json();
+          } catch (parseErr) {
+            console.debug('[viewer] API ' + path + ' non-2xx body was not JSON:', parseErr);
+            return null;
+          }
         }
         hideViewerAuthPrompt();
         return await res.json();
@@ -1294,7 +1297,9 @@
         return null;
       }
     }
-    async function apiGet(path) { return api(path); }
+    async function apiGet(path) {
+      return api(path, path === 'health' ? { readErrorBody: true } : undefined);
+    }
     async function apiPost(path, body) {
       return api(path, {
         method: 'POST',
