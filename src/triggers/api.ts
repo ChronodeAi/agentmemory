@@ -1292,13 +1292,34 @@ export function registerApiTriggers(
             pipelineRunId: session.backgroundPipelineRunId,
           });
           return {
-            status_code: 200,
+            status_code: pipelineAccepted ? 200 : 503,
             body: {
-              success: true,
+              success: pipelineAccepted,
               alreadyClosed: true,
               retryingPipeline: true,
               pipelineRunId: session.backgroundPipelineRunId,
               pipelineAccepted,
+              ...(!pipelineAccepted
+                ? {
+                    error: "background pipeline dispatch was not accepted",
+                    retryable: true,
+                  }
+                : {}),
+            },
+          };
+        }
+        if (session.backgroundPipelineStatus === "failed") {
+          return {
+            status_code: 409,
+            body: {
+              success: false,
+              alreadyClosed: true,
+              retryable: false,
+              error: "background pipeline dispatch retry exhausted",
+              pipelineStatus: "failed",
+              ...(session.backgroundPipelineRunId
+                ? { pipelineRunId: session.backgroundPipelineRunId }
+                : {}),
             },
           };
         }
@@ -1381,8 +1402,18 @@ export function registerApiTriggers(
         pipelineRunId,
       });
       return {
-        status_code: 200,
-        body: { success: true, pipelineRunId, pipelineAccepted },
+        status_code: pipelineAccepted ? 200 : 503,
+        body: {
+          success: pipelineAccepted,
+          pipelineRunId,
+          pipelineAccepted,
+          ...(!pipelineAccepted
+            ? {
+                error: "background pipeline dispatch was not accepted",
+                retryable: true,
+              }
+            : {}),
+        },
       };
       });
     },

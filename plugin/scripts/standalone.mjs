@@ -248,6 +248,10 @@ function createStdioTransport(handler, options = {}) {
 }
 //#endregion
 //#region src/mcp/tools-registry.ts
+const PROJECT_SCOPE_ANY_OF = [{ required: ["project"] }, {
+	required: ["scope"],
+	properties: { scope: { const: "global" } }
+}];
 const CORE_TOOLS = [
 	{
 		name: "memory_recall",
@@ -280,7 +284,8 @@ const CORE_TOOLS = [
 					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
 				}
 			},
-			required: ["query"]
+			required: ["query"],
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -332,7 +337,8 @@ const CORE_TOOLS = [
 					description: "Use 'global' only for an explicitly global memory."
 				}
 			},
-			required: ["content"]
+			required: ["content"],
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -358,7 +364,8 @@ const CORE_TOOLS = [
 					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
 				}
 			},
-			required: ["files"]
+			required: ["files"],
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -394,7 +401,8 @@ const CORE_TOOLS = [
 					type: "string",
 					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
 				}
-			}
+			},
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -424,7 +432,8 @@ const CORE_TOOLS = [
 					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
 				}
 			},
-			required: ["query"]
+			required: ["query"],
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -554,7 +563,8 @@ const CORE_TOOLS = [
 					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
 				}
 			},
-			required: ["sha"]
+			required: ["sha"],
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -583,7 +593,8 @@ const CORE_TOOLS = [
 					type: "number",
 					description: "Max results (default 100, max 500)"
 				}
-			}
+			},
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	}
 ];
@@ -639,7 +650,8 @@ const V040_TOOLS = [
 					type: "number",
 					description: "Pagination offset"
 				}
-			}
+			},
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -660,7 +672,8 @@ const V040_TOOLS = [
 					type: "string",
 					description: "Target tier: episodic, semantic, or procedural"
 				}
-			}
+			},
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -1245,12 +1258,18 @@ const V070_TOOLS = [
 					type: "string",
 					description: "Project this lesson is about"
 				},
+				scope: {
+					type: "string",
+					enum: ["global"],
+					description: "Explicit administrative cross-project scope"
+				},
 				tags: {
 					type: "string",
 					description: "Comma-separated tags"
 				}
 			},
-			required: ["content"]
+			required: ["content"],
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -1267,6 +1286,11 @@ const V070_TOOLS = [
 					type: "string",
 					description: "Filter by project"
 				},
+				scope: {
+					type: "string",
+					enum: ["global"],
+					description: "Explicit administrative cross-project scope"
+				},
 				minConfidence: {
 					type: "number",
 					description: "Minimum confidence threshold (default 0.1)"
@@ -1276,7 +1300,8 @@ const V070_TOOLS = [
 					description: "Max results (default 10)"
 				}
 			},
-			required: ["query"]
+			required: ["query"],
+			anyOf: PROJECT_SCOPE_ANY_OF
 		}
 	},
 	{
@@ -1307,11 +1332,17 @@ const V073_TOOLS = [{
 				type: "string",
 				description: "Filter by project"
 			},
+			scope: {
+				type: "string",
+				enum: ["global"],
+				description: "Explicit administrative cross-project scope"
+			},
 			maxClusters: {
 				type: "number",
 				description: "Max concept clusters to process (default 10, max 20)"
 			}
-		}
+		},
+		anyOf: PROJECT_SCOPE_ANY_OF
 	}
 }, {
 	name: "memory_insight_list",
@@ -1323,6 +1354,11 @@ const V073_TOOLS = [{
 				type: "string",
 				description: "Filter by project"
 			},
+			scope: {
+				type: "string",
+				enum: ["global"],
+				description: "Explicit administrative cross-project scope"
+			},
 			minConfidence: {
 				type: "number",
 				description: "Minimum confidence threshold (default 0)"
@@ -1331,7 +1367,8 @@ const V073_TOOLS = [{
 				type: "number",
 				description: "Max results (default 50)"
 			}
-		}
+		},
+		anyOf: PROJECT_SCOPE_ANY_OF
 	}
 }];
 const V010_SLOTS_TOOLS = [

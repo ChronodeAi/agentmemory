@@ -272,21 +272,34 @@ export async function dispatchSessionStopped(
       payload: input,
       action: TriggerAction.Void(),
     });
-    void Promise.resolve(dispatch).catch((error) => {
-      void persistPipelineFailure(kv, {
-        runId: input.pipelineRunId,
-        sessionId: input.sessionId,
-        project: input.project,
-        stage: "dispatch",
-        error,
-      });
-      logger.warn("event::session::stopped dispatch rejected", {
-        sessionId: input.sessionId,
-        project: input.project,
-        pipelineRunId: input.pipelineRunId,
-        ...pipelineErrorLog(error),
-      });
-    });
+    let dispatchRejected = false;
+    const observedDispatch = Promise.resolve(dispatch).then(
+      () => undefined,
+      async (error) => {
+        dispatchRejected = true;
+        await persistPipelineFailure(kv, {
+          runId: input.pipelineRunId,
+          sessionId: input.sessionId,
+          project: input.project,
+          stage: "dispatch",
+          error,
+        });
+        logger.warn("event::session::stopped dispatch rejected", {
+          sessionId: input.sessionId,
+          project: input.project,
+          pipelineRunId: input.pipelineRunId,
+          ...pipelineErrorLog(error),
+        });
+      },
+    );
+    // Flush an already-settled rejection without waiting for the background
+    // lifecycle itself. A still-pending Void dispatch remains non-blocking.
+    await Promise.resolve();
+    if (dispatchRejected) {
+      await observedDispatch;
+      return false;
+    }
+    void observedDispatch;
     return true;
   } catch (error) {
     await persistPipelineFailure(kv, {

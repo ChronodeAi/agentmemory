@@ -31,6 +31,7 @@ async function deliverProjectRequest(path, project, body, options) {
 		const parsedBody = await response.json().catch(() => null);
 		if (!isResponseBody(parsedBody)) throw new HookDeliveryError(`hook endpoint returned invalid JSON object with HTTP ${response.status}`, response.ok || response.status === 429 || response.status === 503);
 		const responseBody = parsedBody;
+		if (responseBody?.["pipelineAccepted"] === false) throw new HookDeliveryError(typeof responseBody["error"] === "string" ? responseBody["error"] : "background pipeline dispatch was not accepted", responseBody["retryable"] !== false);
 		if (response.ok && responseBody?.["success"] !== false) return responseBody;
 		throw responseError(response.status, responseBody);
 	} catch (error) {

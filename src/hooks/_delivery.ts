@@ -63,6 +63,14 @@ export async function deliverProjectRequest<T extends ResponseBody = ResponseBod
         );
       }
       const responseBody = parsedBody as T;
+      if (responseBody?.["pipelineAccepted"] === false) {
+        throw new HookDeliveryError(
+          typeof responseBody["error"] === "string"
+            ? responseBody["error"]
+            : "background pipeline dispatch was not accepted",
+          responseBody["retryable"] !== false,
+        );
+      }
       if (response.ok && responseBody?.["success"] !== false) {
         return responseBody;
       }

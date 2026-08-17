@@ -39,6 +39,22 @@ const PROJECT_SCOPED_TOOLS = new Set([
   "memory_sessions",
 ]);
 
+const ADVERTISED_PROJECT_SCOPED_TOOLS = [
+  "memory_recall",
+  "memory_save",
+  "memory_file_history",
+  "memory_sessions",
+  "memory_smart_search",
+  "memory_commit_lookup",
+  "memory_commits",
+  "memory_graph_query",
+  "memory_consolidate",
+  "memory_lesson_save",
+  "memory_lesson_recall",
+  "memory_reflect",
+  "memory_insight_list",
+];
+
 function handleToolCall(
   toolName: string,
   args: Record<string, unknown>,
@@ -108,6 +124,23 @@ describe("Tools Registry", () => {
       expect(tool.inputSchema).toBeDefined();
       expect(tool.inputSchema.type).toBe("object");
       expect(tool.inputSchema.properties).toBeDefined();
+    }
+  });
+
+  it("advertises the same project-scope requirement enforced at runtime", () => {
+    const tools = new Map(getAllTools().map((tool) => [tool.name, tool]));
+    for (const name of ADVERTISED_PROJECT_SCOPED_TOOLS) {
+      const schema = tools.get(name)?.inputSchema;
+      expect(schema, name).toBeDefined();
+      expect(schema?.anyOf, name).toEqual(
+        expect.arrayContaining([
+          { required: ["project"] },
+          {
+            required: ["scope"],
+            properties: { scope: { const: "global" } },
+          },
+        ]),
+      );
     }
   });
 });

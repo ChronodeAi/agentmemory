@@ -13,7 +13,8 @@ The user wants to save this to long-term memory: $ARGUMENTS
 memory_save {
   "content": "We rotate JWT refresh tokens on every use; the old token is revoked server-side in auth/refresh.ts.",
   "concepts": "jwt-refresh-rotation, token-revocation, auth-flow",
-  "files": "src/auth/refresh.ts"
+  "files": "src/auth/refresh.ts",
+  "project": "github.com/example/repository"
 }
 ```
 
@@ -34,8 +35,10 @@ concepts so a future `recall` finds it, and preserve the user's own phrasing.
 2. Extract 2-5 lowercased concept phrases. Prefer specific over generic
    (`jwt-refresh-rotation` beats `auth`).
 3. Extract referenced file paths (absolute or repo-relative). Empty if none.
-4. Call `memory_save` with `content`, `concepts` (comma-separated string), and
-   `files` (comma-separated string).
+4. Resolve the active repository's canonical project ID. Call `memory_save`
+   with `content`, `concepts` (comma-separated string), `files`
+   (comma-separated string), and that `project`. Use `scope: "global"` only
+   when the user explicitly requests a globally shared memory.
 5. Confirm the save and echo the concepts so the user knows the retrieval terms.
 
 ## Anti-patterns

@@ -51,6 +51,15 @@ describe("Tool count consistency", () => {
     expect(readText("plugin/plugin.json")).toContain(`${skillCount} skills`);
   });
 
+  it("project-scoped recall and remember examples include canonical project IDs", () => {
+    expect(readText("plugin/skills/recall/SKILL.md")).toContain(
+      '"project": "github.com/example/repository"',
+    );
+    expect(readText("plugin/skills/remember/SKILL.md")).toContain(
+      '"project": "github.com/example/repository"',
+    );
+  });
+
   it("INSTALL_FOR_AGENTS.md names the real core tool set", () => {
     const names = [...ESSENTIAL_TOOLS].map((t) =>
       t.replace(/^memory_/, "").replace(/_/g, " "),

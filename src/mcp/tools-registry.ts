@@ -8,8 +8,22 @@ export type McpToolDef = {
       { type: string; description: string; enum?: string[] }
     >;
     required?: string[];
+    anyOf?: Array<{
+      required: string[];
+      properties?: Record<string, { const: string }>;
+    }>;
   };
 };
+
+const PROJECT_SCOPE_ANY_OF: NonNullable<
+  McpToolDef["inputSchema"]["anyOf"]
+> = [
+  { required: ["project"] },
+  {
+    required: ["scope"],
+    properties: { scope: { const: "global" } },
+  },
+];
 
 export const CORE_TOOLS: McpToolDef[] = [
   {
@@ -47,6 +61,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["query"],
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -107,6 +122,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["content"],
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -132,6 +148,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["files"],
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -171,6 +188,7 @@ export const CORE_TOOLS: McpToolDef[] = [
             "Use 'project' (default) or explicitly 'global' for a cross-project query.",
         },
       },
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -197,6 +215,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["query"],
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -301,6 +320,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
       },
       required: ["sha"],
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -324,6 +344,7 @@ export const CORE_TOOLS: McpToolDef[] = [
         repo: { type: "string", description: "Filter by remote URL" },
         limit: { type: "number", description: "Max results (default 100, max 500)" },
       },
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
 ];
@@ -374,6 +395,7 @@ export const V040_TOOLS: McpToolDef[] = [
         limit: { type: "number", description: "Maximum nodes to return" },
         offset: { type: "number", description: "Pagination offset" },
       },
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -397,6 +419,7 @@ export const V040_TOOLS: McpToolDef[] = [
           description: "Target tier: episodic, semantic, or procedural",
         },
       },
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -892,9 +915,15 @@ export const V070_TOOLS: McpToolDef[] = [
           description: "Initial confidence 0.0-1.0 (default 0.5)",
         },
         project: { type: "string", description: "Project this lesson is about" },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
         tags: { type: "string", description: "Comma-separated tags" },
       },
       required: ["content"],
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -906,6 +935,11 @@ export const V070_TOOLS: McpToolDef[] = [
       properties: {
         query: { type: "string", description: "Search query" },
         project: { type: "string", description: "Filter by project" },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
         minConfidence: {
           type: "number",
           description: "Minimum confidence threshold (default 0.1)",
@@ -913,6 +947,7 @@ export const V070_TOOLS: McpToolDef[] = [
         limit: { type: "number", description: "Max results (default 10)" },
       },
       required: ["query"],
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -944,11 +979,17 @@ export const V073_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         project: { type: "string", description: "Filter by project" },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
         maxClusters: {
           type: "number",
           description: "Max concept clusters to process (default 10, max 20)",
         },
       },
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
   {
@@ -959,12 +1000,18 @@ export const V073_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         project: { type: "string", description: "Filter by project" },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description: "Explicit administrative cross-project scope",
+        },
         minConfidence: {
           type: "number",
           description: "Minimum confidence threshold (default 0)",
         },
         limit: { type: "number", description: "Max results (default 50)" },
       },
+      anyOf: PROJECT_SCOPE_ANY_OF,
     },
   },
 ];

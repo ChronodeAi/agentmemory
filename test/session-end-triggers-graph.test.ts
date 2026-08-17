@@ -188,6 +188,45 @@ describe("api::session::end → event::session::stopped (#666)", () => {
     });
   });
 
+  it("returns a retryable failure when dispatch is immediately rejected", async () => {
+    const surfaces = createLifecycleSurfaces((request) => {
+      if (request.function_id === "event::session::stopped") {
+        return Promise.reject(new Error("dispatch unavailable"));
+      }
+      return { success: true };
+    });
+    surfaces.sessions.set("session-dispatch-rejected", {
+      id: "session-dispatch-rejected",
+      project: "github.com/example/project",
+      cwd: "/tmp/project",
+      status: "active",
+      startedAt: new Date().toISOString(),
+      observationCount: 1,
+    });
+    registerApiTriggers(surfaces.sdk as never, surfaces.kv as never);
+
+    const response = await surfaces.functions.get("api::session::end")!({
+      body: {
+        sessionId: "session-dispatch-rejected",
+        project: "github.com/example/project",
+      },
+    });
+
+    expect(response).toMatchObject({
+      status_code: 503,
+      body: {
+        success: false,
+        pipelineAccepted: false,
+        retryable: true,
+      },
+    });
+    expect(surfaces.sessions.get("session-dispatch-rejected")).toMatchObject({
+      status: "completed",
+      backgroundPipelineStatus: "failed",
+      backgroundPipelineAttempts: 1,
+    });
+  });
+
   it("serializes duplicate stopped-session workers and settles one run", async () => {
     const calls: string[] = [];
     const surfaces = createLifecycleSurfaces(async (request) => {
@@ -585,8 +624,7 @@ describe("api::session::end → event::session::stopped (#666)", () => {
             pipelineRunId: "pipeline-dispatch-exhausted",
           },
         ),
-      ).toBe(true);
-      await new Promise<void>((resolve) => setImmediate(resolve));
+      ).toBe(false);
     }
     expect(
       await dispatchSessionStopped(

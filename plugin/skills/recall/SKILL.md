@@ -10,7 +10,11 @@ The user wants to recall past context about: $ARGUMENTS
 ## Quick start
 
 ```json
-memory_smart_search { "query": "jwt refresh token rotation", "limit": 10 }
+memory_smart_search {
+  "query": "jwt refresh token rotation",
+  "project": "github.com/example/repository",
+  "limit": 10
+}
 ```
 
 Expected output:
@@ -28,8 +32,10 @@ id, or an importance score. If nothing comes back, say so.
 
 ## Workflow
 
-1. Call `memory_smart_search` with the user's text as `query` and `limit: 10`.
-   Pass `project` when the user scopes to a specific repo.
+1. Resolve the active repository's canonical project ID, then call
+   `memory_smart_search` with the user's text as `query`, that `project`, and
+   `limit: 10`. Use `scope: "global"` only when the user explicitly asks for
+   an administrative cross-project search.
 2. Group results by session.
 3. For each observation show its type, title, and narrative.
 4. Lead with the high-signal observations (importance >= 7).

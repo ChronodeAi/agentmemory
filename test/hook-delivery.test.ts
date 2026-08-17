@@ -78,6 +78,35 @@ describe("hook project delivery", () => {
     ).rejects.toThrow("project mismatch");
   });
 
+  it("retries when session closure reports an unaccepted pipeline", async () => {
+    process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"] = "false";
+    const fetchMock = vi.fn().mockImplementation(async () =>
+      new Response(
+        JSON.stringify({
+          success: true,
+          pipelineAccepted: false,
+          error: "dispatch unavailable",
+          retryable: true,
+        }),
+        { status: 200 },
+      ),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    await expect(
+      deliverProjectRequest(
+        "/agentmemory/session/end",
+        "github.com/example/project",
+        {
+          project: "github.com/example/project",
+          sessionId: "ses_test",
+        },
+        { attempts: 2, timeoutMs: 250 },
+      ),
+    ).rejects.toThrow("dispatch unavailable");
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+
   it("never treats an empty HTTP 200 response as successful delivery", async () => {
     process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"] = "true";
     process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET"] = "test-secret";
