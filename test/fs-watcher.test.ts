@@ -44,6 +44,8 @@ describe("FilesystemWatcher", { retry: 2 }, () => {
     const w = new FilesystemWatcher({
       roots: [root],
       baseUrl: "http://localhost:3111",
+      watchMode: "poll",
+      pollIntervalMs: 100,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
     w.start();
@@ -82,6 +84,8 @@ describe("FilesystemWatcher", { retry: 2 }, () => {
     const w = new FilesystemWatcher({
       roots: [root],
       baseUrl: "http://localhost:3111",
+      watchMode: "poll",
+      pollIntervalMs: 100,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
     w.start();
@@ -106,11 +110,25 @@ describe("FilesystemWatcher", { retry: 2 }, () => {
     expect(() => w.start()).toThrow(/could not watch any of the configured roots/);
   });
 
+  it("fails closed when a polling root exceeds its file ceiling", () => {
+    writeFileSync(join(root, "one.md"), "one\n");
+    writeFileSync(join(root, "two.md"), "two\n");
+    const w = new FilesystemWatcher({
+      roots: [root],
+      watchMode: "poll",
+      maxTrackedFiles: 1,
+      logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
+    });
+    expect(() => w.start()).toThrow(/exceeds the polling limit of 1 files/);
+  });
+
   it("ignores paths that match the default ignore set", async () => {
     mkdirSync(join(root, "node_modules"), { recursive: true });
     const w = new FilesystemWatcher({
       roots: [root],
       baseUrl: "http://localhost:3111",
+      watchMode: "poll",
+      pollIntervalMs: 100,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
     w.start();
@@ -131,6 +149,8 @@ describe("FilesystemWatcher", { retry: 2 }, () => {
       roots: [root],
       baseUrl: "http://localhost:3111",
       secret: "shhh",
+      watchMode: "poll",
+      pollIntervalMs: 100,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
     w.start();
@@ -332,6 +352,8 @@ describe("FilesystemWatcher", { retry: 2 }, () => {
     const w = new FilesystemWatcher({
       roots: [root],
       baseUrl: "http://localhost:3111",
+      watchMode: "poll",
+      pollIntervalMs: 100,
       logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     });
     w.start();
@@ -345,6 +367,7 @@ describe("FilesystemWatcher", { retry: 2 }, () => {
       const hits = captured.filter((c) =>
         (c.body as { data: { files: string[] } }).data?.files?.[0] === "burst.md",
       );
+      expect(hits.length).toBeGreaterThanOrEqual(1);
       expect(hits.length).toBeLessThanOrEqual(2);
     } finally {
       w.stop();
@@ -363,6 +386,9 @@ describe("configFromEnv", () => {
     });
     expect(cfg.roots).toEqual(["/a", "/b"]);
     expect(cfg.baseUrl).toBe("http://localhost:3111");
+    expect(cfg.watchMode).toBe("auto");
+    expect(cfg.pollIntervalMs).toBe(5000);
+    expect(cfg.maxTrackedFiles).toBe(20000);
     expect(cfg.secret).toBe("tok");
     expect(cfg.project).toBe("demo");
     expect(cfg.ignorePatterns).toHaveLength(2);

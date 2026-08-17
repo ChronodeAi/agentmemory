@@ -147,10 +147,19 @@ export const CORE_TOOLS: McpToolDef[] = [
   {
     name: "memory_sessions",
     description:
-      "List recent sessions with their status and observation counts.",
+      "List recent sessions with their status and observation counts. Returns a compact response by default.",
     inputSchema: {
       type: "object",
       properties: {
+        limit: {
+          type: "number",
+          description: "Max sessions to return (default 20, max 100).",
+        },
+        format: {
+          type: "string",
+          description:
+            "Response detail: compact (default) or full for forensic inspection.",
+        },
         project: {
           type: "string",
           description:

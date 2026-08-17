@@ -7109,26 +7109,6 @@ function resolveProjectConfig(cwd = process.cwd()) {
 	const manifestPath = join(root, ".agentmemory", "project.yaml");
 	const explicitOverride = asString(env["AGENTMEMORY_PROJECT_CONFIG"]);
 	const overridePath = explicitOverride ? canonicalPath(isAbsolute(explicitOverride) ? expandHome(explicitOverride) : join(root, explicitOverride)) : getUserProjectConfigPath(root);
-	const inferred = {
-		schema_version: 1,
-		project_id: inferProjectId(root),
-		privacy: "strict",
-		capture_profile: "balanced",
-		source_roots: [
-			"src",
-			"test",
-			"tests"
-		],
-		decision_roots: [
-			".aiwg/architecture/adr",
-			".aiwg/architecture/adrs",
-			".aiwg/decisions/adr",
-			"docs/adr",
-			"docs/adrs"
-		],
-		exclude_globs: [...DEFAULT_EXCLUDE_GLOBS],
-		external_processing: false
-	};
 	const repository = readConfigFile(manifestPath) ?? {};
 	const user = readConfigFile(overridePath) ?? {};
 	const processLayer = envLayer(env);
@@ -7136,7 +7116,26 @@ function resolveProjectConfig(cwd = process.cwd()) {
 		processLayer,
 		user,
 		repository,
-		inferred
+		{
+			schema_version: 1,
+			project_id: asString(processLayer.project_id) ?? asString(user.project_id) ?? asString(repository.project_id) ?? inferProjectId(root),
+			privacy: "strict",
+			capture_profile: "balanced",
+			source_roots: [
+				"src",
+				"test",
+				"tests"
+			],
+			decision_roots: [
+				".aiwg/architecture/adr",
+				".aiwg/architecture/adrs",
+				".aiwg/decisions/adr",
+				"docs/adr",
+				"docs/adrs"
+			],
+			exclude_globs: [...DEFAULT_EXCLUDE_GLOBS],
+			external_processing: false
+		}
 	];
 	const privacy = mostRestrictivePrivacy([
 		repository,

@@ -64,9 +64,48 @@ export function healthStatusExitCode(status: unknown): 0 | 1 {
 
 const DOCTOR_ADVISORY_ALERTS = [
   /^cpu_warn_\d+%$/,
+  /^engine_cpu_warn_\d+%$/,
   /^event_loop_lag_warn_\d+ms$/,
   /^recovery_window$/,
 ];
+
+export interface HealthEvaluation {
+  status: "healthy" | "degraded" | "critical";
+  alerts: string[];
+  notes: string[];
+}
+
+const CPU_PRESSURE_ALERT = /^(?:engine_)?cpu_(?:warn|critical)_\d+%$/;
+
+export function stabilizeCpuPressure(
+  evaluation: HealthEvaluation,
+  previousConsecutiveSamples: number,
+  requiredSamples = 2,
+): { evaluation: HealthEvaluation; consecutiveSamples: number } {
+  const cpuOnly =
+    evaluation.alerts.length > 0 &&
+    evaluation.alerts.every((alert) => CPU_PRESSURE_ALERT.test(alert));
+  if (!cpuOnly) {
+    return { evaluation, consecutiveSamples: 0 };
+  }
+
+  const consecutiveSamples = previousConsecutiveSamples + 1;
+  if (consecutiveSamples >= Math.max(1, requiredSamples)) {
+    return { evaluation, consecutiveSamples };
+  }
+
+  const transientNotes = evaluation.alerts.map((alert) =>
+    alert.replace(/_(?:warn|critical)_/, "_transient_"),
+  );
+  return {
+    evaluation: {
+      status: "healthy",
+      alerts: [],
+      notes: Array.from(new Set([...evaluation.notes, ...transientNotes])),
+    },
+    consecutiveSamples,
+  };
+}
 
 export function healthStatusAllowsDoctor(
   status: unknown,
@@ -85,7 +124,7 @@ export function healthStatusAllowsDoctor(
 export function evaluateHealth(
   snapshot: HealthSnapshot,
   config: Partial<ThresholdConfig> = {},
-): { status: "healthy" | "degraded" | "critical"; alerts: string[]; notes: string[] } {
+): HealthEvaluation {
   const cfg = { ...DEFAULTS, ...config };
   const alerts: string[] = [];
   const notes: string[] = [];

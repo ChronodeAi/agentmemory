@@ -335,9 +335,16 @@ export function resolveProjectConfig(cwd = process.cwd()): AgentmemoryProjectCon
           : join(root, explicitOverride),
       )
     : getUserProjectConfigPath(root);
+  const repository = readConfigFile(manifestPath) ?? {};
+  const user = readConfigFile(overridePath) ?? {};
+  const processLayer = envLayer(env);
+  const configuredProjectId =
+    asString(processLayer.project_id) ??
+    asString(user.project_id) ??
+    asString(repository.project_id);
   const inferred: ConfigLayer = {
     schema_version: 1,
-    project_id: inferProjectId(root),
+    project_id: configuredProjectId ?? inferProjectId(root),
     privacy: "strict",
     capture_profile: "balanced",
     source_roots: ["src", "test", "tests"],
@@ -351,9 +358,6 @@ export function resolveProjectConfig(cwd = process.cwd()): AgentmemoryProjectCon
     exclude_globs: [...DEFAULT_EXCLUDE_GLOBS],
     external_processing: false,
   };
-  const repository = readConfigFile(manifestPath) ?? {};
-  const user = readConfigFile(overridePath) ?? {};
-  const processLayer = envLayer(env);
   const highToLow = [processLayer, user, repository, inferred];
   const privacy = mostRestrictivePrivacy([
     repository,

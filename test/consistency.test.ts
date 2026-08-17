@@ -82,6 +82,14 @@ describe("Consistency checks", () => {
     }
   });
 
+  it("publishes the bounded memory_sessions controls used by its skills", () => {
+    const sessions = getAllTools().find((tool) => tool.name === "memory_sessions");
+    expect(sessions?.inputSchema.properties).toMatchObject({
+      limit: { type: "number" },
+      format: { type: "string" },
+    });
+  });
+
   it("every host-path bind mount in docker-compose.yml is in the published files list (#136)", () => {
     // Regression guard for #136: docker-compose.yml references
     // ./iii-config.docker.yaml as a read-only bind mount, but the file

@@ -48,6 +48,18 @@ describe("resolveProject — canonical hook project resolver", () => {
     expect(resolveProject(process.cwd())).toBe("my-override");
   });
 
+  it("does not inspect an unsafe remote when an explicit project is configured", () => {
+    const root = mkdtempSync(join(tmpdir(), "amem-local-remote-"));
+    execFileSync("git", ["init", "-q", root]);
+    execFileSync("git", ["-C", root, "remote", "add", "origin", root]);
+    process.env.AGENTMEMORY_PROJECT_NAME = "configured-project";
+    try {
+      expect(resolveProject(root)).toBe("configured-project");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("trims whitespace on env override", () => {
     process.env.AGENTMEMORY_PROJECT_NAME = "  spaced  ";
     expect(resolveProject("/var/log")).toBe("spaced");

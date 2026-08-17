@@ -4,7 +4,7 @@ import { totalmem } from "node:os";
 import type { HealthSnapshot } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV } from "../state/schema.js";
-import { evaluateHealth } from "./thresholds.js";
+import { evaluateHealth, stabilizeCpuPressure } from "./thresholds.js";
 import { getCaptureAdmissionMetrics } from "../functions/observe.js";
 import { logger } from "../logger.js";
 import { getProcessBootIdentity } from "../runtime-identity.js";
@@ -101,6 +101,7 @@ export function registerHealthMonitor(
   let prevCpuTime = Date.now();
   let healthyStreak = 0;
   let recovering = false;
+  let consecutiveCpuPressureSamples = 0;
   let previousRejected = 0;
   let previousFailed = 0;
   let previousScopeDenied = 0;
@@ -274,7 +275,12 @@ export function registerHealthMonitor(
       alerts: [],
     };
 
-    const evaluated = evaluateHealth(snapshot);
+    const stabilized = stabilizeCpuPressure(
+      evaluateHealth(snapshot),
+      consecutiveCpuPressureSamples,
+    );
+    consecutiveCpuPressureSamples = stabilized.consecutiveSamples;
+    const evaluated = stabilized.evaluation;
     if (evaluated.status === "healthy") {
       healthyStreak += 1;
       if (recovering && healthyStreak < 3) {

@@ -48,7 +48,7 @@ agentmemory exposes 59 MCP tools. 8 are in the lean core set (`--tools core` or 
 | `memory_save` | yes | `content`*: string, `type`: string, `concepts`: string, `files`: string, `project`: string, `scope`: string | Explicitly save an important insight, decision, or pattern to long-term memory. |
 | `memory_sentinel_create` |  | `name`*: string, `type`*: string, `config`: string, `linkedActionIds`: string, `expiresInMs`: number | Create an event-driven sentinel that watches for conditions (webhook, timer, threshold, pattern, approval) and auto-unblocks gated actions when triggered. |
 | `memory_sentinel_trigger` |  | `sentinelId`*: string, `result`: string | Externally fire a sentinel, providing an optional result payload. Unblocks any gated actions. |
-| `memory_sessions` | yes | `project`: string, `scope`: string | List recent sessions with their status and observation counts. |
+| `memory_sessions` | yes | `limit`: number, `format`: string, `project`: string, `scope`: string | List recent sessions with their status and observation counts. Returns a compact response by default. |
 | `memory_signal_read` |  | `agentId`*: string, `unreadOnly`: string, `threadId`: string, `limit`: number | Read messages for an agent. Marks delivered messages as read. |
 | `memory_signal_send` |  | `from`*: string, `to`: string, `content`*: string, `type`: string, `replyTo`: string | Send a message to another agent or broadcast. Supports threading, typed messages, and TTL expiration. |
 | `memory_sketch_create` |  | `title`*: string, `description`: string, `expiresInMs`: number, `project`: string | Create an ephemeral action graph for exploratory work. Auto-expires after TTL. Can be promoted to permanent actions or discarded. |

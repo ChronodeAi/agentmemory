@@ -374,10 +374,18 @@ const CORE_TOOLS = [
 	},
 	{
 		name: "memory_sessions",
-		description: "List recent sessions with their status and observation counts.",
+		description: "List recent sessions with their status and observation counts. Returns a compact response by default.",
 		inputSchema: {
 			type: "object",
 			properties: {
+				limit: {
+					type: "number",
+					description: "Max sessions to return (default 20, max 100)."
+				},
+				format: {
+					type: "string",
+					description: "Response detail: compact (default) or full for forensic inspection."
+				},
 				project: {
 					type: "string",
 					description: "Canonical project ID. Required unless scope is explicitly global."
@@ -1639,7 +1647,7 @@ function getAllTools() {
 }
 //#endregion
 //#region src/version.ts
-const VERSION = "0.9.28-chronode.8";
+const VERSION = "0.9.28-chronode.9";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
 //#endregion
@@ -1917,6 +1925,39 @@ function textResponse(payload, pretty = false) {
 		text: JSON.stringify(payload, null, pretty ? 2 : 0)
 	}] };
 }
+function compactSessionPayload(payload) {
+	if (!payload || typeof payload !== "object" || Array.isArray(payload)) return payload;
+	const record = payload;
+	if (!Array.isArray(record["sessions"])) return payload;
+	const sessions = record["sessions"].map((value) => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+		const session = value;
+		const summary = session["summary"] && typeof session["summary"] === "object" && !Array.isArray(session["summary"]) ? session["summary"] : void 0;
+		return {
+			id: session["id"],
+			agentId: session["agentId"],
+			project: session["project"],
+			cwd: session["cwd"],
+			status: session["status"],
+			startedAt: session["startedAt"],
+			updatedAt: session["updatedAt"],
+			endedAt: session["endedAt"],
+			observationCount: session["observationCount"],
+			retainedObservationCount: session["retainedObservationCount"],
+			commitShas: session["commitShas"],
+			firstPrompt: session["firstPrompt"],
+			...summary ? { summary: {
+				title: summary["title"],
+				narrative: summary["narrative"],
+				createdAt: summary["createdAt"]
+			} } : {}
+		};
+	});
+	return {
+		...record,
+		sessions
+	};
+}
 function applyProjectScope(validated, args) {
 	const project = typeof args["project"] === "string" && args["project"].trim() ? args["project"].trim() : void 0;
 	if (args["scope"] === "global") {
@@ -1959,6 +2000,7 @@ function validate(toolName, args) {
 		}
 		case "memory_sessions":
 			v.limit = parseLimit(args["limit"], 20);
+			v.format = args["format"] === "full" ? "full" : "compact";
 			applyProjectScope(v, args);
 			return v;
 		case "memory_governance_delete": {
@@ -2016,7 +2058,10 @@ async function handleProxy(v, handle) {
 				body: JSON.stringify(body)
 			}), true);
 		}
-		case "memory_sessions": return textResponse(await handle.call(`/agentmemory/sessions?limit=${v.limit}&${v.scope === "global" ? "scope=global" : `project=${encodeURIComponent(v.project ?? "")}`}`, { method: "GET" }), true);
+		case "memory_sessions": {
+			const result = await handle.call(`/agentmemory/sessions?limit=${v.limit}&${v.scope === "global" ? "scope=global" : `project=${encodeURIComponent(v.project ?? "")}`}`, { method: "GET" });
+			return textResponse(v.format === "full" ? result : compactSessionPayload(result), true);
+		}
 		case "memory_governance_delete": return textResponse(await handle.call("/agentmemory/governance/memories", {
 			method: "DELETE",
 			body: JSON.stringify({
@@ -2074,7 +2119,12 @@ async function handleLocal(v, kvInstance) {
 		case "memory_sessions": {
 			const sessions = await kvInstance.list("mem:sessions");
 			const limit = v.limit ?? 20;
-			return textResponse({ sessions: sessions.filter((session) => v.scope === "global" || session["project"] === v.project).slice(0, limit) }, true);
+			const scoped = sessions.filter((session) => v.scope === "global" || session["project"] === v.project);
+			const payload = {
+				sessions: scoped.slice(0, limit),
+				total: scoped.length
+			};
+			return textResponse(v.format === "full" ? payload : compactSessionPayload(payload), true);
 		}
 		case "memory_governance_delete": {
 			let deleted = 0;

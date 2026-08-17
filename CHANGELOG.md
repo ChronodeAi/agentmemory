@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- Debounced CPU-only health alerts until pressure is observed in two consecutive health samples. Short iii-engine work bursts remain visible as notes without flapping the dashboard between healthy and degraded; sustained CPU pressure and all mixed or non-CPU failures retain their existing severity.
+- Published the existing bounded `memory_sessions.limit` control in the MCP schema and return compact session records by default. Explicit `format: full` preserves forensic detail without forcing child-agent and pipeline metadata into routine agent context.
+- Deferred Git-derived project identity until process, user, and repository configuration layers are checked, so an explicit project ID retains precedence even when a local remote cannot be normalized safely.
+- Added a bounded polling backend to the optional filesystem watcher for affected Node 24/macOS 26 hosts where native file events are silent. Polling is isolated from the core service, defaults to a five-second cadence, and fails closed above 20,000 tracked files.
+
 ## [0.9.28] — 2026-07-19
 
 Patch release: hardens the hook runner against malformed payloads and closes a cross-agent context leak. No breaking changes; drop-in upgrade.

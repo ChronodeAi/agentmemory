@@ -85,7 +85,18 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
       }
       if (url.includes("/agentmemory/sessions")) {
         return new Response(
-          JSON.stringify({ sessions: [{ id: "sess-1", observations: 69 }] }),
+          JSON.stringify({
+            sessions: [{
+              id: "sess-1",
+              observationCount: 69,
+              childAgentIds: Array.from({ length: 50 }, (_, i) => `child-${i}`),
+              summary: {
+                title: "Useful summary",
+                narrative: "Bounded narrative",
+                concepts: Array.from({ length: 50 }, (_, i) => `concept-${i}`),
+              },
+            }],
+          }),
           { status: 200, headers: { "content-type": "application/json" } },
         );
       }
@@ -96,7 +107,32 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     const body = JSON.parse(res.content[0].text);
     expect(body.sessions).toHaveLength(1);
     expect(body.sessions[0].id).toBe("sess-1");
-    expect(calls.find((c) => c.url.includes("/sessions"))).toBeDefined();
+    expect(body.sessions[0].observationCount).toBe(69);
+    expect(body.sessions[0].childAgentIds).toBeUndefined();
+    expect(body.sessions[0].summary).toEqual({
+      title: "Useful summary",
+      narrative: "Bounded narrative",
+    });
+    expect(calls.find((c) => c.url.includes("/sessions?limit=5"))).toBeDefined();
+  });
+
+  it("keeps full session detail only when explicitly requested", async () => {
+    installFetch((url) => {
+      if (url.endsWith("/agentmemory/livez")) return new Response("ok");
+      if (url.includes("/agentmemory/sessions")) {
+        return Response.json({
+          sessions: [{ id: "sess-1", childAgentIds: ["child-1"] }],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const res = await handleToolCall("memory_sessions", {
+      limit: 1,
+      format: "full",
+    });
+    const body = JSON.parse(res.content[0].text);
+    expect(body.sessions[0].childAgentIds).toEqual(["child-1"]);
   });
 
   it("proxies memory_smart_search to POST /agentmemory/smart-search", async () => {

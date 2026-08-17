@@ -364,6 +364,7 @@ describe("handleToolCall", () => {
       await kv.set("mem:sessions", `ses_${i}`, {
         id: `ses_${i}`,
         project: "demo",
+        childAgentIds: [`child_${i}`],
       });
     }
     const result = await handleToolCall(
@@ -373,6 +374,19 @@ describe("handleToolCall", () => {
     );
     const parsed = JSON.parse(result.content[0].text);
     expect(parsed.sessions).toHaveLength(2);
+    expect(parsed.total).toBe(5);
+    expect(parsed.sessions[0].childAgentIds).toBeUndefined();
+
+    const full = JSON.parse(
+      (
+        await handleToolCall(
+          "memory_sessions",
+          { limit: 1, format: "full" },
+          kv,
+        )
+      ).content[0].text,
+    );
+    expect(full.sessions[0].childAgentIds).toHaveLength(1);
   });
 
   it("parseLimit clamps bad/malicious limit values to a safe range", async () => {

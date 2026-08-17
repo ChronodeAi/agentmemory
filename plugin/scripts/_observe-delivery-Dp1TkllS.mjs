@@ -1,4 +1,4 @@
-import { n as projectAuthHeaders } from "./_auth-CsB97Q7t.mjs";
+import { n as projectAuthHeaders } from "./_auth-r09nwS46.mjs";
 //#region src/hooks/_observe-delivery.ts
 const MAX_ATTEMPTS = 2;
 const REQUEST_TIMEOUT_MS = 250;

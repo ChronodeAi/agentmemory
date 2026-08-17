@@ -42,6 +42,9 @@ Requires Node.js **>=20 LTS**. Recursive `fs.watch` needs Node 19.1.0+ on Linux;
 | `AGENTMEMORY_FS_WATCH_DIRS` | — | Comma-separated list of directories to watch |
 | `AGENTMEMORY_FS_WATCH_IGNORE` | — | Comma-separated regex patterns to ignore (applied to relative paths) |
 | `AGENTMEMORY_FS_WATCH_ALLOW_BINARY` | `0` | `1` to include binary files in the preview read |
+| `AGENTMEMORY_FS_WATCH_MODE` | `auto` | `native` or `poll`; `auto` uses bounded polling on affected Node/macOS combinations |
+| `AGENTMEMORY_FS_WATCH_POLL_INTERVAL_MS` | `5000` | Polling cadence in milliseconds (minimum `100`) |
+| `AGENTMEMORY_FS_WATCH_MAX_FILES` | `20000` | Fail-closed ceiling for files tracked by the polling backend |
 | `AGENTMEMORY_URL` | `http://localhost:3111` | agentmemory server URL |
 | `AGENTMEMORY_SECRET` | — | Bearer token, required if the server has `AGENTMEMORY_SECRET` set |
 | `AGENTMEMORY_PROJECT` | — | Optional project label attached to each observation |

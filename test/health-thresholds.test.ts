@@ -4,6 +4,7 @@ import {
   evaluateHealth,
   healthStatusAllowsDoctor,
   healthStatusExitCode,
+  stabilizeCpuPressure,
 } from "../src/health/thresholds.js";
 import type { HealthSnapshot } from "../src/types.js";
 import { mockKV, mockSdk } from "./helpers/mocks.js";
@@ -47,6 +48,8 @@ describe("evaluateHealth memory severity", () => {
     expect(healthStatusAllowsDoctor("healthy", [])).toBe(true);
     expect(healthStatusAllowsDoctor("degraded", ["cpu_warn_83%"]))
       .toBe(true);
+    expect(healthStatusAllowsDoctor("degraded", ["engine_cpu_warn_72%"]))
+      .toBe(true);
     expect(
       healthStatusAllowsDoctor("degraded", [
         "event_loop_lag_warn_272ms",
@@ -59,6 +62,55 @@ describe("evaluateHealth memory severity", () => {
     expect(healthStatusAllowsDoctor("critical", ["cpu_warn_83%"]))
       .toBe(false);
     expect(healthStatusAllowsDoctor("unknown", [])).toBe(false);
+  });
+
+  it("requires consecutive CPU-only pressure samples before changing health", () => {
+    const evaluated = evaluateHealth(
+      snap({
+        engineResources: {
+          status: "ok",
+          pid: 42,
+          cpuPercent: 90,
+          rssBytes: 0,
+        },
+      }),
+    );
+
+    const first = stabilizeCpuPressure(evaluated, 0);
+    expect(first).toEqual({
+      evaluation: {
+        status: "healthy",
+        alerts: [],
+        notes: ["engine_cpu_transient_90%"],
+      },
+      consecutiveSamples: 1,
+    });
+
+    const second = stabilizeCpuPressure(evaluated, first.consecutiveSamples);
+    expect(second.evaluation).toMatchObject({
+      status: "critical",
+      alerts: ["engine_cpu_critical_90%"],
+    });
+    expect(second.consecutiveSamples).toBe(2);
+  });
+
+  it("does not debounce CPU pressure when another health failure is present", () => {
+    const evaluated = evaluateHealth(
+      snap({
+        kvConnectivity: { status: "error", error: "synthetic" },
+        engineResources: {
+          status: "ok",
+          pid: 42,
+          cpuPercent: 90,
+          rssBytes: 0,
+        },
+      }),
+    );
+
+    expect(stabilizeCpuPressure(evaluated, 0)).toEqual({
+      evaluation: evaluated,
+      consecutiveSamples: 0,
+    });
   });
 
   it("classifies iii engine CPU and RSS independently from Node", () => {
