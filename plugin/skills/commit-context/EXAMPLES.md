@@ -14,7 +14,7 @@ git blame -L 40,52 src/auth/refresh.ts
 Look it up:
 
 ```json
-memory_commit_lookup { "sha": "9a1b2c3d4e5f60718293a4b5c6d7e8f901234567" }
+memory_commit_lookup { "project": "github.com/example/repository", "sha": "9a1b2c3d4e5f60718293a4b5c6d7e8f901234567" }
 ```
 
 Response:
@@ -44,7 +44,7 @@ git log -L :validateScope:src/auth/scope.ts -n 1
 ```
 
 ```json
-memory_commit_lookup { "sha": "1122aabbccddeeff00112233445566778899aabb" }
+memory_commit_lookup { "project": "github.com/example/repository", "sha": "1122aabbccddeeff00112233445566778899aabb" }
 ```
 
 Response:
@@ -67,5 +67,6 @@ User: "Give me context on src/middleware/limit.ts."
 git log -n 1 -- src/middleware/limit.ts
 ```
 
-Take the SHA, run `memory_commit_lookup`, present commit plus linked session in
+Take the SHA, run `memory_commit_lookup` with
+`"project": "github.com/example/repository"`, then present commit plus linked session in
 the same shape as example 1.

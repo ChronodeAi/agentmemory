@@ -67,7 +67,7 @@ describe("Tool count consistency", () => {
         '"project": "github.com/example/repository"',
       );
     }
-    for (const skill of scopedSkills.slice(0, 6)) {
+    for (const skill of scopedSkills) {
       expect(readText(`plugin/skills/${skill}/EXAMPLES.md`), skill).toContain(
         '"project": "github.com/example/repository"',
       );
