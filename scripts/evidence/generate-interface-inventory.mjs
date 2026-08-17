@@ -25,6 +25,7 @@ const publicRoutes = new Set([
   "GET /agentmemory/livez",
 ]);
 const inventoryInputPaths = new Set([
+  "scripts/evidence/generate-interface-inventory.mjs",
   "src/triggers/api.ts",
   "src/mcp/server.ts",
   "src/mcp/standalone.ts",
@@ -296,13 +297,15 @@ function providerFiles(path) {
   return files;
 }
 
+function runGit(args) {
+  return execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  }).trim();
+}
+
 function repositoryIdentity(paths) {
-  const runGit = (args) =>
-    execFileSync("git", args, {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
   const digest = createHash("sha256");
   for (const path of [...paths].sort()) {
     digest.update(path);
@@ -525,13 +528,21 @@ function standaloneTools() {
   const tools = [];
   walk(file, (node) => {
     if (
-      ts.isNewExpression(node) &&
-      node.expression.getText(file) === "Set" &&
-      node.arguments?.[0] &&
-      ts.isArrayLiteralExpression(node.arguments[0])
+      !ts.isVariableDeclaration(node) ||
+      node.name.getText(file) !== "IMPLEMENTED_TOOLS" ||
+      !node.initializer ||
+      !ts.isNewExpression(node.initializer) ||
+      node.initializer.expression.getText(file) !== "Set" ||
+      !node.initializer.arguments?.[0] ||
+      !ts.isArrayLiteralExpression(node.initializer.arguments[0])
     ) {
-      tools.push(...node.arguments[0].elements.map(stringValue).filter(Boolean));
+      return;
     }
+    tools.push(
+      ...node.initializer.arguments[0].elements
+        .map(stringValue)
+        .filter(Boolean),
+    );
   });
   return tools.sort();
 }
@@ -753,7 +764,44 @@ const inventory = {
 const rendered = `${JSON.stringify(inventory, null, 2)}\n`;
 if (checkOnly) {
   const existing = readFileSync(outputPath, "utf8");
-  if (existing !== rendered) {
+  const stored = JSON.parse(existing);
+  const storedCommit = stored?.source_identity?.commit_sha;
+  const storedTree = stored?.source_identity?.commit_tree_sha;
+  if (
+    typeof storedCommit !== "string" ||
+    !/^[a-f0-9]{40}$/.test(storedCommit) ||
+    typeof storedTree !== "string" ||
+    !/^[a-f0-9]{40}$/.test(storedTree)
+  ) {
+    throw new Error(
+      `${relative(root, outputPath)} has invalid source identity`,
+    );
+  }
+  const actualStoredTree = runGit(["rev-parse", `${storedCommit}^{tree}`]);
+  if (actualStoredTree !== storedTree) {
+    throw new Error(
+      `${relative(root, outputPath)} source tree does not match its commit`,
+    );
+  }
+  try {
+    execFileSync("git", ["merge-base", "--is-ancestor", storedCommit, "HEAD"], {
+      cwd: root,
+      stdio: "ignore",
+    });
+  } catch {
+    throw new Error(
+      `${relative(root, outputPath)} source commit is not an ancestor of HEAD`,
+    );
+  }
+  const comparable = {
+    ...inventory,
+    source_identity: {
+      ...inventory.source_identity,
+      commit_sha: storedCommit,
+      commit_tree_sha: storedTree,
+    },
+  };
+  if (existing !== `${JSON.stringify(comparable, null, 2)}\n`) {
     throw new Error(
       `${relative(root, outputPath)} is stale; run npm run evidence:interfaces`,
     );

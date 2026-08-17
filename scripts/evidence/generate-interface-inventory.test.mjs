@@ -21,6 +21,17 @@ test("generates the complete governed interface denominator", () => {
       ],
       { cwd: root, stdio: "pipe" },
     );
+    execFileSync(
+      process.execPath,
+      [
+        "--import",
+        "tsx",
+        "scripts/evidence/generate-interface-inventory.mjs",
+        `--output=${output}`,
+        "--check",
+      ],
+      { cwd: root, stdio: "pipe" },
+    );
     const inventory = JSON.parse(readFileSync(output, "utf8"));
     assert.equal(inventory.counts.http_routes, 135);
     assert.equal(inventory.counts.missing_auth_routes, 0);
