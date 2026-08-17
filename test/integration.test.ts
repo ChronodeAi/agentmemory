@@ -147,7 +147,7 @@ describe("agentmemory integration", () => {
     const OBS_SESSION = `test_obs_${Date.now()}`;
 
     beforeAll(async () => {
-      await fetch(url("/agentmemory/session/start"), {
+      const res = await fetch(url("/agentmemory/session/start"), {
         method: "POST",
         headers: authHeaders(PROJECT),
         body: JSON.stringify({
@@ -156,7 +156,8 @@ describe("agentmemory integration", () => {
           cwd: PROJECT_ROOT,
         }),
       });
-    });
+      expect(res.status).toBe(200);
+    }, 30_000);
 
     afterAll(async () => {
       await fetch(url("/agentmemory/session/end"), {
@@ -164,7 +165,7 @@ describe("agentmemory integration", () => {
         headers: authHeaders(PROJECT),
         body: JSON.stringify({ sessionId: OBS_SESSION, project: PROJECT }),
       });
-    });
+    }, 30_000);
 
     it("captures an observation", async () => {
       const res = await fetch(url("/agentmemory/observe"), {
