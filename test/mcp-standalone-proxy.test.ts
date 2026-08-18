@@ -2,7 +2,10 @@ import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { handleToolCall as rawHandleToolCall } from "../src/mcp/standalone.js";
+import {
+  handleToolCall as rawHandleToolCall,
+  handleToolsList,
+} from "../src/mcp/standalone.js";
 import { resetHandleForTests } from "../src/mcp/rest-proxy.js";
 import { InMemoryKV } from "../src/mcp/in-memory-kv.js";
 import {
@@ -306,6 +309,87 @@ describe("@agentmemory/mcp standalone — server proxy (issue #159)", () => {
     );
     expect(authByPath.get("/agentmemory/sessions")).toBe(
       "Bearer admin-secret",
+    );
+  });
+
+  it("uses the administrative credential to list the remote tool surface in strict mode", async () => {
+    process.env["AGENTMEMORY_SECRET"] = "project-secret";
+    process.env["AGENTMEMORY_ADMIN_SECRET"] = "admin-secret";
+    process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"] = "true";
+    const authByPath = new Map<string, string | undefined>();
+    installFetch((url, init) => {
+      const path = new URL(url).pathname;
+      authByPath.set(
+        path,
+        (init?.headers as Record<string, string> | undefined)?.authorization,
+      );
+      if (path === "/agentmemory/livez") {
+        return new Response("ok", { status: 200 });
+      }
+      if (path === "/agentmemory/mcp/tools") {
+        return Response.json({
+          tools: [
+            {
+              name: "memory_context_packet",
+              description: "remote-only sentinel",
+              inputSchema: { type: "object", properties: {} },
+            },
+          ],
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    const listed = await handleToolsList();
+
+    expect(authByPath.get("/agentmemory/livez")).toBe(
+      "Bearer project-secret",
+    );
+    expect(authByPath.get("/agentmemory/mcp/tools")).toBe(
+      "Bearer admin-secret",
+    );
+    expect((listed.tools as Array<{ name: string }>).map((tool) => tool.name)).toEqual([
+      "memory_context_packet",
+    ]);
+  });
+
+  it("fails closed when a reachable server rejects the remote tool catalog", async () => {
+    process.env["AGENTMEMORY_SECRET"] = "project-secret";
+    process.env["AGENTMEMORY_ADMIN_SECRET"] = "wrong-admin-secret";
+    process.env["AGENTMEMORY_STRICT_CAPABILITY_MODE"] = "true";
+    installFetch((url) => {
+      const path = new URL(url).pathname;
+      if (path === "/agentmemory/livez") {
+        return new Response("ok", { status: 200 });
+      }
+      if (path === "/agentmemory/mcp/tools") {
+        return new Response("forbidden", {
+          status: 403,
+          statusText: "Forbidden",
+        });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(handleToolsList()).rejects.toThrow(
+      "GET /agentmemory/mcp/tools -> 403 Forbidden",
+    );
+  });
+
+  it("fails closed when a reachable server returns an invalid tool catalog", async () => {
+    installFetch((url) => {
+      const path = new URL(url).pathname;
+      if (path === "/agentmemory/livez") {
+        return new Response("ok", { status: 200 });
+      }
+      if (path === "/agentmemory/mcp/tools") {
+        return Response.json({ status: "healthy" });
+      }
+      return new Response("not found", { status: 404 });
+    });
+
+    await expect(handleToolsList()).rejects.toThrow(
+      "agentmemory server returned an invalid MCP tool catalog",
     );
   });
 

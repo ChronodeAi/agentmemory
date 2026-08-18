@@ -1740,7 +1740,7 @@ function getAllTools() {
 }
 //#endregion
 //#region src/version.ts
-const VERSION = "0.9.28-chronode.10";
+const VERSION = "0.9.28-chronode.11";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
 //#endregion
@@ -1921,6 +1921,10 @@ function authHeader() {
 	const secret = agentmemorySecret();
 	return secret ? { authorization: `Bearer ${secret}` } : {};
 }
+function administrativeAuthHeader() {
+	const secret = secretFromEnvironmentOrFile("AGENTMEMORY_ADMIN_SECRET", "AGENTMEMORY_ADMIN_SECRET_FILE") || agentmemorySecret();
+	return secret ? { authorization: `Bearer ${secret}` } : {};
+}
 function requestBody(init) {
 	if (typeof init?.body !== "string") return {};
 	try {
@@ -1937,10 +1941,9 @@ function requestAuthHeaders(path, init) {
 	const scope = body["scope"] ?? argumentsBody["scope"] ?? parsedUrl.searchParams.get("scope");
 	const projectValue = body["project"] ?? argumentsBody["project"] ?? parsedUrl.searchParams.get("project");
 	const project = typeof projectValue === "string" ? projectValue.trim() : "";
-	if (scope === "global" || parsedUrl.pathname === "/agentmemory/migrate") {
-		const secret = secretFromEnvironmentOrFile("AGENTMEMORY_ADMIN_SECRET", "AGENTMEMORY_ADMIN_SECRET_FILE") || agentmemorySecret();
-		return secret ? { authorization: `Bearer ${secret}` } : {};
-	}
+	const method = (init?.method ?? "GET").toUpperCase();
+	const listsMcpTools = parsedUrl.pathname === "/agentmemory/mcp/tools" && method === "GET";
+	if (scope === "global" || parsedUrl.pathname === "/agentmemory/migrate" || listsMcpTools) return administrativeAuthHeader();
 	if (!project) return authHeader();
 	return {
 		authorization: `Bearer ${projectCapability(project)}`,
@@ -2375,10 +2378,11 @@ async function handleToolsList() {
 			if (debug) process.stderr.write(`[@agentmemory/mcp] tools/list: returning ${remote.tools.length} tools from server\n`);
 			return { tools: remote.tools };
 		}
-		process.stderr.write(`[@agentmemory/mcp] tools/list: server returned unexpected shape (no .tools array); falling back to local IMPLEMENTED_TOOLS list. Set AGENTMEMORY_DEBUG=1 to inspect response.\n`);
+		throw new Error("agentmemory server returned an invalid MCP tool catalog");
 	} catch (err) {
-		process.stderr.write(`[@agentmemory/mcp] tools/list proxy failed: ${err instanceof Error ? err.message : String(err)}; falling back to local list\n`);
+		process.stderr.write(`[@agentmemory/mcp] tools/list proxy failed: ${err instanceof Error ? err.message : String(err)}; refusing local fallback because the server is reachable\n`);
 		invalidateHandle();
+		throw err;
 	}
 	const fallback = getAllTools().filter((t) => IMPLEMENTED_TOOLS.has(t.name));
 	if (debug) process.stderr.write(`[@agentmemory/mcp] tools/list: returning ${fallback.length} local fallback tools (${fallback.map((t) => t.name).join(",")})\n`);
