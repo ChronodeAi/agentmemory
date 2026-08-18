@@ -130,21 +130,26 @@ describe("Tools Registry", () => {
     }
   });
 
-  it("advertises the same project-scope requirement enforced at runtime", () => {
+  it("advertises provider-compatible project scope without schema unions", () => {
     const tools = new Map(getAllTools().map((tool) => [tool.name, tool]));
     for (const name of ADVERTISED_PROJECT_SCOPED_TOOLS) {
       const schema = tools.get(name)?.inputSchema;
       expect(schema, name).toBeDefined();
-      expect(schema?.oneOf, name).toEqual(
-        expect.arrayContaining([
-          { required: ["project"] },
-          {
-            required: ["scope"],
-            properties: { scope: { const: "global" } },
-          },
-        ]),
+      expect(schema, name).not.toHaveProperty("oneOf");
+      expect(schema, name).not.toHaveProperty("anyOf");
+      expect(schema, name).not.toHaveProperty("allOf");
+      expect(schema?.properties.project, name).toBeDefined();
+      expect(schema?.properties.project?.description, name).toMatch(
+        /required unless scope is explicitly global/i,
       );
+      expect(schema?.properties.scope?.enum, name).toEqual(["global"]);
     }
+  });
+
+  it("keeps project scope fail-closed at runtime", async () => {
+    await expect(
+      rawHandleToolCall("memory_sessions", {}, new InMemoryKV()),
+    ).rejects.toThrow("project is required unless scope is explicitly global");
   });
 
   it("rejects ambiguous project plus global scope in local fallback", async () => {
