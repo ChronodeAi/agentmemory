@@ -191,6 +191,15 @@ function authHeader(): Record<string, string> {
   return secret ? { authorization: `Bearer ${secret}` } : {};
 }
 
+function administrativeAuthHeader(): Record<string, string> {
+  const adminSecret = secretFromEnvironmentOrFile(
+    "AGENTMEMORY_ADMIN_SECRET",
+    "AGENTMEMORY_ADMIN_SECRET_FILE",
+  );
+  const secret = adminSecret || agentmemorySecret();
+  return secret ? { authorization: `Bearer ${secret}` } : {};
+}
+
 function requestBody(init?: RequestInit): Record<string, unknown> {
   if (typeof init?.body !== "string") return {};
   try {
@@ -225,14 +234,16 @@ function requestAuthHeaders(
     parsedUrl.searchParams.get("project");
   const project =
     typeof projectValue === "string" ? projectValue.trim() : "";
+  const method = (init?.method ?? "GET").toUpperCase();
+  const listsMcpTools =
+    parsedUrl.pathname === "/agentmemory/mcp/tools" && method === "GET";
 
-  if (scope === "global" || parsedUrl.pathname === "/agentmemory/migrate") {
-    const adminSecret = secretFromEnvironmentOrFile(
-      "AGENTMEMORY_ADMIN_SECRET",
-      "AGENTMEMORY_ADMIN_SECRET_FILE",
-    );
-    const secret = adminSecret || agentmemorySecret();
-    return secret ? { authorization: `Bearer ${secret}` } : {};
+  if (
+    scope === "global" ||
+    parsedUrl.pathname === "/agentmemory/migrate" ||
+    listsMcpTools
+  ) {
+    return administrativeAuthHeader();
   }
   if (!project) return authHeader();
   const capability = projectCapability(project);

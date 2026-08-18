@@ -587,14 +587,15 @@ export async function handleToolsList(): Promise<{ tools: unknown[] }> {
         }
         return { tools: remote.tools };
       }
-      process.stderr.write(
-        `[@agentmemory/mcp] tools/list: server returned unexpected shape (no .tools array); falling back to local IMPLEMENTED_TOOLS list. Set AGENTMEMORY_DEBUG=1 to inspect response.\n`,
+      throw new Error(
+        "agentmemory server returned an invalid MCP tool catalog",
       );
     } catch (err) {
       process.stderr.write(
-        `[@agentmemory/mcp] tools/list proxy failed: ${err instanceof Error ? err.message : String(err)}; falling back to local list\n`,
+        `[@agentmemory/mcp] tools/list proxy failed: ${err instanceof Error ? err.message : String(err)}; refusing local fallback because the server is reachable\n`,
       );
       invalidateHandle();
+      throw err;
     }
   }
   const fallback = getAllTools().filter((t) => IMPLEMENTED_TOOLS.has(t.name));
