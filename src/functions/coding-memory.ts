@@ -21,6 +21,23 @@ import {
 import type { AccessLog } from "./access-tracker.js";
 import { recordAudit } from "./audit.js";
 import { timingSafeCompare } from "../auth.js";
+import {
+  hasRichCommitProvenance,
+  parseCommitProvenanceTransitions,
+  parseCredentialFreeWorktreeId,
+  parseGitObjectId,
+} from "../commit-provenance.js";
+import {
+  evaluateContextCandidate,
+  type ContextEligibilityDecision,
+  type ContextEligibilityReason,
+} from "../context-eligibility.js";
+
+export { evaluateContextCandidate } from "../context-eligibility.js";
+export type {
+  ContextEligibilityDecision,
+  ContextEligibilityReason,
+} from "../context-eligibility.js";
 
 interface InjectionMetrics {
   samplesMs: number[];
@@ -37,26 +54,10 @@ export type ContextSourceName =
   | "file_history";
 type ContextSourceStatus = "ok" | "unavailable" | "failed";
 
-export type ContextEligibilityReason =
-  | "expired"
-  | "deleted"
-  | "superseded"
-  | "contradicted"
-  | "unaccepted_gate_authority"
-  | "recalled_only"
-  | "stale_against_verified_lesson"
-  | "low_signal_after_verified_lesson"
-  | "provenance_missing";
-
 export interface ContextEligibilityExclusion {
   source: ContextSourceName;
   candidateId?: string;
   reason: ContextEligibilityReason;
-}
-
-export interface ContextEligibilityDecision {
-  eligible: boolean;
-  reason?: ContextEligibilityReason;
 }
 
 export interface ContextSourcePolicy {
@@ -353,98 +354,6 @@ function sourceRequired(
     contextClass === "gate-critical" &&
     CONTEXT_SOURCE_POLICIES[source].gateCritical === "required"
   );
-}
-
-function stringValue(
-  candidate: Record<string, unknown>,
-  key: string,
-): string | undefined {
-  const value = candidate[key];
-  return typeof value === "string" && value.trim()
-    ? value.trim()
-    : undefined;
-}
-
-function stringList(
-  candidate: Record<string, unknown>,
-  key: string,
-): string[] {
-  const value = candidate[key];
-  return Array.isArray(value)
-    ? value.filter(
-        (entry): entry is string =>
-          typeof entry === "string" && Boolean(entry.trim()),
-      )
-    : [];
-}
-
-export function evaluateContextCandidate(
-  candidate: Record<string, unknown>,
-  options: {
-    contextClass: ContextClass;
-    candidateId?: string;
-    now?: number;
-  },
-): ContextEligibilityDecision {
-  const status = stringValue(candidate, "status")?.toLowerCase();
-  const now = options.now ?? Date.now();
-  const expiry =
-    stringValue(candidate, "expiresAt") ??
-    stringValue(candidate, "forgetAfter");
-  if (expiry) {
-    const expiresAt = new Date(expiry).getTime();
-    if (!Number.isFinite(expiresAt) || expiresAt <= now) {
-      return { eligible: false, reason: "expired" };
-    }
-  }
-  if (candidate["deleted"] === true || status === "deleted") {
-    return { eligible: false, reason: "deleted" };
-  }
-  if (
-    candidate["isLatest"] === false ||
-    status === "superseded" ||
-    stringValue(candidate, "supersededBy")
-  ) {
-    return { eligible: false, reason: "superseded" };
-  }
-  if (candidate["contradicted"] === true || status === "contradicted") {
-    return { eligible: false, reason: "contradicted" };
-  }
-  const gateAuthority =
-    candidate["gateAuthority"] === true ||
-    stringValue(candidate, "authority")?.toLowerCase() === "gate";
-  const accepted =
-    candidate["accepted"] === true ||
-    status === "accepted" ||
-    stringValue(candidate, "authorityStatus")?.toLowerCase() === "accepted";
-  if (
-    options.contextClass === "gate-critical" &&
-    gateAuthority &&
-    !accepted
-  ) {
-    return { eligible: false, reason: "unaccepted_gate_authority" };
-  }
-  const tags = stringList(candidate, "tags").map((tag) => tag.toLowerCase());
-  if (
-    candidate["recalledOnly"] === true ||
-    stringValue(candidate, "source")?.toLowerCase() === "recall" ||
-    tags.includes("recalled-only")
-  ) {
-    return { eligible: false, reason: "recalled_only" };
-  }
-  const provenanceIds = [
-    options.candidateId,
-    stringValue(candidate, "id"),
-    stringValue(candidate, "obsId"),
-    ...stringList(candidate, "sourceIds"),
-    ...stringList(candidate, "sourceObservationIds"),
-    stringValue(candidate, "commitSha"),
-    stringValue(candidate, "receiptId"),
-  ].filter((value): value is string => Boolean(value));
-  if (provenanceIds.length === 0) {
-    return { eligible: false, reason: "provenance_missing" };
-  }
-  return { eligible: true };
 }
 
 function selectEligible<T>(
@@ -1471,14 +1380,51 @@ export function registerCodingMemoryFunctions(
 
   sdk.registerFunction(
     "mem::commit-link",
-    async (data: { sha?: string; sessionId?: string; project?: string }) => {
-      const sha = typeof data.sha === "string" ? data.sha.trim() : "";
+    async (data: {
+      sha?: string;
+      sessionId?: string;
+      project?: string;
+      baseHeadSha?: string;
+      worktreeId?: string;
+      fileTransitions?: unknown;
+    }) => {
+      const rawSha = typeof data.sha === "string" ? data.sha.trim() : "";
       const project =
         typeof data.project === "string" ? data.project.trim() : "";
       const sessionId =
         typeof data.sessionId === "string" ? data.sessionId.trim() : undefined;
-      if (!sha || !project) {
+      const sha = parseGitObjectId(data.sha);
+      const baseHeadSha = parseGitObjectId(data.baseHeadSha);
+      const worktreeId = parseCredentialFreeWorktreeId(data.worktreeId);
+      const fileTransitions = parseCommitProvenanceTransitions(
+        data.fileTransitions,
+      );
+      if (!rawSha || !project) {
         return { success: false, error: "sha and project are required" };
+      }
+      if (!sha) {
+        return {
+          success: false,
+          error: "sha must be a full Git object ID",
+        };
+      }
+      if (baseHeadSha === null) {
+        return {
+          success: false,
+          error: "baseHeadSha must be a full Git object ID",
+        };
+      }
+      if (worktreeId === null) {
+        return {
+          success: false,
+          error: "worktreeId must be a credential-free worktree ID",
+        };
+      }
+      if (fileTransitions === null) {
+        return {
+          success: false,
+          error: "fileTransitions must contain valid commit provenance",
+        };
       }
       if (sessionId) {
         const session = await kv.get<Session>(KV.sessions, sessionId);
@@ -1503,6 +1449,9 @@ export function registerCodingMemoryFunctions(
             linkedAt: new Date().toISOString(),
           }),
           project,
+          baseHeadSha: baseHeadSha ?? existing?.baseHeadSha,
+          worktreeId: worktreeId ?? existing?.worktreeId,
+          fileTransitions: fileTransitions ?? existing?.fileTransitions,
           sessionIds: Array.from(sessionIds),
         };
         await kv.set(KV.commits, sha, value);
@@ -1535,6 +1484,7 @@ export function registerCodingMemoryFunctions(
         accesses,
         metrics,
         promotions,
+        allCommits,
       ] = await Promise.all([
         kv.list<Session>(KV.sessions),
         kv.list<Memory>(KV.memories),
@@ -1543,6 +1493,7 @@ export function registerCodingMemoryFunctions(
         kv.list<AccessLog>(KV.accessLog),
         kv.get<InjectionMetrics>(KV.projectMetrics(project), "injection"),
         kv.list<PromotionCandidate>(KV.promotionCandidates(project)),
+        kv.list<CommitLink>(KV.commits),
       ]);
       const sessions = allSessions.filter(
         (session) => session.project === project,
@@ -1582,8 +1533,22 @@ export function registerCodingMemoryFunctions(
       const substantive = sessions.filter(
         (session) => session.observationCount > 0,
       );
-      const commits = substantive.filter(
-        (session) => (session.commitShas?.length ?? 0) > 0,
+      const projectCommits = allCommits.filter(
+        (commit) => commit.project === project,
+      );
+      const linkedSessionIds = new Set(
+        projectCommits.flatMap((commit) => commit.sessionIds ?? []),
+      );
+      const richProvenanceSessionIds = new Set(
+        projectCommits
+          .filter((commit) => hasRichCommitProvenance(commit))
+          .flatMap((commit) => commit.sessionIds ?? []),
+      );
+      const linkedSessions = substantive.filter(
+        (session) => linkedSessionIds.has(session.id),
+      );
+      const richProvenanceSessions = substantive.filter((session) =>
+        richProvenanceSessionIds.has(session.id),
       );
       const scopedRecords =
         sessions.length + memories.length + lessons.length + insights.length;
@@ -1657,7 +1622,24 @@ export function registerCodingMemoryFunctions(
         injectionLatencyP95Ms: percentile95(metrics?.samplesMs ?? []),
         contextPackets: metrics?.packetCount ?? 0,
         commitCoverage:
-          substantive.length > 0 ? commits.length / substantive.length : 1,
+          substantive.length > 0
+            ? linkedSessions.length / substantive.length
+            : 1,
+        commitCoverageDetails: {
+          eligibleSessions: substantive.length,
+          linkedSessions: linkedSessions.length,
+          richProvenanceSessions: richProvenanceSessions.length,
+          missingSessionIds: substantive
+            .filter((session) => !linkedSessionIds.has(session.id))
+            .map((session) => session.id)
+            .slice(0, 20),
+          missingRichProvenanceSessionIds: substantive
+            .filter(
+              (session) => !richProvenanceSessionIds.has(session.id),
+            )
+            .map((session) => session.id)
+            .slice(0, 20),
+        },
         totals: {
           sessions: sessions.length,
           memories: memories.length,

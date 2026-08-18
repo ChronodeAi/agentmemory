@@ -217,6 +217,147 @@ describe("Smart Search Function", () => {
     expect(result.results).toEqual([]);
   });
 
+  it("applies context eligibility to compact and expanded observations", async () => {
+    const recalled = makeObs({
+      id: "obs_recalled",
+      sessionId: "ses_1",
+      recalledOnly: true,
+    });
+    await kv.set("mem:obs:ses_1", recalled.id, recalled);
+    searchResults = [
+      {
+        observation: recalled,
+        bm25Score: 0.9,
+        vectorScore: 0,
+        combinedScore: 0.9,
+        sessionId: "ses_1",
+      },
+    ];
+
+    const compact = (await sdk.trigger("mem::smart-search", {
+      query: "recalled guidance",
+      project: PROJECT,
+    })) as { results: CompactSearchResult[] };
+    const expanded = (await sdk.trigger("mem::smart-search", {
+      expandIds: [recalled.id],
+      project: PROJECT,
+    })) as { results: unknown[] };
+
+    expect(compact.results).toEqual([]);
+    expect(expanded.results).toEqual([]);
+  });
+
+  it.each([
+    ["expired", { forgetAfter: "2020-01-01T00:00:00.000Z" }],
+    ["deleted", { deleted: true }],
+    ["contradicted", { contradicted: true }],
+  ])("omits %s observations from compact recall", async (_label, state) => {
+    const ineligible = {
+      ...makeObs({ id: `obs_${_label}`, sessionId: "ses_1" }),
+      ...state,
+    } as CompressedObservation;
+    await kv.set("mem:obs:ses_1", ineligible.id, ineligible);
+    searchResults = [
+      {
+        observation: ineligible,
+        bm25Score: 0.9,
+        vectorScore: 0,
+        combinedScore: 0.9,
+        sessionId: "ses_1",
+      },
+    ];
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: _label,
+      project: PROJECT,
+    })) as { results: CompactSearchResult[] };
+
+    expect(result.results).toEqual([]);
+  });
+
+  it("rejects superseded memories and migration-quarantined rows", async () => {
+    const superseded = makeObs({
+      id: "mem_superseded",
+      sessionId: "memory",
+      title: "Old adapter posture",
+    });
+    searchResults = [
+      {
+        observation: superseded,
+        bm25Score: 0.95,
+        vectorScore: 0,
+        combinedScore: 0.95,
+        sessionId: "memory",
+      },
+      searchResults[0],
+    ];
+    await kv.set("mem:memories", superseded.id, {
+      id: superseded.id,
+      project: PROJECT,
+      createdAt: superseded.timestamp,
+      updatedAt: superseded.timestamp,
+      type: "fact",
+      title: superseded.title,
+      content: superseded.narrative,
+      concepts: [],
+      files: superseded.files,
+      sessionIds: [],
+      strength: 7,
+      isLatest: false,
+    });
+    await kv.set("mem:migration:quarantine", "quarantine-obs-1", {
+      id: "quarantine-obs-1",
+      sourceScope: "mem:obs:ses_1",
+      sourceKey: "obs_1",
+      reason: "missing-or-ambiguous-project",
+    });
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: "adapter",
+      scope: "global",
+    })) as { results: CompactSearchResult[] };
+
+    expect(result.results).toEqual([]);
+  });
+
+  it("uses memory authority when a saved memory points at a real session", async () => {
+    const superseded = makeObs({
+      id: "mem_session_superseded",
+      sessionId: "ses_1",
+      title: "Superseded session-linked memory",
+    });
+    await kv.set("mem:memories", superseded.id, {
+      id: superseded.id,
+      project: PROJECT,
+      createdAt: superseded.timestamp,
+      updatedAt: superseded.timestamp,
+      type: "fact",
+      title: superseded.title,
+      content: superseded.narrative,
+      concepts: [],
+      files: superseded.files,
+      sessionIds: ["ses_1"],
+      strength: 7,
+      isLatest: false,
+    });
+    searchResults = [
+      {
+        observation: superseded,
+        bm25Score: 0.95,
+        vectorScore: 0,
+        combinedScore: 0.95,
+        sessionId: "ses_1",
+      },
+    ];
+
+    const result = (await sdk.trigger("mem::smart-search", {
+      query: "session memory",
+      project: PROJECT,
+    })) as { results: CompactSearchResult[] };
+
+    expect(result.results).toEqual([]);
+  });
+
   it("expand returns empty for nonexistent observation IDs", async () => {
     const result = (await sdk.trigger("mem::smart-search", {
       expandIds: ["obs_nonexistent_ses_xxx"],

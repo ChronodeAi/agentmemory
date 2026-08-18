@@ -72,6 +72,7 @@ async function collectCommitLinkage(cwd, sha, sessionId, project = resolveProjec
 		};
 	}));
 	const files = fileTransitions.length > 0 ? fileTransitions.map((transition) => transition.path) : void 0;
+	const completeFileTransitions = fileTransitions.length > 0 && fileTransitions.every((transition) => Boolean(transition.digest) && transition.digestKind === "git-blob") ? fileTransitions : void 0;
 	return {
 		sessionId,
 		project,
@@ -85,8 +86,30 @@ async function collectCommitLinkage(cwd, sha, sessionId, project = resolveProjec
 		author: author || void 0,
 		authoredAt: authoredAt || void 0,
 		files,
-		fileTransitions: fileTransitions.length > 0 ? fileTransitions : void 0
+		fileTransitions: completeFileTransitions
 	};
+}
+function commandText(value) {
+	if (typeof value === "string") return value;
+	if (Array.isArray(value)) return value.every((entry) => typeof entry === "string") ? value.join(" ") : "";
+	if (!value || typeof value !== "object") return "";
+	const record = value;
+	for (const key of [
+		"cmd",
+		"command",
+		"script",
+		"shell_command"
+	]) {
+		const candidate = commandText(record[key]);
+		if (candidate) return candidate;
+	}
+	return "";
+}
+function isSuccessfulCommitToolEvent(data) {
+	const toolName = typeof data.tool_name === "string" ? data.tool_name : typeof data.toolName === "string" ? data.toolName : "";
+	const command = commandText(data.tool_input ?? data.toolArgs);
+	const hasError = [data.error, data.errorMessage].some((value) => value !== void 0 && value !== null && value !== false && value !== "");
+	return /(?:bash|shell|exec|command)/i.test(toolName) && /(?:^|[;&|]\s*|\s)git(?:\s+-C\s+(?:"[^"]+"|'[^']+'|\S+))?\s+commit(?:\s|$)/i.test(command) && !hasError;
 }
 async function main() {
 	let input = "";
@@ -97,11 +120,8 @@ async function main() {
 	} catch {}
 	if (!data || typeof data !== "object") data = {};
 	if (isSdkChildContext(data)) return;
-	const toolName = typeof data.tool_name === "string" ? data.tool_name : typeof data.toolName === "string" ? data.toolName : "";
-	const rawToolInput = data.tool_input ?? data.toolArgs;
-	const toolInput = typeof rawToolInput === "string" ? rawToolInput : rawToolInput && typeof rawToolInput === "object" ? JSON.stringify(rawToolInput) : "";
 	const directGitHook = !input.trim() || process.env["AGENTMEMORY_GIT_HOOK"] === "1" || Boolean(process.env["AGENTMEMORY_COMMIT_SHA"]);
-	const successfulCommitTool = /(?:bash|shell|exec|command)/i.test(toolName) && /(?:^|[;&|]\s*|\s)git(?:\s+-C\s+\S+)?\s+commit(?:\s|$)/i.test(toolInput) && data.error === void 0 && data.errorMessage === void 0;
+	const successfulCommitTool = isSuccessfulCommitToolEvent(data);
 	if (!directGitHook && !successfulCommitTool) return;
 	const cwd = data.cwd || process.env["AGENTMEMORY_CWD"] || process.cwd();
 	const sessionId = data.session_id || data.sessionId || process.env["AGENTMEMORY_SESSION_ID"] || void 0;
@@ -119,4 +139,4 @@ if (import.meta.url === invokedPath) main().catch((error) => {
 	process.exitCode = 1;
 });
 //#endregion
-export { collectCommitLinkage };
+export { collectCommitLinkage, isSuccessfulCommitToolEvent };

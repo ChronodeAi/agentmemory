@@ -12,7 +12,10 @@ import {
   captureToolEvent,
   parseCommitTransitions,
 } from "../src/hooks/_capture.js";
-import { collectCommitLinkage } from "../src/hooks/post-commit.js";
+import {
+  collectCommitLinkage,
+  isSuccessfulCommitToolEvent,
+} from "../src/hooks/post-commit.js";
 import type { AgentmemoryProjectConfig } from "../src/project-config.js";
 import { stripPrivateData } from "../src/functions/privacy.js";
 
@@ -29,6 +32,31 @@ const config: AgentmemoryProjectConfig = {
 };
 
 describe("balanced coding capture", () => {
+  it("recognizes successful commits in structured host tool payloads", () => {
+    expect(
+      isSuccessfulCommitToolEvent({
+        tool_name: "exec_command",
+        tool_input: { cmd: "git commit -m 'record memory provenance'" },
+        error: null,
+      }),
+    ).toBe(true);
+    expect(
+      isSuccessfulCommitToolEvent({
+        toolName: "Bash",
+        toolArgs: {
+          command: "git -C '/tmp/project with spaces' commit -m update",
+        },
+      }),
+    ).toBe(true);
+    expect(
+      isSuccessfulCommitToolEvent({
+        tool_name: "exec_command",
+        tool_input: { cmd: "git commit -m broken" },
+        errorMessage: "exit status 1",
+      }),
+    ).toBe(false);
+  });
+
   it("captures reads as metadata with a hash instead of raw output", () => {
     const result = captureToolEvent(
       "file_read",
