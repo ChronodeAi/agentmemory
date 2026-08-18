@@ -8,22 +8,8 @@ export type McpToolDef = {
       { type: string; description: string; enum?: string[] }
     >;
     required?: string[];
-    oneOf?: Array<{
-      required: string[];
-      properties?: Record<string, { const: string }>;
-    }>;
   };
 };
-
-const PROJECT_SCOPE_ONE_OF: NonNullable<
-  McpToolDef["inputSchema"]["oneOf"]
-> = [
-  { required: ["project"] },
-  {
-    required: ["scope"],
-    properties: { scope: { const: "global" } },
-  },
-];
 
 export const CORE_TOOLS: McpToolDef[] = [
   {
@@ -56,12 +42,12 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
         scope: {
           type: "string",
+          enum: ["global"],
           description:
-            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+            "Set to 'global' only for an explicit cross-project query; otherwise provide project.",
         },
       },
       required: ["query"],
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -110,19 +96,20 @@ export const CORE_TOOLS: McpToolDef[] = [
         project: {
           type: "string",
           description:
-            "Stable canonical project identifier this memory belongs to (e.g. a slug, " +
+            "Required unless scope is explicitly global. Stable canonical project " +
+            "identifier this memory belongs to (e.g. a slug, " +
             "UUID, or registry key). Must match the value used when the session was " +
             "started. Do not use filesystem paths or ad-hoc display names — those " +
             "change across machines and will silently break project scoping.",
         },
         scope: {
           type: "string",
+          enum: ["global"],
           description:
             "Use 'global' only for an explicitly global memory.",
         },
       },
       required: ["content"],
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -143,12 +130,12 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
         scope: {
           type: "string",
+          enum: ["global"],
           description:
-            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+            "Set to 'global' only for an explicit cross-project query; otherwise provide project.",
         },
       },
       required: ["files"],
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -184,11 +171,11 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
         scope: {
           type: "string",
+          enum: ["global"],
           description:
-            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+            "Set to 'global' only for an explicit cross-project query; otherwise provide project.",
         },
       },
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -210,12 +197,12 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
         scope: {
           type: "string",
+          enum: ["global"],
           description:
-            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+            "Set to 'global' only for an explicit cross-project query; otherwise provide project.",
         },
       },
       required: ["query"],
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -315,12 +302,12 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
         scope: {
           type: "string",
+          enum: ["global"],
           description:
-            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+            "Set to 'global' only for an explicit cross-project query; otherwise provide project.",
         },
       },
       required: ["sha"],
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -337,14 +324,14 @@ export const CORE_TOOLS: McpToolDef[] = [
         },
         scope: {
           type: "string",
+          enum: ["global"],
           description:
-            "Use 'project' (default) or explicitly 'global' for a cross-project query.",
+            "Set to 'global' only for an explicit cross-project query; otherwise provide project.",
         },
         branch: { type: "string", description: "Filter by branch name" },
         repo: { type: "string", description: "Filter by remote URL" },
         limit: { type: "number", description: "Max results (default 100, max 500)" },
       },
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
 ];
@@ -374,7 +361,8 @@ export const V040_TOOLS: McpToolDef[] = [
       properties: {
         project: {
           type: "string",
-          description: "Canonical project ID for a project-scoped query",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
         },
         scope: {
           type: "string",
@@ -395,7 +383,6 @@ export const V040_TOOLS: McpToolDef[] = [
         limit: { type: "number", description: "Maximum nodes to return" },
         offset: { type: "number", description: "Pagination offset" },
       },
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -407,10 +394,12 @@ export const V040_TOOLS: McpToolDef[] = [
       properties: {
         project: {
           type: "string",
-          description: "Canonical project ID",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
         },
         scope: {
           type: "string",
+          enum: ["global"],
           description:
             "Use global only for an explicit cross-project consolidation",
         },
@@ -419,7 +408,6 @@ export const V040_TOOLS: McpToolDef[] = [
           description: "Target tier: episodic, semantic, or procedural",
         },
       },
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -484,7 +472,6 @@ export const V040_TOOLS: McpToolDef[] = [
         },
       },
       required: ["memoryIds"],
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -925,7 +912,11 @@ export const V070_TOOLS: McpToolDef[] = [
           type: "number",
           description: "Initial confidence 0.0-1.0 (default 0.5)",
         },
-        project: { type: "string", description: "Project this lesson is about" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
         scope: {
           type: "string",
           enum: ["global"],
@@ -934,7 +925,6 @@ export const V070_TOOLS: McpToolDef[] = [
         tags: { type: "string", description: "Comma-separated tags" },
       },
       required: ["content"],
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -945,7 +935,11 @@ export const V070_TOOLS: McpToolDef[] = [
       type: "object",
       properties: {
         query: { type: "string", description: "Search query" },
-        project: { type: "string", description: "Filter by project" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
         scope: {
           type: "string",
           enum: ["global"],
@@ -958,7 +952,6 @@ export const V070_TOOLS: McpToolDef[] = [
         limit: { type: "number", description: "Max results (default 10)" },
       },
       required: ["query"],
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -989,7 +982,11 @@ export const V073_TOOLS: McpToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        project: { type: "string", description: "Filter by project" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
         scope: {
           type: "string",
           enum: ["global"],
@@ -1000,7 +997,6 @@ export const V073_TOOLS: McpToolDef[] = [
           description: "Max concept clusters to process (default 10, max 20)",
         },
       },
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
   {
@@ -1010,7 +1006,11 @@ export const V073_TOOLS: McpToolDef[] = [
     inputSchema: {
       type: "object",
       properties: {
-        project: { type: "string", description: "Filter by project" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
         scope: {
           type: "string",
           enum: ["global"],
@@ -1022,7 +1022,6 @@ export const V073_TOOLS: McpToolDef[] = [
         },
         limit: { type: "number", description: "Max results (default 50)" },
       },
-      oneOf: PROJECT_SCOPE_ONE_OF,
     },
   },
 ];

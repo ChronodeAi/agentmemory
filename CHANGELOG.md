@@ -13,6 +13,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ### Fixed
 
+- Replaced top-level JSON Schema unions on 14 project-scoped MCP tools with provider-compatible optional `project` and global-only `scope` fields while retaining fail-closed runtime validation. Gemini-backed Claude Code sessions now receive recall, session, file-history, commit, lesson, reflection, and governance tools instead of silently dropping them during tool registration.
 - Authenticated the standalone MCP `tools/list` proxy with the administrative secret-file credential. Strict-capability installations now expose the full remote tool surface and fail closed on reachable-server authorization or contract errors instead of silently falling back to the seven locally implemented tools.
 - Made saved-memory state authoritative during smart search, including for observations linked to a real session. Superseded, deleted, expired, quarantined, and recalled-only memories no longer bypass eligibility checks through their session record.
 - Applied the same shared eligibility and migration-quarantine policy to the standalone MCP local fallback, so reduced-mode recall cannot resurrect memory that the full server would exclude.

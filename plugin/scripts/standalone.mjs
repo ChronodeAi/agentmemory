@@ -248,10 +248,6 @@ function createStdioTransport(handler, options = {}) {
 }
 //#endregion
 //#region src/mcp/tools-registry.ts
-const PROJECT_SCOPE_ONE_OF = [{ required: ["project"] }, {
-	required: ["scope"],
-	properties: { scope: { const: "global" } }
-}];
 const CORE_TOOLS = [
 	{
 		name: "memory_recall",
@@ -281,11 +277,11 @@ const CORE_TOOLS = [
 				},
 				scope: {
 					type: "string",
-					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
+					enum: ["global"],
+					description: "Set to 'global' only for an explicit cross-project query; otherwise provide project."
 				}
 			},
-			required: ["query"],
-			oneOf: PROJECT_SCOPE_ONE_OF
+			required: ["query"]
 		}
 	},
 	{
@@ -330,15 +326,15 @@ const CORE_TOOLS = [
 				},
 				project: {
 					type: "string",
-					description: "Stable canonical project identifier this memory belongs to (e.g. a slug, UUID, or registry key). Must match the value used when the session was started. Do not use filesystem paths or ad-hoc display names — those change across machines and will silently break project scoping."
+					description: "Required unless scope is explicitly global. Stable canonical project identifier this memory belongs to (e.g. a slug, UUID, or registry key). Must match the value used when the session was started. Do not use filesystem paths or ad-hoc display names — those change across machines and will silently break project scoping."
 				},
 				scope: {
 					type: "string",
+					enum: ["global"],
 					description: "Use 'global' only for an explicitly global memory."
 				}
 			},
-			required: ["content"],
-			oneOf: PROJECT_SCOPE_ONE_OF
+			required: ["content"]
 		}
 	},
 	{
@@ -361,11 +357,11 @@ const CORE_TOOLS = [
 				},
 				scope: {
 					type: "string",
-					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
+					enum: ["global"],
+					description: "Set to 'global' only for an explicit cross-project query; otherwise provide project."
 				}
 			},
-			required: ["files"],
-			oneOf: PROJECT_SCOPE_ONE_OF
+			required: ["files"]
 		}
 	},
 	{
@@ -399,10 +395,10 @@ const CORE_TOOLS = [
 				},
 				scope: {
 					type: "string",
-					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
+					enum: ["global"],
+					description: "Set to 'global' only for an explicit cross-project query; otherwise provide project."
 				}
-			},
-			oneOf: PROJECT_SCOPE_ONE_OF
+			}
 		}
 	},
 	{
@@ -429,11 +425,11 @@ const CORE_TOOLS = [
 				},
 				scope: {
 					type: "string",
-					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
+					enum: ["global"],
+					description: "Set to 'global' only for an explicit cross-project query; otherwise provide project."
 				}
 			},
-			required: ["query"],
-			oneOf: PROJECT_SCOPE_ONE_OF
+			required: ["query"]
 		}
 	},
 	{
@@ -560,11 +556,11 @@ const CORE_TOOLS = [
 				},
 				scope: {
 					type: "string",
-					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
+					enum: ["global"],
+					description: "Set to 'global' only for an explicit cross-project query; otherwise provide project."
 				}
 			},
-			required: ["sha"],
-			oneOf: PROJECT_SCOPE_ONE_OF
+			required: ["sha"]
 		}
 	},
 	{
@@ -579,7 +575,8 @@ const CORE_TOOLS = [
 				},
 				scope: {
 					type: "string",
-					description: "Use 'project' (default) or explicitly 'global' for a cross-project query."
+					enum: ["global"],
+					description: "Set to 'global' only for an explicit cross-project query; otherwise provide project."
 				},
 				branch: {
 					type: "string",
@@ -593,8 +590,7 @@ const CORE_TOOLS = [
 					type: "number",
 					description: "Max results (default 100, max 500)"
 				}
-			},
-			oneOf: PROJECT_SCOPE_ONE_OF
+			}
 		}
 	}
 ];
@@ -619,7 +615,7 @@ const V040_TOOLS = [
 			properties: {
 				project: {
 					type: "string",
-					description: "Canonical project ID for a project-scoped query"
+					description: "Canonical project ID. Required unless scope is explicitly global."
 				},
 				scope: {
 					type: "string",
@@ -650,8 +646,7 @@ const V040_TOOLS = [
 					type: "number",
 					description: "Pagination offset"
 				}
-			},
-			oneOf: PROJECT_SCOPE_ONE_OF
+			}
 		}
 	},
 	{
@@ -662,18 +657,18 @@ const V040_TOOLS = [
 			properties: {
 				project: {
 					type: "string",
-					description: "Canonical project ID"
+					description: "Canonical project ID. Required unless scope is explicitly global."
 				},
 				scope: {
 					type: "string",
+					enum: ["global"],
 					description: "Use global only for an explicit cross-project consolidation"
 				},
 				tier: {
 					type: "string",
 					description: "Target tier: episodic, semantic, or procedural"
 				}
-			},
-			oneOf: PROJECT_SCOPE_ONE_OF
+			}
 		}
 	},
 	{
@@ -746,8 +741,7 @@ const V040_TOOLS = [
 					description: "Explicit administrative cross-project scope"
 				}
 			},
-			required: ["memoryIds"],
-			oneOf: PROJECT_SCOPE_ONE_OF
+			required: ["memoryIds"]
 		}
 	},
 	{
@@ -1266,7 +1260,7 @@ const V070_TOOLS = [
 				},
 				project: {
 					type: "string",
-					description: "Project this lesson is about"
+					description: "Canonical project ID. Required unless scope is explicitly global."
 				},
 				scope: {
 					type: "string",
@@ -1278,8 +1272,7 @@ const V070_TOOLS = [
 					description: "Comma-separated tags"
 				}
 			},
-			required: ["content"],
-			oneOf: PROJECT_SCOPE_ONE_OF
+			required: ["content"]
 		}
 	},
 	{
@@ -1294,7 +1287,7 @@ const V070_TOOLS = [
 				},
 				project: {
 					type: "string",
-					description: "Filter by project"
+					description: "Canonical project ID. Required unless scope is explicitly global."
 				},
 				scope: {
 					type: "string",
@@ -1310,8 +1303,7 @@ const V070_TOOLS = [
 					description: "Max results (default 10)"
 				}
 			},
-			required: ["query"],
-			oneOf: PROJECT_SCOPE_ONE_OF
+			required: ["query"]
 		}
 	},
 	{
@@ -1340,7 +1332,7 @@ const V073_TOOLS = [{
 		properties: {
 			project: {
 				type: "string",
-				description: "Filter by project"
+				description: "Canonical project ID. Required unless scope is explicitly global."
 			},
 			scope: {
 				type: "string",
@@ -1351,8 +1343,7 @@ const V073_TOOLS = [{
 				type: "number",
 				description: "Max concept clusters to process (default 10, max 20)"
 			}
-		},
-		oneOf: PROJECT_SCOPE_ONE_OF
+		}
 	}
 }, {
 	name: "memory_insight_list",
@@ -1362,7 +1353,7 @@ const V073_TOOLS = [{
 		properties: {
 			project: {
 				type: "string",
-				description: "Filter by project"
+				description: "Canonical project ID. Required unless scope is explicitly global."
 			},
 			scope: {
 				type: "string",
@@ -1377,8 +1368,7 @@ const V073_TOOLS = [{
 				type: "number",
 				description: "Max results (default 50)"
 			}
-		},
-		oneOf: PROJECT_SCOPE_ONE_OF
+		}
 	}
 }];
 const V010_SLOTS_TOOLS = [
@@ -1740,7 +1730,7 @@ function getAllTools() {
 }
 //#endregion
 //#region src/version.ts
-const VERSION = "0.9.28-chronode.11";
+const VERSION = "0.9.28-chronode.12";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
 //#endregion
