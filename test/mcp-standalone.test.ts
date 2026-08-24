@@ -17,6 +17,7 @@ vi.mock("../src/mcp/transport.js", () => ({
 
 vi.mock("../src/config.js", () => ({
   getStandalonePersistPath: vi.fn(() => "/tmp/test-standalone.json"),
+  hydrateProcessEnvFromFile: vi.fn(),
 }));
 
 import {
@@ -32,6 +33,10 @@ import {
   resetHandleForTests,
   setLivezProbe,
 } from "../src/mcp/rest-proxy.js";
+import {
+  getStandalonePersistPath,
+  hydrateProcessEnvFromFile,
+} from "../src/config.js";
 import { writeFileSync } from "node:fs";
 
 const PROJECT_SCOPED_TOOLS = new Set([
@@ -92,6 +97,20 @@ const fetchTrap = vi.fn(async (url: unknown) => {
 });
 
 describe("Tools Registry", () => {
+  it("resolves its persist path via the shared config resolver, after env hydration", () => {
+    // The module-level fallback KV is constructed from config.ts's
+    // data-dir-aware getStandalonePersistPath; .env-declared
+    // STANDALONE_PERSIST_PATH / AGENTMEMORY_DATA_DIR must be folded into
+    // the environment before that path is computed.
+    const persistMock = vi.mocked(getStandalonePersistPath);
+    const hydrateMock = vi.mocked(hydrateProcessEnvFromFile);
+    expect(persistMock).toHaveBeenCalled();
+    expect(hydrateMock).toHaveBeenCalled();
+    expect(hydrateMock.mock.invocationCallOrder[0]).toBeLessThan(
+      persistMock.mock.invocationCallOrder[0],
+    );
+  });
+
   it("getAllTools returns all tools with unique names", () => {
     const tools = getAllTools();
     expect(tools.length).toBeGreaterThanOrEqual(41);
