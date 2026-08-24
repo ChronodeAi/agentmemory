@@ -1307,6 +1307,18 @@ const V070_TOOLS = [
 		}
 	},
 	{
+		name: "memory_lesson_delete",
+		description: "Soft-delete a lesson by id. Deleted lessons are excluded from recall and list; re-saving the same content creates a fresh lesson.",
+		inputSchema: {
+			type: "object",
+			properties: { lessonId: {
+				type: "string",
+				description: "The lesson id (lsn_...)"
+			} },
+			required: ["lessonId"]
+		}
+	},
+	{
 		name: "memory_obsidian_export",
 		description: "Export memories, lessons, and crystals as Obsidian-compatible Markdown files with YAML frontmatter and wikilinks for graph view.",
 		inputSchema: {
@@ -2032,10 +2044,16 @@ const READ_ONLY_LOCAL_FALLBACK_TOOLS = new Set([
 	"memory_export",
 	"memory_audit"
 ]);
+const SUPPORTED_PROTOCOL_VERSIONS = [
+	"2025-11-25",
+	"2025-06-18",
+	"2025-03-26",
+	"2024-11-05"
+];
 const SERVER_INFO = {
 	name: "agentmemory",
 	version: VERSION,
-	protocolVersion: "2024-11-05"
+	protocolVersion: SUPPORTED_PROTOCOL_VERSIONS[0]
 };
 function getStandalonePersistPath() {
 	return process.env["STANDALONE_PERSIST_PATH"]?.trim() || join(homedir(), ".agentmemory", "standalone.json");
@@ -2388,14 +2406,17 @@ async function finishShutdown() {
 }
 const transport = createStdioTransport(async (method, params) => {
 	switch (method) {
-		case "initialize": return {
-			protocolVersion: SERVER_INFO.protocolVersion,
-			capabilities: { tools: { listChanged: false } },
-			serverInfo: {
-				name: SERVER_INFO.name,
-				version: SERVER_INFO.version
-			}
-		};
+		case "initialize": {
+			const requested = params?.protocolVersion;
+			return {
+				protocolVersion: typeof requested === "string" && SUPPORTED_PROTOCOL_VERSIONS.includes(requested) ? requested : SERVER_INFO.protocolVersion,
+				capabilities: { tools: { listChanged: false } },
+				serverInfo: {
+					name: SERVER_INFO.name,
+					version: SERVER_INFO.version
+				}
+			};
+		}
 		case "notifications/initialized": return {};
 		case "tools/list": return handleToolsList();
 		case "tools/call": {

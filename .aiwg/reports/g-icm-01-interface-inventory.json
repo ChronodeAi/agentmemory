@@ -3,20 +3,20 @@
   "control_id": "G-ICM-01",
   "project_id": "github.com/chronodeai/agentmemory",
   "source_identity": {
-    "commit_sha": "c63d30d8a73c2606d3b1744d44bfebccf879aab4",
-    "commit_tree_sha": "6bc317c59fa693a3aabc96f9be2fa611ba8fb67f",
-    "inventory_input_sha256": "72e91136f073462267f8c40b3dbdd2bf0661992f0f992a9b73e0256bd3ec04c8"
+    "commit_sha": "f4d09d665ce361469d656d33c58fb7c3b9501c10",
+    "commit_tree_sha": "4030db14ef5d20729acb7ab5d3af6f89d2e88e9a",
+    "inventory_input_sha256": "a37239e57e45775e39143e539e5e620e5545f4a9c51e49bb4f5f6197ddf3e874"
   },
   "public_route_allowlist": [
     "GET /agentmemory/livez"
   ],
   "counts": {
-    "registered_api_functions": 136,
-    "http_routes": 135,
+    "registered_api_functions": 137,
+    "http_routes": 136,
     "public_routes": 1,
-    "protected_routes": 134,
+    "protected_routes": 135,
     "missing_auth_routes": 0,
-    "mcp_tools": 59,
+    "mcp_tools": 60,
     "mcp_transport_routes": 6,
     "mcp_resources": 5,
     "mcp_prompts": 3,
@@ -614,7 +614,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4637"
+      "source": "src/triggers/api.ts:4652"
     },
     {
       "surface_id": "REST:POST:/agentmemory/insights/search",
@@ -624,7 +624,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4659"
+      "source": "src/triggers/api.ts:4674"
     },
     {
       "surface_id": "REST:POST:/agentmemory/leases/acquire",
@@ -675,6 +675,16 @@
       "registration": "protected-wrapper",
       "auth_control": "required",
       "source": "src/triggers/api.ts:4481"
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/lessons/delete",
+      "method": "POST",
+      "path": "/agentmemory/lessons/delete",
+      "function_id": "api::lesson-delete",
+      "middleware": [],
+      "registration": "protected-wrapper",
+      "auth_control": "required",
+      "source": "src/triggers/api.ts:4582"
     },
     {
       "surface_id": "REST:POST:/agentmemory/lessons/search",
@@ -826,7 +836,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4584"
+      "source": "src/triggers/api.ts:4599"
     },
     {
       "surface_id": "REST:POST:/agentmemory/patterns",
@@ -902,7 +912,7 @@
       "middleware": [],
       "registration": "protected-wrapper",
       "auth_control": "required",
-      "source": "src/triggers/api.ts:4603"
+      "source": "src/triggers/api.ts:4618"
     },
     {
       "surface_id": "REST:GET:/agentmemory/relations",
@@ -1666,6 +1676,15 @@
         "actionId",
         "agentId",
         "operation"
+      ],
+      "project_parameter": false,
+      "scope_parameter": false
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_lesson_delete",
+      "name": "memory_lesson_delete",
+      "required": [
+        "lessonId"
       ],
       "project_parameter": false,
       "scope_parameter": false
@@ -4006,7 +4025,7 @@
     {
       "surface_id": "REST:GET:/agentmemory/insights",
       "type": "rest",
-      "source": "src/triggers/api.ts:4637",
+      "source": "src/triggers/api.ts:4652",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4026,7 +4045,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/insights/search",
       "type": "rest",
-      "source": "src/triggers/api.ts:4659",
+      "source": "src/triggers/api.ts:4674",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4142,6 +4161,26 @@
       "surface_id": "REST:POST:/agentmemory/lessons",
       "type": "rest",
       "source": "src/triggers/api.ts:4481",
+      "auth_control": "required",
+      "control_ids": [
+        "ICM-08"
+      ],
+      "requirements": [
+        "FR-13",
+        "FR-14"
+      ],
+      "risks": [
+        "R-03",
+        "R-05"
+      ],
+      "tests": [
+        "test/promotions.test.ts"
+      ]
+    },
+    {
+      "surface_id": "REST:POST:/agentmemory/lessons/delete",
+      "type": "rest",
+      "source": "src/triggers/api.ts:4582",
       "auth_control": "required",
       "control_ids": [
         "ICM-08"
@@ -4497,7 +4536,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/obsidian/export",
       "type": "rest",
-      "source": "src/triggers/api.ts:4584",
+      "source": "src/triggers/api.ts:4599",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -4661,7 +4700,7 @@
     {
       "surface_id": "REST:POST:/agentmemory/reflect",
       "type": "rest",
-      "source": "src/triggers/api.ts:4603",
+      "source": "src/triggers/api.ts:4618",
       "auth_control": "required",
       "control_ids": [
         "ICM-04",
@@ -6662,6 +6701,26 @@
         "test/auth-capability.test.ts",
         "test/cross-project-isolation.test.ts",
         "test/integration.test.ts"
+      ]
+    },
+    {
+      "surface_id": "MCP:TOOL:memory_lesson_delete",
+      "type": "mcp-tool",
+      "source": "src/mcp/tools-registry.ts",
+      "auth_control": "transport-required",
+      "control_ids": [
+        "ICM-08"
+      ],
+      "requirements": [
+        "FR-13",
+        "FR-14"
+      ],
+      "risks": [
+        "R-03",
+        "R-05"
+      ],
+      "tests": [
+        "test/promotions.test.ts"
       ]
     },
     {
