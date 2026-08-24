@@ -210,13 +210,24 @@ export function normalizeGitRemote(remote: string): string | undefined {
   }
 }
 
+// A bare local path or file:// remote still identifies one machine-local
+// checkout; the hashed canonical path keeps that identity stable instead of
+// failing every hook process that runs inside such a clone. The warning
+// fires once per process so per-event hooks stay quiet.
+let warnedUnnormalizableRemote = false;
+
 export function inferProjectId(root: string): string {
   const remote =
     git(root, ["remote", "get-url", "origin"]) ??
     git(root, ["remote", "get-url", "--all", "upstream"]);
   const normalizedRemote = remote ? normalizeGitRemote(remote) : undefined;
   if (remote && !normalizedRemote) {
-    throw new Error("configured Git remote cannot be normalized safely");
+    if (!warnedUnnormalizableRemote) {
+      warnedUnnormalizableRemote = true;
+      process.stderr.write(
+        `[agentmemory] Git remote "${remote}" cannot be normalized to a canonical project id; using local/${projectPathHash(root)} for this checkout\n`,
+      );
+    }
   }
   return normalizedRemote ?? `local/${projectPathHash(root)}`;
 }
