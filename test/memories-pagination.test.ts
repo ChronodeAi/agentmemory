@@ -30,8 +30,9 @@ describe("memories + export pagination (#544)", () => {
     expect(api).toMatch(/query_params\?\.\["offset"\]/);
     // The payload object is named `payload` in our handler; assert it is
     // forwarded to mem::export rather than the previous empty object.
+    // Project scoping spreads it into a payload carrying project/scope.
     expect(api).toMatch(
-      /sdk\.trigger\(\{\s*function_id:\s*"mem::export",\s*payload,/m,
+      /function_id:\s*"mem::export",\s*payload:\s*\{\s*\.\.\.payload,/m,
     );
   });
 
