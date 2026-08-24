@@ -36,7 +36,7 @@ import { getBoundViewerPort, getViewerSkipped } from "../viewer/server.js";
 import { MAX_FILES_UPPER_BOUND } from "../functions/replay.js";
 import { logger } from "../logger.js";
 import {
-  closeStaleSessions,
+  maybeCloseStaleSessions,
   startOrResumeSession,
 } from "../functions/session-lifecycle.js";
 import { requireProjectReadScope } from "../project-scope.js";
@@ -1197,7 +1197,7 @@ export function registerApiTriggers(
           ? body.agentId.trim().slice(0, 128)
           : undefined;
       const agentId = requestAgentId ?? getAgentId();
-      await closeStaleSessions(kv);
+      await maybeCloseStaleSessions(kv);
       let lifecycle: Awaited<ReturnType<typeof startOrResumeSession>>;
       try {
         lifecycle = await startOrResumeSession(kv, {

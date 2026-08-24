@@ -11,7 +11,7 @@ import {
 import { logger } from "../logger.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 import {
-  closeStaleSessions,
+  maybeCloseStaleSessions,
   startOrResumeSession,
 } from "../functions/session-lifecycle.js";
 import {
@@ -450,7 +450,7 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
           ? data.agentId.trim().slice(0, 128)
           : undefined;
       const agentId = requestAgentId ?? getAgentId();
-      await closeStaleSessions(kv);
+      await maybeCloseStaleSessions(kv);
       const { session, resumed } = await startOrResumeSession(kv, {
         sessionId: data.sessionId,
         project: data.project,

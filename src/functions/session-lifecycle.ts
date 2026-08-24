@@ -4,6 +4,42 @@ import type { StateKV } from "../state/kv.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
 
 const DEFAULT_STALE_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_SWEEP_INTERVAL_MS = 60_000;
+
+// closeStaleSessions() full-scans KV.sessions, so running it on every
+// session start turns O(sessions) work into per-event cost. The sweep is
+// throttled to at most one run per interval (default 60s) per process;
+// AGENTMEMORY_STALE_SESSION_SWEEP_MS tunes the interval, and "0" restores a
+// sweep on every call. Session-end paths do not depend on this throttle:
+// they read and close their own session record directly.
+let lastStaleSweepAt = 0;
+
+export function staleSessionSweepIntervalMs(): number {
+  const raw = Number(process.env["AGENTMEMORY_STALE_SESSION_SWEEP_MS"]);
+  return Number.isFinite(raw) && raw >= 0
+    ? Math.floor(raw)
+    : DEFAULT_SWEEP_INTERVAL_MS;
+}
+
+export function resetStaleSessionSweepForTests(): void {
+  lastStaleSweepAt = 0;
+}
+
+/**
+ * Run closeStaleSessions() at most once per sweep interval. Returns true
+ * when the scan actually ran.
+ */
+export async function maybeCloseStaleSessions(
+  kv: StateKV,
+  now = new Date(),
+  maxAgeMs = DEFAULT_STALE_MS,
+): Promise<boolean> {
+  const elapsed = now.getTime() - lastStaleSweepAt;
+  if (elapsed < staleSessionSweepIntervalMs()) return false;
+  lastStaleSweepAt = now.getTime();
+  await closeStaleSessions(kv, now, maxAgeMs);
+  return true;
+}
 
 export interface StartSessionInput {
   sessionId: string;
