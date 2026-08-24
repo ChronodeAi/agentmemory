@@ -9,7 +9,7 @@ agentmemory exposes 60 MCP tools. 8 are in the lean core set (`--tools core` or 
 | --- | --- | --- | --- |
 | `memory_action_create` |  | `title`*: string, `description`: string, `priority`: number, `project`: string, `tags`: string, `parentId`: string, `requires`: string | Create an actionable work item with typed dependencies. Actions track what agents need to do and how work items relate to each other. |
 | `memory_action_update` |  | `actionId`*: string, `status`: string, `result`: string, `priority`: number | Update an action's status, priority, or details. Set status to 'done' to complete it and unblock dependent actions. |
-| `memory_audit` |  | `operation`: string, `limit`: number | View the audit trail of memory operations. |
+| `memory_audit` |  | `operation`: string, `limit`: number, `project`: string, `scope`: string | View the audit trail of memory operations for one project (or all with admin global scope). |
 | `memory_checkpoint` |  | `operation`*: string, `name`: string, `checkpointId`: string, `status`: string, `type`: string, `linkedActionIds`: string | Create or resolve an external checkpoint (CI result, approval, deploy status) that gates action progress. |
 | `memory_claude_bridge_sync` |  | `direction`*: string | Sync memory state to/from Claude Code's native MEMORY.md file. |
 | `memory_commit_link` |  | `sha`*: string, `sessionId`: string, `project`*: string, `baseHeadSha`: string, `worktreeId`: string, `fileTransitions`: array | Link a verified Git commit SHA to its canonical project and optional coding session. |
@@ -21,7 +21,7 @@ agentmemory exposes 60 MCP tools. 8 are in the lean core set (`--tools core` or 
 | `memory_context_packet` |  | `project`*: string, `sessionId`*: string, `query`: string, `files`: string, `token_budget`: number, `context_class`: string | Build the project-scoped Recall packet for a coding task with fixed budgets for identity, lessons, episodic history, file history, and provenance. |
 | `memory_crystallize` |  | `actionIds`*: string, `project`*: string, `sessionId`: string | Compress completed action chains into compact crystal digests using LLM summarization. Extracts narrative, key outcomes, files affected, and lessons. |
 | `memory_diagnose` | yes | `categories`: string | Run health checks across all subsystems (actions, leases, sentinels, sketches, signals, sessions, memories, mesh). Identifies stuck, orphaned, and inconsistent state. |
-| `memory_export` |  | none | Export all memory data as JSON. |
+| `memory_export` |  | `project`: string, `scope`: string | Export memory data as JSON for one project (or all with admin global scope). |
 | `memory_facet_query` |  | `matchAll`: string, `matchAny`: string, `targetType`: string | Query targets by facet tags with AND/OR logic. Find all actions tagged priority:urgent AND team:backend. |
 | `memory_facet_tag` |  | `targetId`*: string, `targetType`*: string, `dimension`*: string, `value`*: string | Attach a structured tag (dimension:value) to an action, memory, or observation for multi-dimensional categorization. |
 | `memory_file_history` |  | `files`*: string, `sessionId`: string, `project`: string, `scope`: string | Get past observations about specific files. |
