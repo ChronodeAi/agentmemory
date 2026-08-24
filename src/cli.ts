@@ -65,6 +65,7 @@ import { readDataDirFlag, warnOnLegacyDataDir } from "./data-dir.js";
 import { VERSION } from "./version.js";
 import { getAllTools, ESSENTIAL_TOOLS } from "./mcp/tools-registry.js";
 import { knownAgents } from "./cli/connect/index.js";
+import { ensureProjectCapabilitySecret } from "./cli/connect/capability-secret.js";
 import { materializeIiiRuntimeConfig } from "./cli/iii-runtime-config.js";
 import { getEnvVar } from "./config.js";
 import { resolveProjectConfig } from "./project-config.js";
@@ -1749,6 +1750,23 @@ function buildDoctorEffects(): DoctorEffects {
         return res.ok;
       } catch {
         return false;
+      }
+    },
+    provisionProjectCapability: async () => {
+      try {
+        const capability = ensureProjectCapabilitySecret();
+        if (capability.reused) {
+          return { ok: true, message: `Capability credential already present at ${capability.path}` };
+        }
+        return {
+          ok: true,
+          message: `Generated project capability credential at ${capability.path} (mode 0600)`,
+        };
+      } catch (err) {
+        return {
+          ok: false,
+          message: err instanceof Error ? err.message : String(err),
+        };
       }
     },
     runInit: async () => {
