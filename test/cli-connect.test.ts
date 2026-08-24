@@ -189,7 +189,12 @@ describe("agentmemory connect — claude-code adapter (mock filesystem)", () => 
       .flatMap((entry: any) => entry.hooks)
       .map((hook: any) => hook.command);
     expect(commands).toContain("echo user-hook");
-    expect(commands.some((command: string) => command.includes("agentmemory"))).toBe(true);
+    // Assert on the managed-entry shape, not a checkout-directory substring:
+    // merged commands are "<pluginRoot>/scripts/<hook>.mjs" and pluginRoot is
+    // wherever this repo happens to be cloned.
+    expect(
+      commands.some((command: string) => /scripts[/\\][a-z-]+\.mjs/.test(command)),
+    ).toBe(true);
   });
 
   it("install() writes env passthrough block for AGENTMEMORY_URL + AGENTMEMORY_SECRET (#375)", async () => {
