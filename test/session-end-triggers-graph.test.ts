@@ -1,4 +1,4 @@
-import { beforeEach, describe, it, expect } from "vitest";
+import { afterEach, beforeEach, describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { registerApiTriggers } from "../src/triggers/api.js";
 import {
@@ -69,7 +69,17 @@ describe("api::session::end → event::session::stopped (#666)", () => {
   beforeEach(() => {
     process.env["AGENTMEMORY_REFLECT"] = "false";
     process.env["GRAPH_EXTRACTION_ENABLED"] = "false";
+    // These tests pin the exact post-stop fan-out list. Explicitly disable
+    // the corpus-consolidation debounce gate (added by the session-stop
+    // consolidation lifecycle) so the expectations don't depend on the
+    // operator's real ~/.agentmemory/.env or LLM keys; that behavior has
+    // dedicated coverage in test/consolidation-lifecycle.test.ts.
+    process.env["CONSOLIDATION_ENABLED"] = "false";
     resetBackgroundPipelineHealthForTests();
+  });
+
+  afterEach(() => {
+    delete process.env["CONSOLIDATION_ENABLED"];
   });
 
   it("closes quickly, records dispatch acceptance, and is idempotent", async () => {

@@ -7,8 +7,8 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { parse as parseDotenv } from "dotenv";
 import { parse as parseYaml } from "yaml";
+import { hydrateProcessEnvFromFile } from "./config.js";
 
 export type ProjectPrivacy = "standard" | "private" | "strict";
 export type CaptureProfile = "minimal" | "balanced" | "full";
@@ -257,18 +257,12 @@ export function getUserProjectConfigPath(root: string): string {
 }
 
 export function loadAgentmemoryEnvironment(): Record<string, string> {
-  const envPath = join(userHome(), ".agentmemory", ".env");
-  let fileEnv: Record<string, string> = {};
-  if (existsSync(envPath)) {
-    try {
-      fileEnv = parseDotenv(readFileSync(envPath));
-    } catch {
-      fileEnv = {};
-    }
-  }
-  for (const [key, value] of Object.entries(fileEnv)) {
-    if (process.env[key] === undefined) process.env[key] = value;
-  }
+  // Single precedence story across the codebase:
+  //   real environment > ~/.agentmemory/.env > project manifest overrides > defaults
+  // hydrateProcessEnvFromFile() (config.js) owns the fill-missing-only
+  // copy from ~/.agentmemory/.env into process.env; nothing here may
+  // overwrite an existing process.env entry.
+  hydrateProcessEnvFromFile();
 
   if (!asString(process.env["AGENTMEMORY_SECRET"])) {
     const secretFile = asString(process.env["AGENTMEMORY_SECRET_FILE"]);
@@ -281,7 +275,7 @@ export function loadAgentmemoryEnvironment(): Record<string, string> {
       }
     }
   }
-  return { ...fileEnv, ...process.env } as Record<string, string>;
+  return { ...process.env } as Record<string, string>;
 }
 
 function envLayer(env: Record<string, string>): ConfigLayer {

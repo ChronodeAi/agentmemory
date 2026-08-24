@@ -17,8 +17,11 @@ import type {
 } from "../types.js";
 import { logger } from "../logger.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
+import { resolveDataDir } from "../data-dir.js";
 
-const ALLOWED_DIRS = [resolve(homedir(), ".agentmemory")];
+function allowedDirs(): string[] {
+  return [resolve(resolveDataDir())];
+}
 
 type ProjectRecord = Record<string, unknown> & { project?: string };
 
@@ -350,7 +353,7 @@ export async function normalizeProjectScopes(
 
 function isAllowedPath(dbPath: string): boolean {
   const resolved = resolve(dbPath);
-  return ALLOWED_DIRS.some((dir) => resolved.startsWith(dir + "/"));
+  return allowedDirs().some((dir) => resolved.startsWith(dir + "/"));
 }
 
 // Infer memory project from the majority project of its associated sessions.
@@ -1015,7 +1018,7 @@ export function registerMigrateFunction(sdk: ISdk, kv: StateKV): void {
       if (!isAllowedPath(data.dbPath)) {
         return {
           success: false,
-          error: `Path not allowed. Must be under: ${ALLOWED_DIRS.join(", ")}`,
+          error: `Path not allowed. Must be under: ${allowedDirs().join(", ")}`,
         };
       }
 

@@ -1,5 +1,6 @@
 import { registerWorker } from "iii-sdk";
 import {
+  hydrateProcessEnvFromFile,
   loadConfig,
   getEnvVar,
   loadEmbeddingConfig,
@@ -184,6 +185,11 @@ process.on("unhandledRejection", (reason) => {
 });
 
 async function main() {
+  // Fold ~/.agentmemory/.env into process.env before anything reads config
+  // or raw process.env. Fill-missing-only, so a real process.env value
+  // always wins over the file.
+  hydrateProcessEnvFromFile();
+
   const config = loadConfig();
   const embeddingConfig = loadEmbeddingConfig();
   const fallbackConfig = loadFallbackConfig();

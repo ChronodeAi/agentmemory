@@ -10,6 +10,7 @@ import type {
   ClaudeBridgeConfig,
   TeamConfig,
 } from "./types.js";
+import { resolveDataDir } from "./data-dir.js";
 
 function safeParseInt(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -17,14 +18,28 @@ function safeParseInt(value: string | undefined, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
-const DATA_DIR = join(homedir(), ".agentmemory");
-const ENV_FILE = join(DATA_DIR, ".env");
-
 let warnPremiumModelShown = false;
 
+// Parsed <dataDir>/.env, memoized for the process lifetime. getMergedEnv()
+// runs on every config getter, so without this cache a single request would
+// readFileSync + reparse the file dozens of times. The file is boot-static, so
+// read it from disk once and reuse the result. Tests that mutate the file
+// between cases reset the module (clearing this via reload) or call
+// __resetEnvFileCache().
+let envFileCache: Record<string, string> | undefined;
+
+function envFilePath(): string {
+  return join(resolveDataDir(), ".env");
+}
+
 function loadEnvFile(): Record<string, string> {
-  if (!existsSync(ENV_FILE)) return {};
-  const content = readFileSync(ENV_FILE, "utf-8");
+  if (envFileCache) return envFileCache;
+  const envFile = envFilePath();
+  if (!existsSync(envFile)) {
+    envFileCache = {};
+    return envFileCache;
+  }
+  const content = readFileSync(envFile, "utf-8");
   const vars: Record<string, string> = {};
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -43,7 +58,30 @@ function loadEnvFile(): Record<string, string> {
     }
     vars[key] = val;
   }
-  return vars;
+  envFileCache = vars;
+  return envFileCache;
+}
+
+// Test hook: clears the memoized .env so the next loadEnvFile() re-reads disk
+// within the same module instance. vi.resetModules() reloads this module and
+// resets the cache on its own; this exists for tests that mutate the file
+// without a module reload.
+export function __resetEnvFileCache(): void {
+  envFileCache = undefined;
+}
+
+// Hydrate ~/.agentmemory/.env into process.env at boot. loadEnvFile() is
+// otherwise only consumed via getMergedEnv(), which the many modules that read
+// raw process.env["X"] never call — so .env-only values were silently ignored
+// by them. Copy the file's vars into process.env, but only when the key is
+// currently unset so a real process.env value still wins (this preserves the
+// {...fileEnv, ...process.env} precedence getMergedEnv uses). This is the
+// single boot-time hydration for the whole precedence chain:
+//   real environment > ~/.agentmemory/.env > project manifest overrides > defaults
+export function hydrateProcessEnvFromFile(): void {
+  for (const [k, v] of Object.entries(loadEnvFile())) {
+    if (process.env[k] === undefined) process.env[k] = v;
+  }
 }
 
 function hasRealValue(v: string | undefined): v is string {
@@ -197,7 +235,7 @@ export function loadConfig(): AgentMemoryConfig {
     tokenBudget: safeParseInt(env["TOKEN_BUDGET"], 2000),
     maxObservationsPerSession: safeParseInt(env["MAX_OBS_PER_SESSION"], 500),
     compressionModel: provider.model,
-    dataDir: DATA_DIR,
+    dataDir: resolveDataDir(),
   };
 }
 
@@ -362,7 +400,7 @@ export function loadSnapshotConfig(): {
   return {
     enabled: env["SNAPSHOT_ENABLED"] === "true",
     interval: safeParseInt(env["SNAPSHOT_INTERVAL"], 3600),
-    dir: env["SNAPSHOT_DIR"] || join(homedir(), ".agentmemory", "snapshots"),
+    dir: env["SNAPSHOT_DIR"] || join(resolveDataDir(), "snapshots"),
   };
 }
 
@@ -441,6 +479,21 @@ export function getConsolidationDecayDays(): number {
   return safeParseInt(getMergedEnv()["CONSOLIDATION_DECAY_DAYS"], 30);
 }
 
+// Cooldown between corpus consolidations triggered by session stop. The Stop
+// hook fires per agent turn and posts /session/end, so without this every
+// turn would kick full-corpus LLM consolidation + crystallization. Debounced
+// to at most once per window via the consolidation:lastRun marker; set to 0
+// to disable the debounce (consolidate on every stop). Default 5 minutes.
+const CONSOLIDATION_COOLDOWN_DEFAULT_MS = 300000;
+
+export function getConsolidationCooldownMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_CONSOLIDATION_COOLDOWN_MS"],
+    CONSOLIDATION_COOLDOWN_DEFAULT_MS,
+  );
+  return raw >= 0 ? raw : CONSOLIDATION_COOLDOWN_DEFAULT_MS;
+}
+
 export function isStandaloneMcp(): boolean {
   return getMergedEnv()["STANDALONE_MCP"] === "true";
 }
@@ -449,7 +502,7 @@ export function getStandalonePersistPath(): string {
   const env = getMergedEnv();
   return (
     env["STANDALONE_PERSIST_PATH"] ||
-    join(homedir(), ".agentmemory", "standalone.json")
+    join(resolveDataDir(), "standalone.json")
   );
 }
 

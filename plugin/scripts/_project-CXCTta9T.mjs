@@ -1,4 +1,4 @@
-import { i as loadAgentmemoryEnvironment, o as resolveProjectConfig } from "./_auth-r09nwS46.mjs";
+import { i as loadAgentmemoryEnvironment, o as resolveProjectConfig } from "./_auth-dmt9vymH.mjs";
 //#region src/hooks/_project.ts
 loadAgentmemoryEnvironment();
 function resolveProject(cwd) {
