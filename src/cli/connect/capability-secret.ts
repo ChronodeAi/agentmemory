@@ -1,8 +1,10 @@
 import {
   chmodSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { homedir } from "node:os";
@@ -45,13 +47,30 @@ export function generateCapabilitySecret(): string {
  * Return the existing credential, or generate one (64 hex chars from 32
  * random bytes) written with mode 0600. A file that exists but holds no
  * value is provisioned too — there is no user data to clobber — while a
- * populated file is left byte-for-byte untouched.
+ * populated file is left byte-for-byte untouched (permissions are tightened
+ * best-effort). A symlink at the credential path is refused outright.
  */
 export function ensureProjectCapabilitySecret(): CapabilityProvisionResult {
   const path = projectCapabilitySecretFile();
   if (existsSync(path)) {
+    // lstat, not stat: a symlink parked at the credential path must be
+    // refused before any read or write can follow it to another target.
+    if (lstatSync(path).isSymbolicLink()) {
+      throw new Error(
+        "project capability secret path is a symlink; refusing",
+      );
+    }
     try {
       if (readFileSync(path, "utf8").trim()) {
+        // The file pre-existed under the operator's home; tighten it when
+        // the filesystem allows, but never fail connect over a chmod.
+        try {
+          chmodSync(path, 0o600);
+        } catch (err) {
+          process.stderr.write(
+            `[agentmemory] could not tighten permissions on ${path}: ${err instanceof Error ? err.message : String(err)}\n`,
+          );
+        }
         return { path, provisioned: false, reused: true };
       }
     } catch {
@@ -61,10 +80,23 @@ export function ensureProjectCapabilitySecret(): CapabilityProvisionResult {
   }
 
   const secret = generateCapabilitySecret();
-  mkdirSync(dirname(path), { recursive: true });
+  mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   // The mode flag applies only at file creation; chmod covers the
   // pre-existing-but-empty case so the credential is never world-readable.
   writeFileSync(path, `${secret}\n`, { encoding: "utf8", mode: 0o600 });
-  chmodSync(path, 0o600);
+  try {
+    chmodSync(path, 0o600);
+  } catch {
+    // A partial credential that could not be secured must not stay on
+    // disk for another process to read; remove it and fail loud.
+    try {
+      unlinkSync(path);
+    } catch {
+      // Nothing further to clean up; the chmod failure below is reported.
+    }
+    throw new Error(
+      "could not secure project capability secret (chmod failed); removed partial file",
+    );
+  }
   return { path, provisioned: true, reused: false };
 }
