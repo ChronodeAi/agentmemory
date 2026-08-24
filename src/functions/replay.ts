@@ -9,6 +9,7 @@ import type {
   RawObservation,
   Session,
 } from "../types.js";
+import { importOrigin } from "../types.js";
 import type { StateKV } from "../state/kv.js";
 import { KV, generateId, fingerprintId } from "../state/schema.js";
 import { parseJsonlText } from "../replay/jsonl-parser.js";
@@ -16,6 +17,7 @@ import { projectTimeline, type Timeline } from "../replay/timeline.js";
 import { safeAudit } from "./audit.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex, scheduleIndexSave } from "./search.js";
+import { resetLessonIndex } from "./lessons.js";
 import { logger } from "../logger.js";
 import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
 
@@ -158,6 +160,7 @@ async function deriveCrystalAndLessons(
       lessonIds.push(lessonId);
     } catch {}
   }
+  if (lessonIds.length > 0) resetLessonIndex();
 
   // Content-addressed on sessionId so re-importing the same session
   // upserts the crystal in place instead of creating a new one.
@@ -439,6 +442,11 @@ export function registerReplayFunctions(sdk: ISdk, kv: StateKV): void {
         await Promise.all(
           parsed.observations.map(async (obs) => {
             const synthetic = buildSyntheticCompression(obs);
+            synthetic.origin = importOrigin(
+              synthetic.origin,
+              synthetic.timestamp,
+              "jsonl",
+            );
             synthetic.recalledOnly = isRetrievalGeneratedObservation(synthetic);
             compressed.push(synthetic);
             await kv.set(KV.observations(parsed.sessionId), obs.id, synthetic);

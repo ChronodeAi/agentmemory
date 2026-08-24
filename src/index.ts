@@ -45,6 +45,7 @@ import {
   reconcileCanonicalSearchIndex,
   repairVectorIndexFromKeyword,
   scheduleIndexSave,
+  setHybridRanker,
   setVectorIndex,
   setEmbeddingProvider,
   setIndexPersistence,
@@ -72,6 +73,7 @@ import { registerExportImportFunction } from "./functions/export-import.js";
 import { registerEnrichFunction } from "./functions/enrich.js";
 import { registerClaudeBridgeFunction } from "./functions/claude-bridge.js";
 import { registerGraphFunction } from "./functions/graph.js";
+import { registerGraphImportFunction } from "./functions/graph-import.js";
 import { registerConsolidationPipelineFunction } from "./functions/consolidation-pipeline.js";
 import { registerTeamFunction } from "./functions/team.js";
 import {
@@ -308,10 +310,14 @@ async function main() {
     );
   }
 
-  if (isGraphExtractionEnabled()) {
-    registerGraphFunction(sdk, kv, provider);
-    bootLog(`Knowledge graph: extraction enabled`);
-  }
+  // Registered unconditionally: session end always fires mem::graph-extract
+  // and the function gates its own LLM pass, so keyless installs still
+  // populate the graph through the deterministic heuristic pass.
+  registerGraphFunction(sdk, kv, provider);
+  registerGraphImportFunction(sdk, kv);
+  bootLog(
+    `Knowledge graph: registered (LLM enrichment ${isGraphExtractionEnabled() ? "enabled" : "disabled; heuristic pass active"})`,
+  );
 
   registerConsolidationPipelineFunction(sdk, kv, provider);
   bootLog(`Consolidation pipeline: registered (CONSOLIDATION_ENABLED=${isConsolidationEnabled() ? "true" : "false"})`);
@@ -406,9 +412,13 @@ async function main() {
     graphWeight,
   );
 
-  registerSmartSearchFunction(sdk, kv, (query, limit, processingContext) =>
-    hybridSearch.search(query, limit, processingContext),
-  );
+  const hybridRanker = (
+    query: string,
+    limit: number,
+    processingContext?: Parameters<typeof hybridSearch.search>[2],
+  ) => hybridSearch.search(query, limit, processingContext);
+  registerSmartSearchFunction(sdk, kv, hybridRanker);
+  setHybridRanker(hybridRanker);
   registerCodingMemoryFunctions(
     sdk,
     kv,
@@ -659,7 +669,7 @@ async function main() {
       : `Operational with ${startupSearchStatus.status} search index; health remains degraded until repair completes.`,
   );
   bootLog(
-    `REST API: 136 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
+    `REST API: 137 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
   );
   bootLog(
     `MCP surface (opt-in via \`npx @agentmemory/mcp\`): ${getAllTools().length} tools · 5 resources · 3 prompts`,

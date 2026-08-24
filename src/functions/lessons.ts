@@ -6,8 +6,58 @@ import {
   jaccardSimilarity,
 } from "../state/schema.js";
 import type { Lesson } from "../types.js";
+import { SearchIndex } from "../state/search-index.js";
+import { lessonToObservation } from "../state/memory-utils.js";
 import { recordAudit, safeAudit } from "./audit.js";
 import { requireProjectReadScope } from "../project-scope.js";
+
+// Dedicated BM25 index for lessons, with the full records cached
+// alongside it. Recall previously listed every lesson from KV and
+// substring-matched per query — O(corpus) per call with no term
+// weighting. Index and record cache are built lazily from one KV list
+// (the same cost a single recall used to pay) and kept current
+// incrementally on save/delete/decay. Confidence x recency reranking
+// stays exactly as before — the index only replaces the relevance term,
+// and the record cache keeps recall at zero KV round-trips.
+let lessonIndex: SearchIndex | null = null;
+const lessonRecords = new Map<string, Lesson>();
+let lessonIndexBuild: Promise<void> | null = null;
+let lessonIndexGeneration = 0;
+
+export function resetLessonIndex(): void {
+  lessonIndexGeneration++;
+  lessonIndex = null;
+  lessonRecords.clear();
+}
+
+// A build in flight must not absorb mutations that landed after it
+// started reading KV; dropping the half-built index forces a clean rebuild.
+function noteLessonMutation(): void {
+  if (!lessonIndex && lessonIndexBuild) resetLessonIndex();
+}
+
+async function ensureLessonIndex(kv: StateKV): Promise<SearchIndex> {
+  if (lessonIndex) return lessonIndex;
+  if (!lessonIndexBuild) {
+    const generation = lessonIndexGeneration;
+    lessonIndexBuild = (async () => {
+      const idx = new SearchIndex();
+      const all = await kv.list<Lesson>(KV.lessons);
+      if (generation !== lessonIndexGeneration) return;
+      for (const l of all) {
+        if (!l.deleted) {
+          idx.add(lessonToObservation(l));
+          lessonRecords.set(l.id, l);
+        }
+      }
+      lessonIndex = idx;
+    })().finally(() => {
+      lessonIndexBuild = null;
+    });
+  }
+  await lessonIndexBuild;
+  return lessonIndex ?? ensureLessonIndex(kv);
+}
 
 function reinforceLesson(lesson: Lesson): void {
   const now = new Date().toISOString();
@@ -80,8 +130,10 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
           };
         }
         reinforceLesson(existing);
+        let indexedTextChanged = false;
         if (data.context && !existing.context) {
           existing.context = data.context;
+          indexedTextChanged = true;
         }
         existing.sourceIds = [
           ...new Set([...existing.sourceIds, ...(data.sourceIds ?? [])]),
@@ -95,6 +147,12 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
           ];
         }
         await kv.set(KV.lessons, existing.id, existing);
+        lessonRecords.set(existing.id, existing);
+        if (indexedTextChanged && lessonIndex) {
+          lessonIndex.remove(existing.id);
+          lessonIndex.add(lessonToObservation(existing));
+        }
+        noteLessonMutation();
 
         await safeAudit(kv, "lesson_strengthen", "mem::lesson-save", [
           existing.id,
@@ -134,6 +192,9 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
       };
 
       await kv.set(KV.lessons, lesson.id, lesson);
+      lessonRecords.set(lesson.id, lesson);
+      if (lessonIndex) lessonIndex.add(lessonToObservation(lesson));
+      noteLessonMutation();
 
       await safeAudit(kv, "lesson_save", "mem::lesson-save", [lesson.id]);
 
@@ -157,41 +218,46 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
         "mem::lesson-recall",
       );
 
-      const query = data.query.toLowerCase();
       const minConfidence = data.minConfidence ?? 0.1;
       const limit = data.limit ?? 10;
 
-      let lessons = await kv.list<Lesson>(KV.lessons);
+      // Over-fetch when project/confidence filters will drop index hits
+      // post-lookup, so the final page still fills.
+      const idx = await ensureLessonIndex(kv);
+      const filtering =
+        projectScope.kind === "project" || minConfidence > 0.1;
+      const fetchLimit = filtering
+        ? Math.max(limit * 10, 100)
+        : Math.max(limit * 5, 50);
+      const hits = idx.search(data.query, fetchLimit);
+      const maxHit = hits.length > 0 ? hits[0].score : 0;
 
-      lessons = lessons.filter(
-        (l) => !l.deleted && l.confidence >= minConfidence,
-      );
+      const scored: Array<{ lesson: Lesson; score: number }> = [];
+      for (let i = 0; i < hits.length; i++) {
+        const l = lessonRecords.get(hits[i].obsId);
+        if (!l || l.deleted || l.confidence < minConfidence) continue;
+        if (
+          projectScope.kind === "project" &&
+          l.project !== projectScope.project
+        ) {
+          continue;
+        }
 
-      if (projectScope.kind === "project") {
-        lessons = lessons.filter((l) => l.project === projectScope.project);
+        const relevance = maxHit > 0 ? hits[i].score / maxHit : 0;
+        const daysSinceReinforced = l.lastReinforcedAt
+          ? (Date.now() - new Date(l.lastReinforcedAt).getTime()) /
+            (1000 * 60 * 60 * 24)
+          : (Date.now() - new Date(l.createdAt).getTime()) /
+            (1000 * 60 * 60 * 24);
+        const recencyBoost = 1 / (1 + daysSinceReinforced * 0.01);
+        scored.push({ lesson: l, score: l.confidence * relevance * recencyBoost });
       }
 
-      const scored = lessons
-        .map((l) => {
-          const text = `${l.content} ${l.context} ${l.tags.join(" ")}`.toLowerCase();
-          const terms = query.split(/\s+/).filter((t) => t.length > 1);
-          const matchCount = terms.filter((t) => text.includes(t)).length;
-          if (matchCount === 0) return null;
-
-          const relevance = matchCount / terms.length;
-          const daysSinceReinforced = l.lastReinforcedAt
-            ? (Date.now() - new Date(l.lastReinforcedAt).getTime()) /
-              (1000 * 60 * 60 * 24)
-            : (Date.now() - new Date(l.createdAt).getTime()) /
-              (1000 * 60 * 60 * 24);
-          const recencyBoost = 1 / (1 + daysSinceReinforced * 0.01);
-          const score = l.confidence * relevance * recencyBoost;
-
-          return { lesson: l, score };
-        })
-        .filter(Boolean) as Array<{ lesson: Lesson; score: number }>;
-
-      scored.sort((a, b) => b.score - a.score);
+      scored.sort(
+        (a, b) =>
+          b.score - a.score ||
+          (a.lesson.id < b.lesson.id ? -1 : a.lesson.id > b.lesson.id ? 1 : 0),
+      );
 
       await safeAudit(kv, "lesson_recall", "mem::lesson-recall", [], {
         query: data.query,
@@ -268,6 +334,8 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
       reinforceLesson(lesson);
 
       await kv.set(KV.lessons, lesson.id, lesson);
+      lessonRecords.set(lesson.id, lesson);
+      noteLessonMutation();
 
       await safeAudit(kv, "lesson_strengthen", "mem::lesson-strengthen", [
         lesson.id,
@@ -292,6 +360,9 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
       lesson.updatedAt = new Date().toISOString();
 
       await kv.set(KV.lessons, lesson.id, lesson);
+      lessonRecords.delete(lesson.id);
+      if (lessonIndex) lessonIndex.remove(lesson.id);
+      noteLessonMutation();
 
       try {
         await recordAudit(kv, "lesson_delete", "mem::lesson-delete", [
@@ -359,6 +430,15 @@ export function registerLessonsFunctions(sdk: ISdk, kv: StateKV): void {
       }
 
       await Promise.all(dirty.map((l) => kv.set(KV.lessons, l.id, l)));
+      for (const l of dirty) {
+        if (l.deleted) {
+          lessonRecords.delete(l.id);
+          if (lessonIndex) lessonIndex.remove(l.id);
+        } else {
+          lessonRecords.set(l.id, l);
+        }
+      }
+      if (dirty.length > 0) noteLessonMutation();
       await Promise.all(
         auditEvents.map((event) =>
           recordAudit(kv, "lesson_strengthen", "mem::lesson-decay-sweep", [event.id], {

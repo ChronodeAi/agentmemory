@@ -2727,6 +2727,76 @@ export function registerApiTriggers(
     config: { api_path: "/agentmemory/graph/extract", http_method: "POST" },
   });
 
+  // Import graphify's structural knowledge graph (graphify-out/graph.json)
+  // into the memory graph. Project-scoped like every other mutating route;
+  // scope:"global" imports into the unscoped graph and requires admin auth.
+  sdk.registerFunction("api::graph-import-graphify",
+    async (
+      req: ApiRequest<{
+        path?: string;
+        cwd?: string;
+        project?: string;
+        scope?: "project" | "global";
+      }>,
+    ): Promise<Response> => {
+      const authErr = checkAuth(req, secret);
+      if (authErr) return authErr;
+      const project = asNonEmptyString(req.body?.project);
+      const requestsGlobal = req.body?.scope === "global";
+      if (!project && !requestsGlobal) {
+        return {
+          status_code: 400,
+          body: { error: "project is required" },
+        };
+      }
+      try {
+        const rawResult = await sdk.trigger({
+          function_id: "mem::graph::import-graphify",
+          payload: {
+            ...(typeof req.body?.path === "string" && { path: req.body.path }),
+            ...(typeof req.body?.cwd === "string" && { cwd: req.body.cwd }),
+            ...(project ? { project } : {}),
+            ...(requestsGlobal ? { scope: req.body?.scope } : {}),
+          },
+        });
+        const result = triggerResult(rawResult);
+        if (!result) {
+          return {
+            status_code: 503,
+            body: {
+              success: false,
+              retryable: true,
+              error: "graph_import_result_unavailable",
+            },
+          };
+        }
+        return {
+          status_code:
+            result["success"] === true
+              ? 200
+              : failedTriggerStatus(result, 400),
+          body: result,
+        };
+      } catch (err) {
+        return {
+          status_code: 400,
+          body: {
+            success: false,
+            error: err instanceof Error ? err.message : String(err),
+          },
+        };
+      }
+    },
+  );
+  registerApiTrigger({
+    type: "http",
+    function_id: "api::graph-import-graphify",
+    config: {
+      api_path: "/agentmemory/graph/import-graphify",
+      http_method: "POST",
+    },
+  });
+
   // Backfill the knowledge graph from existing compressed observations.
   // Viewer calls this when the graph is empty (#666). Iterates every
   // session, collects observations that have a `title` (compressed only),
