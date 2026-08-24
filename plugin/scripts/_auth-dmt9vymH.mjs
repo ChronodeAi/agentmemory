@@ -5,7 +5,6 @@ import { isAbsolute, join, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { homedir } from "node:os";
 import { execFileSync } from "node:child_process";
-import "picocolors";
 //#region \0rolldown/runtime.js
 var __commonJSMin = (cb, mod) => () => (mod || (cb((mod = { exports: {} }).exports, mod), cb = null), mod.exports);
 var __require = /* @__PURE__ */ createRequire(import.meta.url);

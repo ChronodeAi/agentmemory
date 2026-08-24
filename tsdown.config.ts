@@ -46,12 +46,13 @@ const shared = {
 
 // Provider plugin caches contain only the published plugin tree. Bundle the
 // small config parsers used by hooks so those entrypoints never depend on a
-// repository or package-level node_modules directory at runtime.
+// repository or package-level node_modules directory at runtime. picocolors
+// rides in too: config.ts colorizes a provider hint that hook chunks reach.
 const pluginShared = {
   ...shared,
   deps: {
     ...shared.deps,
-    alwaysBundle: ["dotenv", "yaml"],
+    alwaysBundle: ["dotenv", "yaml", "picocolors"],
   },
 };
 

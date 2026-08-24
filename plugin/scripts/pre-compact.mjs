@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { i as loadAgentmemoryEnvironment, n as projectAuthHeaders, t as contextAcknowledgementSecret } from "./_auth-C5rlVU3b.mjs";
-import { t as resolveProject } from "./_project-VJwrNfCx.mjs";
+import { i as loadAgentmemoryEnvironment, n as projectAuthHeaders, t as contextAcknowledgementSecret } from "./_auth-dmt9vymH.mjs";
+import { t as resolveProject } from "./_project-CXCTta9T.mjs";
 import { createHash, createHmac, randomUUID } from "node:crypto";
 //#region src/hooks/pre-compact.ts
 function isSdkChildContext(payload) {
