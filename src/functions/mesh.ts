@@ -13,6 +13,7 @@ import type {
   GraphNode,
   GraphEdge,
 } from "../types.js";
+import { importOrigin } from "../types.js";
 import { lookup } from "node:dns/promises";
 import { isIP } from "node:net";
 
@@ -107,6 +108,21 @@ async function lwwMergeList<T extends { id: string }>(
 
 function graphNodeTs(node: GraphNode): string {
   return node.updatedAt || node.createdAt;
+}
+
+// Peer Memory upserts bypass every local capture surface, so records
+// arriving without an Origin would enter the store with no provenance.
+// Keep-or-mark via the shared factory: a peer-provided origin is preserved,
+// everything else is marked with the shared channel at receive time.
+function stampPeerMemoryOrigins(
+  memories: Memory[] | undefined,
+  receivedAt: string,
+): Memory[] | undefined {
+  if (!memories || !Array.isArray(memories)) return memories;
+  return memories.map((memory) => ({
+    ...memory,
+    origin: importOrigin(memory.origin, receivedAt, undefined, "shared"),
+  }));
 }
 
 async function lwwMergeGraphNodes(
@@ -341,8 +357,9 @@ export function registerMeshFunction(
         return { success: false, error: "payload required" };
       }
       let accepted = 0;
+      const receivedAt = new Date().toISOString();
 
-      accepted += await lwwMergeList(kv, KV.memories, data.memories, "mem:memory", "updatedAt");
+      accepted += await lwwMergeList(kv, KV.memories, stampPeerMemoryOrigins(data.memories, receivedAt), "mem:memory", "updatedAt");
       accepted += await lwwMergeList(kv, KV.actions, data.actions, "mem:action", "updatedAt");
       accepted += await lwwMergeList(kv, KV.semantic, data.semantic, "mem:semantic", "updatedAt");
       accepted += await lwwMergeList(kv, KV.procedural, data.procedural, "mem:procedural", "updatedAt");
@@ -495,9 +512,10 @@ async function applySyncData(
   scopes: string[],
 ): Promise<number> {
   let applied = 0;
+  const receivedAt = new Date().toISOString();
 
   if (scopes.includes("memories")) {
-    applied += await lwwMergeList(kv, KV.memories, data.memories, "mem:memory", "updatedAt");
+    applied += await lwwMergeList(kv, KV.memories, stampPeerMemoryOrigins(data.memories, receivedAt), "mem:memory", "updatedAt");
   }
   if (scopes.includes("actions")) {
     applied += await lwwMergeList(kv, KV.actions, data.actions, "mem:action", "updatedAt");
