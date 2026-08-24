@@ -118,28 +118,38 @@ describe("Graph Functions", () => {
     });
   });
 
-  it("graph-extract creates nodes and edges from XML response", async () => {
+  it("graph-extract creates nodes and edges from XML response on top of the keyless pass", async () => {
     const result = (await sdk.trigger("mem::graph-extract", {
       observations: [testObs],
-    })) as { success: boolean; nodesAdded: number; edgesAdded: number };
+    })) as {
+      success: boolean;
+      nodesAdded: number;
+      edgesAdded: number;
+      llm?: boolean;
+    };
 
     expect(result.success).toBe(true);
-    expect(result.nodesAdded).toBe(2);
-    expect(result.edgesAdded).toBe(1);
+    // Heuristic pass: file + 2 concepts with 3 co-occurrence edges; LLM
+    // pass adds function main plus a typed uses edge. The XML file node
+    // merges into the heuristic one through the name index.
+    expect(result.nodesAdded).toBe(4);
+    expect(result.edgesAdded).toBe(4);
 
     const nodes = await kv.list<GraphNode>("mem:graph:nodes");
-    expect(nodes.length).toBe(2);
+    expect(nodes.length).toBe(4);
     expect(nodes.every((node) => node.project === DEFAULT_PROJECT)).toBe(true);
-    expect(nodes.find((n) => n.name === "src/index.ts")).toBeDefined();
+    expect(
+      nodes.filter((n) => n.name === "src/index.ts" && n.type === "file"),
+    ).toHaveLength(1);
     expect(nodes.find((n) => n.name === "main")).toBeDefined();
 
     const edges = await kv.list<GraphEdge>("mem:graph:edges");
-    expect(edges.length).toBe(1);
-    expect(edges[0].project).toBe(DEFAULT_PROJECT);
-    expect(edges[0].type).toBe("uses");
+    const uses = edges.find((e) => e.type === "uses")!;
+    expect(uses.project).toBe(DEFAULT_PROJECT);
+    expect(edges.filter((e) => e.type === "related_to")).toHaveLength(3);
   });
 
-  it("does not send strict-project observations to graph extraction", async () => {
+  it("keeps keyless extraction for strict projects but never calls the provider", async () => {
     const session: Session = {
       id: "ses_1",
       project: "github.com/example/strict",
@@ -155,10 +165,12 @@ describe("Graph Functions", () => {
     const result = (await sdk.trigger("mem::graph-extract", {
       observations: [testObs],
       project: session.project,
-    })) as { success: boolean; error: string };
+    })) as { success: boolean; llmSkipped?: string };
 
-    expect(result.success).toBe(false);
-    expect(result.error).toContain("external_processing_disabled");
+    // The deterministic pass is local computation over stored fields;
+    // only the LLM pass is withheld for strict sessions.
+    expect(result.success).toBe(true);
+    expect(result.llmSkipped).toContain("external_processing_disabled");
     expect(mockProvider.compress).not.toHaveBeenCalled();
   });
 
@@ -212,17 +224,17 @@ describe("Graph Functions", () => {
       project: DEFAULT_PROJECT,
     })) as { totalNodes: number; totalEdges: number };
 
-    expect(first.nodes).toHaveLength(2);
-    expect(first.edges).toHaveLength(1);
+    expect(first.nodes).toHaveLength(4);
+    expect(first.edges).toHaveLength(4);
     expect(first.nodes.every((node) => node.project === DEFAULT_PROJECT)).toBe(
       true,
     );
-    expect(second.nodes).toHaveLength(2);
+    expect(second.nodes).toHaveLength(4);
     expect(second.nodes.every((node) => node.project === otherProject)).toBe(
       true,
     );
-    expect(global.totalNodes).toBe(4);
-    expect(firstStats).toMatchObject({ totalNodes: 2, totalEdges: 1 });
+    expect(global.totalNodes).toBe(8);
+    expect(firstStats).toMatchObject({ totalNodes: 4, totalEdges: 4 });
     expect(
       await kv.get(
         "mem:graph:name-index",
@@ -266,16 +278,15 @@ describe("Graph Functions", () => {
     })) as { success: boolean; nodesAdded: number; edgesAdded: number };
 
     expect(result.success).toBe(true);
-    expect(result.nodesAdded).toBe(2);
-    expect(result.edgesAdded).toBe(1);
+    expect(result.nodesAdded).toBe(4);
+    expect(result.edgesAdded).toBe(4);
 
     const nodes = await kv.list<GraphNode>("mem:graph:nodes");
     expect(nodes.some((n) => n.name === "src/index.ts")).toBe(true);
     expect(nodes.some((n) => n.name === "main")).toBe(true);
 
     const edges = await kv.list<GraphEdge>("mem:graph:edges");
-    expect(edges).toHaveLength(1);
-    expect(edges[0].type).toBe("uses");
+    expect(edges.find((e) => e.type === "uses")).toBeDefined();
   });
 
   it("graph-extract tolerates reordered attributes (#635)", async () => {
@@ -295,17 +306,16 @@ describe("Graph Functions", () => {
     })) as { success: boolean; nodesAdded: number; edgesAdded: number };
 
     expect(result.success).toBe(true);
-    expect(result.nodesAdded).toBe(2);
-    expect(result.edgesAdded).toBe(1);
+    expect(result.nodesAdded).toBe(4);
+    expect(result.edgesAdded).toBe(4);
 
     const nodes = await kv.list<GraphNode>("mem:graph:nodes");
     expect(nodes.find((n) => n.name === "src/index.ts")?.type).toBe("file");
     expect(nodes.find((n) => n.name === "main")?.type).toBe("function");
 
     const edges = await kv.list<GraphEdge>("mem:graph:edges");
-    expect(edges).toHaveLength(1);
-    expect(edges[0].type).toBe("uses");
-    expect(edges[0].weight).toBeCloseTo(0.9, 5);
+    const uses = edges.find((e) => e.type === "uses")!;
+    expect(uses.weight).toBeCloseTo(0.9, 5);
   });
 
   it("graph-query with search returns matching nodes", async () => {
@@ -345,10 +355,12 @@ describe("Graph Functions", () => {
       edgesByType: Record<string, number>;
     };
 
-    expect(result.totalNodes).toBe(2);
-    expect(result.totalEdges).toBe(1);
+    expect(result.totalNodes).toBe(4);
+    expect(result.totalEdges).toBe(4);
     expect(result.nodesByType.file).toBe(1);
+    expect(result.nodesByType.concept).toBe(2);
     expect(result.nodesByType.function).toBe(1);
+    expect(result.edgesByType.related_to).toBe(3);
     expect(result.edgesByType.uses).toBe(1);
   });
 
@@ -674,10 +686,14 @@ describe("Graph Functions", () => {
       );
       expect(fileNodes.length).toBe(1);
       const edges = await kv.list<GraphEdge>("mem:graph:edges");
-      expect(edges).toHaveLength(1);
+      // 3 heuristic co-occurrence edges + 1 typed uses edge, stable across
+      // re-extracts.
+      expect(edges).toHaveLength(4);
       const nodeIds = new Set(nodes.map((node) => node.id));
-      expect(nodeIds.has(edges[0].sourceNodeId)).toBe(true);
-      expect(nodeIds.has(edges[0].targetNodeId)).toBe(true);
+      for (const edge of edges) {
+        expect(nodeIds.has(edge.sourceNodeId)).toBe(true);
+        expect(nodeIds.has(edge.targetNodeId)).toBe(true);
+      }
     });
 
     it("graph-stats returns empty envelope + warning when no snapshot exists", async () => {

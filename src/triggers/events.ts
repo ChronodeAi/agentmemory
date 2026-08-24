@@ -6,9 +6,7 @@ import { isReflectEnabled } from "../functions/slots.js";
 import {
   getAgentId,
   getConsolidationCooldownMs,
-  getEnvVar,
   isConsolidationEnabled,
-  isGraphExtractionEnabled,
 } from "../config.js";
 import { logger } from "../logger.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
@@ -818,31 +816,26 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         });
       }
     }
-    const localProcessing = getEnvVar("AGENTMEMORY_LOCAL_PROCESSING") === "true";
-    const graphProcessingAllowed =
-      session !== null &&
-      (localProcessing ||
-        (session.privacy !== "strict" &&
-          session.externalProcessing !== false));
-    if (isGraphExtractionEnabled() && graphProcessingAllowed) {
-      try {
-        const observations = await kv.list<CompressedObservation>(
-          KV.observations(data.sessionId),
-        );
-        const compressed = observations.filter((o) => o.title);
-        if (compressed.length > 0) {
-          sdk.trigger({
-            function_id: "mem::graph-extract",
-            payload: { observations: compressed, project: data.project },
-            action: TriggerAction.Void(),
-          });
-        }
-      } catch (err) {
-        logger.warn("graph-extract trigger failed", {
-          sessionId: data.sessionId,
-          error: err instanceof Error ? err.message : String(err),
+    // Unconditional: mem::graph-extract gates its own LLM pass (flag +
+    // real provider + per-session external-processing rules), while the
+    // deterministic heuristic pass runs keyless on every session end.
+    try {
+      const observations = await kv.list<CompressedObservation>(
+        KV.observations(data.sessionId),
+      );
+      const compressed = observations.filter((o) => o.title);
+      if (compressed.length > 0) {
+        sdk.trigger({
+          function_id: "mem::graph-extract",
+          payload: { observations: compressed, project: data.project },
+          action: TriggerAction.Void(),
         });
       }
+    } catch (err) {
+      logger.warn("graph-extract trigger failed", {
+        sessionId: data.sessionId,
+        error: err instanceof Error ? err.message : String(err),
+      });
     }
     // Crystals + lessons corpus consolidation. Fires only after the
     // background pipeline reached a successful terminal state inside the
