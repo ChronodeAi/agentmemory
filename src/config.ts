@@ -10,6 +10,7 @@ import type {
   ClaudeBridgeConfig,
   TeamConfig,
 } from "./types.js";
+import { resolveDataDir } from "./data-dir.js";
 
 function safeParseInt(value: string | undefined, fallback: number): number {
   if (!value) return fallback;
@@ -17,12 +18,9 @@ function safeParseInt(value: string | undefined, fallback: number): number {
   return Number.isNaN(parsed) ? fallback : parsed;
 }
 
-const DATA_DIR = join(homedir(), ".agentmemory");
-const ENV_FILE = join(DATA_DIR, ".env");
-
 let warnPremiumModelShown = false;
 
-// Parsed ~/.agentmemory/.env, memoized for the process lifetime. getMergedEnv()
+// Parsed <dataDir>/.env, memoized for the process lifetime. getMergedEnv()
 // runs on every config getter, so without this cache a single request would
 // readFileSync + reparse the file dozens of times. The file is boot-static, so
 // read it from disk once and reuse the result. Tests that mutate the file
@@ -30,13 +28,18 @@ let warnPremiumModelShown = false;
 // __resetEnvFileCache().
 let envFileCache: Record<string, string> | undefined;
 
+function envFilePath(): string {
+  return join(resolveDataDir(), ".env");
+}
+
 function loadEnvFile(): Record<string, string> {
   if (envFileCache) return envFileCache;
-  if (!existsSync(ENV_FILE)) {
+  const envFile = envFilePath();
+  if (!existsSync(envFile)) {
     envFileCache = {};
     return envFileCache;
   }
-  const content = readFileSync(ENV_FILE, "utf-8");
+  const content = readFileSync(envFile, "utf-8");
   const vars: Record<string, string> = {};
   for (const line of content.split("\n")) {
     const trimmed = line.trim();
@@ -232,7 +235,7 @@ export function loadConfig(): AgentMemoryConfig {
     tokenBudget: safeParseInt(env["TOKEN_BUDGET"], 2000),
     maxObservationsPerSession: safeParseInt(env["MAX_OBS_PER_SESSION"], 500),
     compressionModel: provider.model,
-    dataDir: DATA_DIR,
+    dataDir: resolveDataDir(),
   };
 }
 
@@ -397,7 +400,7 @@ export function loadSnapshotConfig(): {
   return {
     enabled: env["SNAPSHOT_ENABLED"] === "true",
     interval: safeParseInt(env["SNAPSHOT_INTERVAL"], 3600),
-    dir: env["SNAPSHOT_DIR"] || join(homedir(), ".agentmemory", "snapshots"),
+    dir: env["SNAPSHOT_DIR"] || join(resolveDataDir(), "snapshots"),
   };
 }
 
@@ -499,7 +502,7 @@ export function getStandalonePersistPath(): string {
   const env = getMergedEnv();
   return (
     env["STANDALONE_PERSIST_PATH"] ||
-    join(homedir(), ".agentmemory", "standalone.json")
+    join(resolveDataDir(), "standalone.json")
   );
 }
 

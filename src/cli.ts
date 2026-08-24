@@ -61,6 +61,7 @@ import { isFirstRun, readPrefs, resetPrefs, writePrefs } from "./cli/preferences
 import { runOnboarding } from "./cli/onboarding.js";
 import { setBootVerbose } from "./logger.js";
 import { hydrateProcessEnvFromFile } from "./config.js";
+import { readDataDirFlag, warnOnLegacyDataDir } from "./data-dir.js";
 import { VERSION } from "./version.js";
 import { getAllTools, ESSENTIAL_TOOLS } from "./mcp/tools-registry.js";
 import { knownAgents } from "./cli/connect/index.js";
@@ -222,6 +223,11 @@ Options:
   --reset            Wipe ~/.agentmemory/preferences.json and re-run onboarding
   --tools all|core   Tool visibility (default: all = ${ALL_TOOLS_COUNT} tools; core = ${CORE_TOOLS_COUNT} essentials)
   --no-engine        Skip auto-starting iii-engine
+  --data-dir <path>  Relocate the data directory (default: ~/.agentmemory).
+                     Wins over the AGENTMEMORY_DATA_DIR environment variable.
+                     Accepts ~ expansion. A legacy ./data store in the current
+                     directory is NOT adopted automatically — pass this flag
+                     explicitly to use one.
   --port <N>         Override REST port (default: 3111). Streams (N+1), viewer
                      (N+2), and iii engine (N+46023) auto-derive from N so a
                      single flag relocates the whole quartet.
@@ -283,6 +289,19 @@ if (instanceIdx !== -1 && args[instanceIdx + 1]) {
     }
   }
 }
+
+// --data-dir relocates the agentmemory data dir (default ~/.agentmemory).
+// The flag wins over a pre-set AGENTMEMORY_DATA_DIR, so folding it into the
+// environment here keeps one precedence story — flag > env > default — for
+// everything downstream of this process (worker, engine, hooks inherit env).
+const dataDirFlagValue = readDataDirFlag(args);
+if (dataDirFlagValue !== undefined && dataDirFlagValue.trim().length > 0) {
+  process.env["AGENTMEMORY_DATA_DIR"] = dataDirFlagValue.trim();
+}
+// Upstream adopts a legacy cwd ./data store automatically; this fork does
+// not. When state would silently land somewhere different from an existing
+// local ./data store, tell the operator how to opt in explicitly.
+warnOnLegacyDataDir();
 
 const skipEngine = args.includes("--no-engine");
 
