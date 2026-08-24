@@ -17,6 +17,7 @@ import { projectTimeline, type Timeline } from "../replay/timeline.js";
 import { safeAudit } from "./audit.js";
 import { buildSyntheticCompression } from "./compress-synthetic.js";
 import { getSearchIndex, scheduleIndexSave } from "./search.js";
+import { resetLessonIndex } from "./lessons.js";
 import { logger } from "../logger.js";
 import { isRetrievalGeneratedObservation } from "./retrieval-evidence.js";
 
@@ -159,6 +160,7 @@ async function deriveCrystalAndLessons(
       lessonIds.push(lessonId);
     } catch {}
   }
+  if (lessonIds.length > 0) resetLessonIndex();
 
   // Content-addressed on sessionId so re-importing the same session
   // upserts the crystal in place instead of creating a new one.

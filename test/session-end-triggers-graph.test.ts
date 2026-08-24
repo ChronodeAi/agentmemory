@@ -682,10 +682,21 @@ describe("api::session::end → event::session::stopped (#666)", () => {
   });
 
   it("automatic graph extraction honors strict session privacy", () => {
+    // Session end fires mem::graph-extract unconditionally (the
+    // heuristic pass is local computation over stored fields), while the
+    // LLM pass inside mem::graph-extract stays gated on strict sessions
+    // and AGENTMEMORY_LOCAL_PROCESSING.
     const events = readFileSync("src/triggers/events.ts", "utf-8");
-    expect(events).toMatch(/session\.privacy !== "strict"/);
-    expect(events).toMatch(/session\.externalProcessing !== false/);
-    expect(events).toMatch(/AGENTMEMORY_LOCAL_PROCESSING/);
+    const stopped = events.slice(events.indexOf("event::session::stopped"));
+    const fire = stopped.indexOf('function_id: "mem::graph-extract"');
+    expect(fire).toBeGreaterThan(-1);
+    expect(stopped.slice(0, fire)).not.toContain("isGraphExtractionEnabled()");
+
+    const graph = readFileSync("src/functions/graph.ts", "utf-8");
+    expect(graph).toMatch(
+      /getEnvVar\("AGENTMEMORY_LOCAL_PROCESSING"\) === "true"/,
+    );
+    expect(graph).toMatch(/llmSkippedReason =\s*\n?\s*"external_processing_disabled_for_strict_project/);
   });
 });
 

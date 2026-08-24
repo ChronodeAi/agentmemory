@@ -45,6 +45,7 @@ import {
   reconcileCanonicalSearchIndex,
   repairVectorIndexFromKeyword,
   scheduleIndexSave,
+  setHybridRanker,
   setVectorIndex,
   setEmbeddingProvider,
   setIndexPersistence,
@@ -411,9 +412,13 @@ async function main() {
     graphWeight,
   );
 
-  registerSmartSearchFunction(sdk, kv, (query, limit, processingContext) =>
-    hybridSearch.search(query, limit, processingContext),
-  );
+  const hybridRanker = (
+    query: string,
+    limit: number,
+    processingContext?: Parameters<typeof hybridSearch.search>[2],
+  ) => hybridSearch.search(query, limit, processingContext);
+  registerSmartSearchFunction(sdk, kv, hybridRanker);
+  setHybridRanker(hybridRanker);
   registerCodingMemoryFunctions(
     sdk,
     kv,
@@ -664,7 +669,7 @@ async function main() {
       : `Operational with ${startupSearchStatus.status} search index; health remains degraded until repair completes.`,
   );
   bootLog(
-    `REST API: 136 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
+    `REST API: 137 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
   );
   bootLog(
     `MCP surface (opt-in via \`npx @agentmemory/mcp\`): ${getAllTools().length} tools · 5 resources · 3 prompts`,

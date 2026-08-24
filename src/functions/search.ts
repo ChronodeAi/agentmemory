@@ -20,6 +20,34 @@ const vectorExcludedIds = new Set<string>()
 let rebuildInFlight: Promise<number> | null = null
 let suppressIndexPersistence = false
 
+// Hybrid ranking hook for mem::search. Wired by index.ts once the
+// hybrid searcher exists (it is constructed after this module's
+// registration runs). When set and the vector index has entries,
+// mem::search ranks candidates through the full BM25+vector+graph
+// fusion instead of BM25 alone — previously only mem::smart-search got
+// hybrid ranking while the primary recall surface stayed keyword-only.
+type HybridRanker = (
+  query: string,
+  limit: number,
+  processingContext?: import("../state/hybrid-search.js").HybridSearchProcessingContext,
+) => Promise<
+  Array<{ observation: CompressedObservation; sessionId: string; combinedScore: number }>
+>
+let hybridRanker: HybridRanker | null = null
+
+export function setHybridRanker(fn: HybridRanker | null): void {
+  hybridRanker = fn
+}
+
+// True once a full rebuild has walked KV.memories successfully, so
+// index-backed supersession candidate lookups can trust the index to
+// cover the memory corpus. A cold, never-built index falls back to the
+// full scan in mem::remember.
+let memoryIndexReady = false
+export function isMemoryIndexReady(): boolean {
+  return memoryIndexReady
+}
+
 export interface SearchIndexRuntimeStatus {
   status: "initializing" | "rebuilding" | "ready" | "partial" | "failed"
   keywordEntries: number
@@ -672,6 +700,7 @@ async function performVectorIndexRepair(kv: StateKV): Promise<number> {
 async function performRebuildIndex(kv: StateKV): Promise<number> {
   const idx = getSearchIndex()
   idx.clear()
+  memoryIndexReady = false
 
   // BM25 clear above wipes stale doc entries; the vector index has the
   // symmetric concern — memories/observations deleted between runs
@@ -725,6 +754,9 @@ async function performRebuildIndex(kv: StateKV): Promise<number> {
     })
     count++
   }
+  // The memory walk completed without throwing, so the rebuilt index
+  // covers the current KV.memories corpus.
+  memoryIndexReady = true
 
   if (!sessions.length) {
     await flush()
@@ -864,7 +896,41 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       const fetchLimit = filtering
         ? Math.max(effectiveLimit * 10, 100)
         : Math.max(effectiveLimit * 3, 30)
-      const results = idx.search(query, fetchLimit)
+
+      // Hybrid results carry the observation the ranker already loaded,
+      // so the load pass below doesn't refetch every record it just
+      // enriched. A ranker failure falls back to keyword search rather
+      // than failing the query.
+      let results: Array<{
+        obsId: string
+        sessionId: string
+        score: number
+        observation?: CompressedObservation
+      }>
+      if (hybridRanker && vectorIndex && vectorIndex.size > 0) {
+        try {
+          const hybrid = await hybridRanker(
+            query,
+            fetchLimit,
+            projectScope.kind === "project"
+              ? { project: projectScope.project }
+              : undefined,
+          )
+          results = hybrid.map((r) => ({
+            obsId: r.observation.id,
+            sessionId: r.sessionId,
+            score: r.combinedScore,
+            observation: r.observation,
+          }))
+        } catch (err) {
+          logger.warn("hybrid ranking failed, falling back to keyword search", {
+            error: err instanceof Error ? err.message : String(err),
+          })
+          results = idx.search(query, fetchLimit)
+        }
+      } else {
+        results = idx.search(query, fetchLimit)
+      }
 
       // Resolve session -> project/cwd once per sessionId we touch.
       const sessionCache = new Map<string, Session | null>()
@@ -945,6 +1011,7 @@ export function registerSearchFunction(sdk: ISdk, kv: StateKV): void {
       // sessionId, so the observation key never exists (#265).
       const obsResults = await Promise.all(
         candidates.map(async (r) => {
+          if (r.observation) return r.observation
           const obs = await kv
             .get<CompressedObservation>(KV.observations(r.sessionId), r.obsId)
             .catch(() => null)

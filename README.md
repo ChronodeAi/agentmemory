@@ -1503,7 +1503,7 @@ Create `~/.agentmemory/.env`:
 
 <h2 id="api"><picture><source media="(prefers-color-scheme: dark)" srcset="assets/tags/light/section-api.svg"><img src="assets/tags/section-api.svg" alt="API" height="32" /></picture></h2>
 
-136 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default.
+137 endpoints on port `3111`. The REST API binds to `127.0.0.1` by default.
 Only `/agentmemory/livez` is public. Protected endpoints, including detailed
 health telemetry, require `Authorization: Bearer <secret>`. Explicit
 cross-project `scope: "global"` requires the separate

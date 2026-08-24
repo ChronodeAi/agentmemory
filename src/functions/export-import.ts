@@ -25,6 +25,7 @@ import type {
 } from "../types.js";
 import { importOrigin } from "../types.js";
 import { normalizeAccessLog } from "./access-tracker.js";
+import { resetLessonIndex } from "./lessons.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { EXPORT_FORMAT_VERSION } from "../version.js";
@@ -341,6 +342,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         for (const l of await kv.list<Lesson>(KV.lessons).catch(() => [])) {
           await kv.delete(KV.lessons, l.id);
         }
+        resetLessonIndex();
         for (const i of await kv.list<Insight>(KV.insights).catch(() => [])) {
           await kv.delete(KV.insights, i.id);
         }
@@ -568,6 +570,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
           }
           await kv.set(KV.lessons, lesson.id, lesson);
         }
+        resetLessonIndex();
       }
       if (importData.insights) {
         for (const insight of importData.insights) {

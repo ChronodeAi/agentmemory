@@ -819,17 +819,26 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     // Unconditional: mem::graph-extract gates its own LLM pass (flag +
     // real provider + per-session external-processing rules), while the
     // deterministic heuristic pass runs keyless on every session end.
+    // Dispatch mirrors the fireVoid discipline below: tolerate
+    // synchronous throws and log async rejections without failing the
+    // stop lifecycle.
     try {
       const observations = await kv.list<CompressedObservation>(
         KV.observations(data.sessionId),
       );
       const compressed = observations.filter((o) => o.title);
       if (compressed.length > 0) {
-        sdk.trigger({
+        const dispatched = sdk.trigger({
           function_id: "mem::graph-extract",
           payload: { observations: compressed, project: data.project },
           action: TriggerAction.Void(),
         });
+        Promise.resolve(dispatched).catch((err: unknown) =>
+          logger.warn("mem::graph-extract trigger failed", {
+            sessionId: data.sessionId,
+            error: err instanceof Error ? err.message : String(err),
+          }),
+        );
       }
     } catch (err) {
       logger.warn("graph-extract trigger failed", {
