@@ -955,6 +955,18 @@ export const V070_TOOLS: McpToolDef[] = [
     },
   },
   {
+    name: "memory_lesson_delete",
+    description:
+      "Soft-delete a lesson by id. Deleted lessons are excluded from recall and list; re-saving the same content creates a fresh lesson.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        lessonId: { type: "string", description: "The lesson id (lsn_...)" },
+      },
+      required: ["lessonId"],
+    },
+  },
+  {
     name: "memory_obsidian_export",
     description:
       "Export memories, lessons, and crystals as Obsidian-compatible Markdown files with YAML frontmatter and wikilinks for graph view.",
@@ -1298,7 +1310,7 @@ export function getAllTools(): McpToolDef[] {
 }
 
 // default switched from "core" (8 essential tools) to "all"
-// (full 58-tool surface). README and plugin manifests have always
+// (full 60-tool surface). README and plugin manifests have always
 // advertised the full tool surface; the old default left OpenCode /
 // Claude Code users seeing 8 with no indication the other tools existed.
 // Users who want the lean essentials can still set AGENTMEMORY_TOOLS=core.
