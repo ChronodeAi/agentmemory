@@ -21,6 +21,7 @@ import { adapter as pi } from "./pi.js";
 import { adapter as qwen } from "./qwen.js";
 import { adapter as warp } from "./warp.js";
 import { adapter as zed } from "./zed.js";
+import { ensureProjectCapabilitySecret } from "./capability-secret.js";
 
 export const ADAPTERS: readonly ConnectAdapter[] = [
   claudeCode,
@@ -115,6 +116,23 @@ export async function runConnect(args: string[]): Promise<void> {
   const opts: ConnectOptions = { dryRun, force, withHooks };
 
   p.intro("agentmemory connect");
+
+  // Zero-touch capability provisioning (#strict-scope): every real connect
+  // run leaves the machine with a project capability signing credential so
+  // wired agents authorize on first use. Dry-run stays side-effect free.
+  if (!dryRun) {
+    try {
+      const capability = ensureProjectCapabilitySecret();
+      if (capability.provisioned) {
+        p.log.info(
+          `Generated project capability credential at ${capability.path} (mode 0600).`,
+        );
+      }
+    } catch {
+      // Provisioning must never block wiring; doctor reports a missing
+      // credential and can generate one later.
+    }
+  }
 
   if (positional.length === 0 && !all) {
     const detected = ADAPTERS.filter((a) => a.detect());

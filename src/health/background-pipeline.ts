@@ -50,7 +50,24 @@ type FailedRun = {
 
 const activeRuns = new Map<string, ActiveRun>();
 const failedRuns = new Map<string, FailedRun>();
+// Unbounded growth guard: every failed pipeline run would otherwise stay
+// forever (restarts re-restore them), so keep the most recent 100 and drop
+// the oldest entries.
+const MAX_FAILED_RUNS = 100;
 let health: BackgroundPipelineHealth = createInitialHealth();
+
+function recordFailedRun(runId: string, entry: FailedRun): void {
+  const grew = !failedRuns.has(runId);
+  failedRuns.set(runId, entry);
+  // Re-sets never grow the map; when an insert pushes past the cap, evict
+  // strictly oldest-first (Map preserves insertion order). The freshly
+  // recorded run sits at the end, so the first key is always older.
+  while (grew && failedRuns.size > MAX_FAILED_RUNS) {
+    const oldest = failedRuns.keys().next();
+    if (oldest.done || oldest.value === runId) break;
+    failedRuns.delete(oldest.value);
+  }
+}
 
 function createInitialHealth(): BackgroundPipelineHealth {
   return {
@@ -206,7 +223,7 @@ export function recordBackgroundPipelineFailed(input: {
   activeRuns.delete(input.runId);
   const failedAt = nowIso();
   const errorCode = pipelineFailureCode(input.error);
-  failedRuns.set(input.runId, {
+  recordFailedRun(input.runId, {
     sessionId: input.sessionId,
     project: input.project,
     stage: input.stage,
@@ -236,7 +253,7 @@ export function restoreBackgroundPipelineFailure(input: {
   failedAt?: string;
 }): void {
   const failedAt = input.failedAt ?? nowIso();
-  failedRuns.set(input.runId, {
+  recordFailedRun(input.runId, {
     sessionId: input.sessionId,
     project: input.project,
     stage: input.stage,

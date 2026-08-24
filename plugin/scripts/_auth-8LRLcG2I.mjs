@@ -6826,6 +6826,7 @@ function normalizeGitRemote(remote) {
 		return;
 	}
 }
+let warnedUnnormalizableRemote = false;
 function inferProjectId(root) {
 	const remote = git(root, [
 		"remote",
@@ -6838,7 +6839,12 @@ function inferProjectId(root) {
 		"upstream"
 	]);
 	const normalizedRemote = remote ? normalizeGitRemote(remote) : void 0;
-	if (remote && !normalizedRemote) throw new Error("configured Git remote cannot be normalized safely");
+	if (remote && !normalizedRemote) {
+		if (!warnedUnnormalizableRemote) {
+			warnedUnnormalizableRemote = true;
+			process.stderr.write(`[agentmemory] Git remote "${remote}" cannot be normalized to a canonical project id; using local/${projectPathHash(root)} for this checkout\n`);
+		}
+	}
 	return normalizedRemote ?? `local/${projectPathHash(root)}`;
 }
 function readConfigFile(path) {

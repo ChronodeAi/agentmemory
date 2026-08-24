@@ -29,6 +29,7 @@ import { appendFileSync, readFileSync } from "node:fs";
 import { readPrefs, writePrefs } from "./preferences.js";
 import { ADAPTERS, resolveAdapter, runAdapter } from "./connect/index.js";
 import type { ConnectResult } from "./connect/types.js";
+import { ensureProjectCapabilitySecret } from "./connect/capability-secret.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -320,6 +321,19 @@ async function wireSelectedAgents(agents: string[]): Promise<void> {
   const wired: string[] = [];
   const manual: { name: string; docs?: string }[] = [];
   const failed: { name: string; reason: string }[] = [];
+
+  // Same zero-touch guarantee as `agentmemory connect`: onboarding-driven
+  // wiring also provisions the project capability credential up front.
+  try {
+    const capability = ensureProjectCapabilitySecret();
+    if (capability.provisioned) {
+      p.log.info(
+        `Generated project capability credential at ${capability.path} (mode 0600).`,
+      );
+    }
+  } catch {
+    // Doctor reports and repairs a missing credential; never block wiring.
+  }
 
   for (const name of agents) {
     const adapter = resolveAdapter(name);

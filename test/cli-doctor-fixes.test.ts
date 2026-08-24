@@ -47,6 +47,10 @@ function stubEffects(overrides: Partial<DoctorEffects> = {}): DoctorEffects {
     viewerReachable: async () => true,
     runInit: async () => ({ ok: true, message: "wrote .env" }),
     openEditor: async () => ({ ok: true, message: "saved" }),
+    provisionProjectCapability: async () => ({
+      ok: true,
+      message: "generated",
+    }),
     runIiiInstaller: async () => ({ ok: true, message: "installed" }),
     runStop: async () => ({ ok: true, message: "stopped" }),
     runStart: async () => ({ ok: true, message: "started" }),

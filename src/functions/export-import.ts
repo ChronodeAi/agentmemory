@@ -38,7 +38,24 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       maxSessions?: number;
       offset?: number;
       sections?: string[];
+      project?: string;
+      scope?: "global";
     }) => {
+      // Fork scoping model: project is mandatory unless the caller holds
+      // administrative authorization and passes scope:"global" (the REST and
+      // MCP layers enforce that). A project-scoped export filters every
+      // attributable section; sections without a project field cannot be
+      // attributed safely and are omitted rather than leaked.
+      const projectScope =
+        typeof data?.project === "string" && data.project.trim()
+          ? data.project.trim()
+          : undefined;
+      const matchesProject = (record: { project?: string }): boolean =>
+        projectScope === undefined || record.project === projectScope;
+      const scoped = <T extends { project?: string }>(rows: T[]): T[] =>
+        projectScope === undefined ? rows : rows.filter(matchesProject);
+      const globalOnly = <T>(rows: T[]): T[] =>
+        projectScope === undefined ? rows : [];
       const rawMax = Number(data?.maxSessions);
       const maxSessions = Number.isFinite(rawMax) && rawMax > 0 ? Math.min(Math.floor(rawMax), 1000) : undefined;
       const rawOffset = Number(data?.offset);
@@ -54,20 +71,21 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
       const includeSummaries = includes("core") || includes("summaries");
 
       const allSessions =
-        includeSessions || includes("profiles")
+        (includeSessions || includes("profiles")
           ? await kv.list<Session>(KV.sessions)
-          : [];
+          : []
+        ).filter(matchesProject);
       const paginatedSessions = includeSessions && maxSessions !== undefined
         ? allSessions.slice(offset, offset + maxSessions)
         : includeSessions
           ? allSessions
           : [];
-      const memories = includeMemories
-        ? await kv.list<Memory>(KV.memories)
-        : [];
-      const summaries = includeSummaries
-        ? await kv.list<SessionSummary>(KV.summaries)
-        : [];
+      const memories = scoped(
+        includeMemories ? await kv.list<Memory>(KV.memories) : [],
+      );
+      const summaries = scoped(
+        includeSummaries ? await kv.list<SessionSummary>(KV.summaries) : [],
+      );
 
       const observations: Record<string, CompressedObservation[]> = {};
       const obsResults = await Promise.all(
@@ -135,6 +153,26 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         includes("access") ? kv.list<AccessLogExport>(KV.accessLog).catch(() => []) : [],
       ]);
 
+      const fGraphNodes = scoped(graphNodes);
+      const fGraphEdges = scoped(graphEdges);
+      const fSemanticMemories = scoped(semanticMemories);
+      const fProceduralMemories = scoped(proceduralMemories);
+      const fActions = scoped(actions);
+      // ActionEdge, Sentinel, Facet, Routine, Signal, Checkpoint and
+      // AccessLogExport rows carry no project field; a project-scoped export
+      // cannot attribute them, so it omits them instead of crossing projects.
+      const fActionEdges = globalOnly(actionEdges);
+      const fSentinels = globalOnly(sentinels);
+      const fSketches = scoped(sketches);
+      const fCrystals = scoped(crystals);
+      const fFacets = globalOnly(facets);
+      const fLessons = scoped(lessons);
+      const fInsights = scoped(insights);
+      const fRoutines = globalOnly(routines);
+      const fSignals = globalOnly(signals);
+      const fCheckpoints = globalOnly(checkpoints);
+      const fAccessLogs = globalOnly(accessLogs);
+
       const exportData: ExportData = {
         version: EXPORT_FORMAT_VERSION,
         exportedAt: new Date().toISOString(),
@@ -146,24 +184,24 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         memories,
         summaries,
         profiles: profiles.length > 0 ? profiles : undefined,
-        graphNodes: graphNodes.length > 0 ? graphNodes : undefined,
-        graphEdges: graphEdges.length > 0 ? graphEdges : undefined,
+        graphNodes: fGraphNodes.length > 0 ? fGraphNodes : undefined,
+        graphEdges: fGraphEdges.length > 0 ? fGraphEdges : undefined,
         semanticMemories:
-          semanticMemories.length > 0 ? semanticMemories : undefined,
+          fSemanticMemories.length > 0 ? fSemanticMemories : undefined,
         proceduralMemories:
-          proceduralMemories.length > 0 ? proceduralMemories : undefined,
-        actions: actions.length > 0 ? actions : undefined,
-        actionEdges: actionEdges.length > 0 ? actionEdges : undefined,
-        sentinels: sentinels.length > 0 ? sentinels : undefined,
-        sketches: sketches.length > 0 ? sketches : undefined,
-        crystals: crystals.length > 0 ? crystals : undefined,
-        facets: facets.length > 0 ? facets : undefined,
-        lessons: lessons.length > 0 ? lessons : undefined,
-        insights: insights.length > 0 ? insights : undefined,
-        routines: routines.length > 0 ? routines : undefined,
-        signals: signals.length > 0 ? signals : undefined,
-        checkpoints: checkpoints.length > 0 ? checkpoints : undefined,
-        accessLogs: accessLogs.length > 0 ? accessLogs : undefined,
+          fProceduralMemories.length > 0 ? fProceduralMemories : undefined,
+        actions: fActions.length > 0 ? fActions : undefined,
+        actionEdges: fActionEdges.length > 0 ? fActionEdges : undefined,
+        sentinels: fSentinels.length > 0 ? fSentinels : undefined,
+        sketches: fSketches.length > 0 ? fSketches : undefined,
+        crystals: fCrystals.length > 0 ? fCrystals : undefined,
+        facets: fFacets.length > 0 ? fFacets : undefined,
+        lessons: fLessons.length > 0 ? fLessons : undefined,
+        insights: fInsights.length > 0 ? fInsights : undefined,
+        routines: fRoutines.length > 0 ? fRoutines : undefined,
+        signals: fSignals.length > 0 ? fSignals : undefined,
+        checkpoints: fCheckpoints.length > 0 ? fCheckpoints : undefined,
+        accessLogs: fAccessLogs.length > 0 ? fAccessLogs : undefined,
       };
 
       if (includeSessions && maxSessions !== undefined) {

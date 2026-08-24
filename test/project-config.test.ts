@@ -60,11 +60,34 @@ describe("canonical project configuration", () => {
     expect(inferProjectId(local)).toBe(inferProjectId(local));
   });
 
-  it("fails closed when a configured remote cannot be normalized", () => {
-    const root = gitProject("not-a-valid-remote");
-    expect(() => inferProjectId(root)).toThrow(
-      "configured Git remote cannot be normalized safely",
+  it("falls back to a local id (warned, not thrown) for a file:// remote", () => {
+    const root = gitProject();
+    execFileSync(
+      "git",
+      [
+        "-C",
+        root,
+        "remote",
+        "add",
+        "origin",
+        `file://${root}`,
+      ],
     );
+    expect(inferProjectId(root)).toMatch(/^local\/[a-f0-9]{24}$/);
+    expect(inferProjectId(root)).toBe(inferProjectId(root));
+  });
+
+  it("falls back to a local id for a bare-path remote", () => {
+    const target = gitProject();
+    const root = gitProject(target);
+    expect(inferProjectId(root)).toMatch(/^local\/[a-f0-9]{24}$/);
+  });
+
+  it("keeps ssh and https remotes on the canonical identity", () => {
+    const ssh = gitProject("git@github.com:ChronodeAi/Memetics.git");
+    expect(inferProjectId(ssh)).toBe("github.com/chronodeai/memetics");
+    const https = gitProject("https://github.com/ChronodeAi/Memetics.git");
+    expect(inferProjectId(https)).toBe("github.com/chronodeai/memetics");
   });
 
   it("normalizes project paths and applies recursive exclusion globs", () => {

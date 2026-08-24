@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { t as resolveProject } from "./_project-CXCTta9T.mjs";
-import { n as reportObservationDeliveryFailure, t as deliverObservation } from "./_observe-delivery-Bt5vTi-C.mjs";
+import { t as resolveProject } from "./_project-VjQrnNqc.mjs";
+import { n as reportObservationDeliveryFailure, t as deliverObservation } from "./_observe-delivery-BYrh4Ekr.mjs";
 //#region src/hooks/subagent-start.ts
 function isSdkChildContext(payload) {
 	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;

@@ -48,6 +48,18 @@ describe("resolveProject — canonical hook project resolver", () => {
     expect(resolveProject(process.cwd())).toBe("my-override");
   });
 
+  it("prefers AGENTMEMORY_PROJECT_NAME over a normalizable remote identity", () => {
+    const root = createGitFixture();
+    process.env.AGENTMEMORY_PROJECT_NAME = "override-project";
+    try {
+      // The fixture carries a normalizable https remote that would resolve
+      // to github.com/example/project on its own; the env override wins.
+      expect(resolveProject(root)).toBe("override-project");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("does not inspect an unsafe remote when an explicit project is configured", () => {
     const root = mkdtempSync(join(tmpdir(), "amem-local-remote-"));
     execFileSync("git", ["init", "-q", root]);

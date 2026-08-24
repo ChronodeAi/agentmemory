@@ -180,6 +180,8 @@ export type DoctorEffects = {
   runInit: () => Promise<DiagnosticFixResult>;
   /** Open a file in $EDITOR (or fallback). Resolves when editor exits. */
   openEditor: (path: string) => Promise<DiagnosticFixResult>;
+  /** Generate the project capability credential (mode 0600) when absent. */
+  provisionProjectCapability: () => Promise<DiagnosticFixResult>;
   /** Run the iii installer. */
   runIiiInstaller: () => Promise<DiagnosticFixResult>;
   /** Stop the running engine cleanly. */
@@ -230,11 +232,11 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
       id: "project-capability-credentials",
       message: "Strict project authorization has no capability signing credential.",
       fixPreview:
-        "Open ~/.agentmemory/.env and configure a project capability secret or secret file.",
+        "Generate a capability signing credential at ~/.agentmemory/project-capability-secret (mode 0600).",
       moreInfo:
         "Project-scoped hooks and MCP calls use short-lived signed capabilities. " +
-        "Strict mode is the default; without a signing credential, project writes and recalls fail closed.",
-      manualOnly: true,
+        "Strict mode is the default; connect flows provision this credential " +
+        "automatically, and doctor can generate it too — no manual editing needed.",
       check: async (ctx) => {
         const env = effects.runtimeEnv();
         const strict = !["false", "0", "off"].includes(
@@ -255,7 +257,7 @@ export function buildDiagnostics(effects: DoctorEffects): Diagnostic[] {
           ? { ok: true, detail: `secret file: ${secretFile}` }
           : { ok: false, detail: "no project capability signing credential" };
       },
-      fix: (ctx) => effects.openEditor(ctx.envPath),
+      fix: () => effects.provisionProjectCapability(),
     },
     {
       id: "context-delivery-credentials",

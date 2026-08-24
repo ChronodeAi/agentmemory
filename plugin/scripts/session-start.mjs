@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-import { o as resolveProjectConfig } from "./_auth-dmt9vymH.mjs";
-import "./_project-CXCTta9T.mjs";
-import { n as reportHookDeliveryFailure, t as deliverProjectRequest } from "./_delivery-BtSVOGKV.mjs";
+import { o as resolveProjectConfig } from "./_auth-8LRLcG2I.mjs";
+import "./_project-VjQrnNqc.mjs";
+import { n as reportHookDeliveryFailure, t as deliverProjectRequest } from "./_delivery-C1jg9u5N.mjs";
 //#region src/hooks/session-start.ts
 function isSdkChildContext(payload) {
 	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;
