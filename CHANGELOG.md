@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.30-chronode.1] — 2026-08-24
+
+Upstream v0.9.29 sync wave, staged across five reviewed trains (#5–#9). Fork architecture of record unchanged: remote-derived canonical project identity, exclusive project scope, fail-closed governance, self-contained bundled hooks.
+
+### Added
+
+- DeepSeek Harness connector: `agentmemory connect dsh` writes a marker-idempotent MCP row into `$DSH_HOME/cordis.patch.yml` and an optional hooks bridge (`--with-hooks`) through the bundled Claude Code hook scripts.
+- Two skills (15 → 17): `memory-discipline` reference and invocable `/lesson` correction distillation.
+- Keyless knowledge graph: deterministic structural extraction always runs at session end (project-stamped nodes, provenance-carrying edges); the LLM pass stays behind `GRAPH_EXTRACTION_ENABLED` + provider + external-processing rules; strict sessions get local-only extraction with the skip reason surfaced instead of failing. Adds `mem::graph::import-graphify` and `POST /agentmemory/graph/import-graphify`.
+- Write-time Origin provenance on observations and memories (channel user/agent/tool/import/shared, detail, capturedAt), stamped at capture/save/import and inherited through both compression paths; coexists with commit-provenance fields.
+- Hybrid recall on the primary `mem::search` path (BM25 + vector + graph fusion, per-stream normalization, deterministic ordering); superseded versions leave the search indexes; lesson recall moves to an incrementally maintained BM25 index.
+- Honest `memory_forget`: nonexistent ids report `{deleted: 0}` with no audit row; lessons gained a real soft-delete path (`memory_lesson_delete`, `POST /agentmemory/lessons/delete`).
+- MCP protocol version negotiation in the standalone server — hosts requesting newer revisions no longer disconnect with `-32000`.
+- Zero-touch capability provisioning: `connect` generates `~/.agentmemory/project-capability-secret` (0600) when absent; fresh installs no longer lose capture silently under strict-capability mode.
+- Unified data-dir resolution: `--data-dir` flag > `AGENTMEMORY_DATA_DIR` > `~/.agentmemory`; legacy cwd `./data` stores are warned about, never silently adopted.
+- Env hydration: `~/.agentmemory/.env` applies everywhere at boot, fill-missing-only; real environment always wins.
+- Consolidation and crystallization run on session stop behind a serialized cooldown (`AGENTMEMORY_CONSOLIDATION_COOLDOWN_MS`), integrated with background-pipeline stage-resume so completed stages never re-run.
+
+### Changed
+
+- Provider fetches retry 429/503 honoring `Retry-After` under a total budget below the iii invocation timeout.
+- `memory_export` / `memory_audit` join the exclusive-scope model: project required unless `scope:"global"` behind admin auth.
+- Unnormalizable git remotes fall back to `local/<sha256(canonpath)[:24]>` identity with a warning instead of throwing inside every hook.
+- Stale-session sweep throttled (`AGENTMEMORY_STALE_SESSION_SWEEP_MS`, default 60s); background-pipeline failed-run tracking capped.
+- README leads with the npx engine install; pipe-to-shell option removed.
+
+### Fixed
+
+- Claude Code bridge MEMORY.md path restored under `memory/` (upstream #1134).
+
+### Host adapters not carried
+
+Upstream's new Cursor, Devin, Droid, and Antigravity adapters are intentionally not ported — unused here; they remain additive upstream for future adoption if needed.
+
 ### Added
 
 - Added structured commit provenance (`baseHeadSha`, `worktreeId`, and file transitions) across automatic capture, REST, and MCP commit-link paths, with project health reporting rich-provenance coverage separately from basic SHA linkage.
