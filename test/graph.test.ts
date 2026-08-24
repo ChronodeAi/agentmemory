@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 
 vi.mock("../src/logger.js", () => ({
   logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
@@ -102,11 +102,15 @@ const testObs: CompressedObservation = {
 describe("Graph Functions", () => {
   let sdk: ReturnType<typeof mockSdk>;
   let kv: ReturnType<typeof mockKV>;
+  const ORIG_GRAPH_FLAG = process.env["GRAPH_EXTRACTION_ENABLED"];
 
   beforeEach(async () => {
     sdk = mockSdk();
     kv = mockKV();
     vi.clearAllMocks();
+    // Pin the flag: hydration makes ambient ~/.agentmemory/.env values leak
+    // in on developer machines, and the R13 profile runs with a clean HOME.
+    process.env["GRAPH_EXTRACTION_ENABLED"] = "true";
     registerGraphFunction(sdk as never, kv as never, mockProvider as never);
     await kv.set<Session>("mem:sessions", "ses_1", {
       id: "ses_1",
@@ -116,6 +120,11 @@ describe("Graph Functions", () => {
       status: "active",
       observationCount: 1,
     });
+  });
+
+  afterEach(() => {
+    if (ORIG_GRAPH_FLAG === undefined) delete process.env["GRAPH_EXTRACTION_ENABLED"];
+    else process.env["GRAPH_EXTRACTION_ENABLED"] = ORIG_GRAPH_FLAG;
   });
 
   it("graph-extract creates nodes and edges from XML response on top of the keyless pass", async () => {
