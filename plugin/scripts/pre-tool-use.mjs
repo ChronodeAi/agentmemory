@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { i as loadAgentmemoryEnvironment, n as projectAuthHeaders } from "./_auth-8LRLcG2I.mjs";
-import { t as resolveProject } from "./_project-VjQrnNqc.mjs";
+import { i as loadAgentmemoryEnvironment, n as projectAuthHeaders } from "./_auth-1Z57rc-e.mjs";
+import { t as resolveProject } from "./_project-BqDfPlX6.mjs";
 //#region src/hooks/pre-tool-use.ts
 function isSdkChildContext(payload) {
 	if (process.env["AGENTMEMORY_SDK_CHILD"] === "1") return true;

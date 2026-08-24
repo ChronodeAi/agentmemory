@@ -1,4 +1,4 @@
-import { i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, r as createProjectCapabilityToken } from "./auth-Evr8deOq.mjs";
+import { i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, o as hydrateProcessEnvFromFile, r as createProjectCapabilityToken, s as resolveDataDir } from "./auth-DkiaFluQ.mjs";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -6574,7 +6574,7 @@ var require_public_api = /* @__PURE__ */ __commonJSMin(((exports) => {
 	exports.stringify = stringify;
 }));
 //#endregion
-//#region src/data-dir.ts
+//#region src/project-config.ts
 var import_dist = (/* @__PURE__ */ __commonJSMin(((exports) => {
 	var composer = require_composer();
 	var Document = require_Document();
@@ -6621,89 +6621,6 @@ var import_dist = (/* @__PURE__ */ __commonJSMin(((exports) => {
 	exports.visit = visit.visit;
 	exports.visitAsync = visit.visitAsync;
 })))();
-const DATA_DIR_FLAG = "--data-dir";
-const DATA_DIR_ENV = "AGENTMEMORY_DATA_DIR";
-function readDataDirFlag(argv) {
-	const equalsPrefix = `${DATA_DIR_FLAG}=`;
-	for (const arg of argv) if (arg.startsWith(equalsPrefix)) return arg.slice(equalsPrefix.length);
-	const idx = argv.indexOf(DATA_DIR_FLAG);
-	if (idx !== -1) return argv[idx + 1];
-}
-function expandHomePath(pathValue, home) {
-	if (pathValue === "~") return home;
-	if (pathValue.startsWith("~/") || pathValue.startsWith("~\\")) return join(home, pathValue.slice(2));
-	return pathValue;
-}
-function defaultDataDir(home = homedir()) {
-	return join(home, ".agentmemory");
-}
-function toAbsoluteDataDir(raw, cwd, home) {
-	const expanded = expandHomePath(raw.trim(), home);
-	return isAbsolute(expanded) ? expanded : resolve(cwd, expanded);
-}
-function resolveDataDirDetailed(options = {}) {
-	const argv = options.argv ?? process.argv.slice(2);
-	const env = options.env ?? process.env;
-	const cwd = options.cwd ?? process.cwd();
-	const home = options.home ?? homedir();
-	const flagValue = readDataDirFlag(argv);
-	if (flagValue !== void 0 && flagValue.trim().length > 0) return {
-		dir: toAbsoluteDataDir(flagValue, cwd, home),
-		source: "flag"
-	};
-	const envValue = env[DATA_DIR_ENV];
-	if (envValue !== void 0 && envValue.trim().length > 0) return {
-		dir: toAbsoluteDataDir(envValue, cwd, home),
-		source: "env"
-	};
-	return {
-		dir: defaultDataDir(home),
-		source: "default"
-	};
-}
-function resolveDataDir(options = {}) {
-	return resolveDataDirDetailed(options).dir;
-}
-//#endregion
-//#region src/config.ts
-let envFileCache;
-function envFilePath() {
-	return join(resolveDataDir(), ".env");
-}
-function loadEnvFile() {
-	if (envFileCache) return envFileCache;
-	const envFile = envFilePath();
-	if (!existsSync(envFile)) {
-		envFileCache = {};
-		return envFileCache;
-	}
-	const content = readFileSync(envFile, "utf-8");
-	const vars = {};
-	for (const line of content.split("\n")) {
-		const trimmed = line.trim();
-		if (!trimmed || trimmed.startsWith("#")) continue;
-		const eqIdx = trimmed.indexOf("=");
-		if (eqIdx === -1) continue;
-		const key = trimmed.slice(0, eqIdx).trim();
-		let val = trimmed.slice(eqIdx + 1).trim();
-		const quoteChar = val[0] === "\"" || val[0] === "'" ? val[0] : "";
-		if (quoteChar) {
-			const closeIdx = val.indexOf(quoteChar, 1);
-			if (closeIdx !== -1) val = val.slice(1, closeIdx);
-		} else {
-			const hashIdx = val.indexOf(" #");
-			if (hashIdx !== -1) val = val.slice(0, hashIdx).trim();
-		}
-		vars[key] = val;
-	}
-	envFileCache = vars;
-	return envFileCache;
-}
-function hydrateProcessEnvFromFile() {
-	for (const [k, v] of Object.entries(loadEnvFile())) if (process.env[k] === void 0) process.env[k] = v;
-}
-//#endregion
-//#region src/project-config.ts
 const PRIVACY_ORDER = {
 	standard: 0,
 	private: 1,
@@ -6826,6 +6743,19 @@ function normalizeGitRemote(remote) {
 		return;
 	}
 }
+/**
+* Mask credentials before a raw git remote reaches stderr. Everything from
+* the last "@" onward is kept (host/path), everything between the scheme
+* and that "@" is replaced; remotes without "@" pass through unchanged.
+*
+* @param value - Raw `git remote get-url` output, in any git-supported form.
+* @returns A log-safe rendering of the remote.
+*/
+function redactRemoteForLog(value) {
+	const at = value.lastIndexOf("@");
+	if (at === -1) return value;
+	return `${value.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] ?? ""}***@${value.slice(at + 1)}`;
+}
 let warnedUnnormalizableRemote = false;
 function inferProjectId(root) {
 	const remote = git(root, [
@@ -6842,7 +6772,7 @@ function inferProjectId(root) {
 	if (remote && !normalizedRemote) {
 		if (!warnedUnnormalizableRemote) {
 			warnedUnnormalizableRemote = true;
-			process.stderr.write(`[agentmemory] Git remote "${remote}" cannot be normalized to a canonical project id; using local/${projectPathHash(root)} for this checkout\n`);
+			process.stderr.write(`[agentmemory] Git remote "${redactRemoteForLog(remote)}" cannot be normalized to a canonical project id; using local/${projectPathHash(root)} for this checkout\n`);
 		}
 	}
 	return normalizedRemote ?? `local/${projectPathHash(root)}`;
@@ -6868,7 +6798,10 @@ function readConfigFile(path) {
 	}
 }
 function getUserProjectConfigPath(root) {
-	return join(userHome(), ".agentmemory", "projects", `${projectPathHash(root)}.yaml`);
+	const hashed = `${projectPathHash(root)}.yaml`;
+	const dataDirOverride = join(resolveDataDir(), "projects", hashed);
+	if (existsSync(dataDirOverride)) return dataDirOverride;
+	return join(userHome(), ".agentmemory", "projects", hashed);
 }
 function loadAgentmemoryEnvironment() {
 	hydrateProcessEnvFromFile();
