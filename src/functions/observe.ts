@@ -6,6 +6,15 @@ import type {
   HookPayload,
   Session,
 } from "../types.js";
+
+// Hook events that carry tool traffic cross the tool trust boundary;
+// prompt_submit is the user; everything else (lifecycle, subagent) is
+// agent-channel activity.
+const TOOL_HOOKS = new Set([
+  "pre_tool_use",
+  "post_tool_use",
+  "post_tool_failure",
+]);
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
 import { stripPrivateData } from "./privacy.js";
@@ -266,6 +275,14 @@ export function registerObserveFunction(
         timestamp: payload.timestamp,
         hookType: payload.hookType,
         raw: sanitizedRaw,
+        origin: {
+          channel: TOOL_HOOKS.has(payload.hookType)
+            ? "tool"
+            : payload.hookType === "prompt_submit"
+              ? "user"
+              : "agent",
+          capturedAt: payload.timestamp,
+        },
       };
 
       let extractedImage: string | undefined;
@@ -279,6 +296,7 @@ export function registerObserveFunction(
           raw.toolName = d["tool_name"] as string | undefined;
           raw.toolInput = d["tool_input"];
           raw.toolOutput = d["tool_output"] || d["error"];
+          if (raw.origin && raw.toolName) raw.origin.detail = raw.toolName;
         }
         if (payload.hookType === "post_tool_use") {
           const provenance = parseWorktreeProvenance(d["provenance"]);

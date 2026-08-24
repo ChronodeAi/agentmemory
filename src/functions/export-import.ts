@@ -23,6 +23,7 @@ import type {
   Insight,
   AccessLogExport,
 } from "../types.js";
+import { importOrigin } from "../types.js";
 import { normalizeAccessLog } from "./access-tracker.js";
 import { KV } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
@@ -388,6 +389,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
               continue;
             }
           }
+          o.origin = importOrigin(o.origin, o.timestamp);
           await kv.set(KV.observations(sessionId), o.id, o);
           stats.observations++;
         }
@@ -407,6 +409,7 @@ export function registerExportImportFunction(sdk: ISdk, kv: StateKV): void {
         if (!Array.isArray(memory.sessionIds)) {
           memory.sessionIds = [];
         }
+        memory.origin = importOrigin(memory.origin, memory.createdAt);
         await kv.set(KV.memories, memory.id, memory);
         stats.memories++;
       }
