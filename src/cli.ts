@@ -116,10 +116,26 @@ if (args.includes("--version") || args.includes("-V")) {
   process.exit(0);
 }
 
+// --data-dir relocates the agentmemory data dir (default ~/.agentmemory).
+// The flag wins over a pre-set AGENTMEMORY_DATA_DIR, so folding it into the
+// environment here keeps one precedence story — flag > env > default — for
+// everything downstream of this process (worker, engine, hooks inherit env).
+// The fold must happen BEFORE hydrateProcessEnvFromFile(): the .env file is
+// read from <resolved data dir>/.env, so a --data-dir run has to hydrate the
+// flagged location, not the default one.
+const dataDirFlagValue = readDataDirFlag(args);
+if (dataDirFlagValue !== undefined && dataDirFlagValue.trim().length > 0) {
+  process.env["AGENTMEMORY_DATA_DIR"] = dataDirFlagValue.trim();
+}
+// Upstream adopts a legacy cwd ./data store automatically; this fork does
+// not. When state would silently land somewhere different from an existing
+// local ./data store, tell the operator how to opt in explicitly.
+warnOnLegacyDataDir();
+
 // Fold ~/.agentmemory/.env into process.env before anything reads config
 // from the environment (the iii version pin, --tools/--port/--instance
 // handling, engine boot). Fill-missing-only: a real process.env value —
-// including one set by a CLI flag below — always wins over the file.
+// including one set by a CLI flag above — always wins over the file.
 hydrateProcessEnvFromFile();
 
 // Pinned iii-engine version. The unpinned `install.iii.dev/iii/main/install.sh`
@@ -290,19 +306,6 @@ if (instanceIdx !== -1 && args[instanceIdx + 1]) {
     }
   }
 }
-
-// --data-dir relocates the agentmemory data dir (default ~/.agentmemory).
-// The flag wins over a pre-set AGENTMEMORY_DATA_DIR, so folding it into the
-// environment here keeps one precedence story — flag > env > default — for
-// everything downstream of this process (worker, engine, hooks inherit env).
-const dataDirFlagValue = readDataDirFlag(args);
-if (dataDirFlagValue !== undefined && dataDirFlagValue.trim().length > 0) {
-  process.env["AGENTMEMORY_DATA_DIR"] = dataDirFlagValue.trim();
-}
-// Upstream adopts a legacy cwd ./data store automatically; this fork does
-// not. When state would silently land somewhere different from an existing
-// local ./data store, tell the operator how to opt in explicitly.
-warnOnLegacyDataDir();
 
 const skipEngine = args.includes("--no-engine");
 

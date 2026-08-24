@@ -291,4 +291,42 @@ describe("config integration", () => {
       join(join(sandboxHome, "relocated"), "standalone.json"),
     );
   });
+
+  it("STANDALONE_PERSIST_PATH keeps precedence over the data-dir default", async () => {
+    process.env[DATA_DIR_ENV] = join(sandboxHome, "relocated");
+    process.env["STANDALONE_PERSIST_PATH"] = join(sandboxHome, "custom.json");
+    const cfg = await freshConfig();
+    expect(cfg.getStandalonePersistPath()).toBe(join(sandboxHome, "custom.json"));
+  });
+
+  it("hydrates from the flag-folded data dir when AGENTMEMORY_DATA_DIR is set before boot", async () => {
+    // Mirrors the CLI boot order: the --data-dir flag is folded into
+    // process.env first, then hydrateProcessEnvFromFile() reads
+    // <resolved data dir>/.env. A stale memoized file cache must not pin
+    // the old location after __resetEnvFileCache().
+    const relocated = join(sandboxHome, "flagged");
+    mkdirSync(relocated, { recursive: true });
+    writeFileSync(
+      join(relocated, ".env"),
+      "AM_FLAGFOLD_PROBE=from-flagged\n",
+    );
+
+    process.env[DATA_DIR_ENV] = relocated;
+    let cfg = await freshConfig();
+    cfg.hydrateProcessEnvFromFile();
+    expect(cfg.getEnvVar("AM_FLAGFOLD_PROBE")).toBe("from-flagged");
+
+    // Same-process refold: a new --data-dir on a restarted CLI maps to a
+    // fresh module; within one process the reset hook must unlock the new
+    // path.
+    const second = join(sandboxHome, "flagged-two");
+    mkdirSync(second, { recursive: true });
+    writeFileSync(join(second, ".env"), "AM_FLAGFOLD_PROBE=from-second\n");
+    process.env[DATA_DIR_ENV] = second;
+    cfg.__resetEnvFileCache();
+    delete process.env["AM_FLAGFOLD_PROBE"];
+    cfg.hydrateProcessEnvFromFile();
+    expect(process.env["AM_FLAGFOLD_PROBE"]).toBe("from-second");
+    delete process.env["AM_FLAGFOLD_PROBE"];
+  });
 });
