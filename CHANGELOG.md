@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.30-chronode.2] — 2026-08-24
+
+Adversarial-review fixes over the shipped sync wave.
+
 ### Fixed
 
 - **Graphify import path scoping** (security). An explicit path on `mem::graph::import-graphify` (`POST /agentmemory/graph/import-graphify`) could point anywhere the daemon can read. Explicit paths must now resolve inside the requested project cwd and keep the `graph.json` basename; violations return a generic error that never echoes the attempted path, and stat failures for explicit paths stay equally non-specific.
