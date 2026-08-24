@@ -1,4 +1,4 @@
-import { n as projectAuthHeaders } from "./_auth-8LRLcG2I.mjs";
+import { n as projectAuthHeaders } from "./_auth-1Z57rc-e.mjs";
 //#region src/hooks/_delivery.ts
 var HookDeliveryError = class extends Error {
 	retryable;

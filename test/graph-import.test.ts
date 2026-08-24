@@ -217,12 +217,12 @@ describe("mem::graph::import-graphify", () => {
     expect(result.error).toContain("Run graphify first");
   });
 
-  it("accepts an explicit path", async () => {
-    const alt = join(tmp, "custom.json");
+  it("accepts an explicit path inside the project cwd", async () => {
+    const alt = join(tmp, "graph.json");
     writeFileSync(alt, JSON.stringify(FIXTURE));
     const result = (await (sdk as any).trigger({
       function_id: "mem::graph::import-graphify",
-      payload: { path: alt, project: PROJECT },
+      payload: { path: alt, cwd: tmp, project: PROJECT },
     })) as { success: boolean; nodesImported: number };
     expect(result.success).toBe(true);
     expect(result.nodesImported).toBe(4);

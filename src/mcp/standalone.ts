@@ -10,8 +10,7 @@ import {
   loadRetrievalQuarantine,
   retrievalQuarantineKey,
 } from "../context-eligibility.js";
-import { homedir } from "node:os";
-import { join } from "node:path";
+import { getStandalonePersistPath as resolvePersistPath, hydrateProcessEnvFromFile } from "../config.js";
 import {
   resolveHandle,
   invalidateHandle,
@@ -54,11 +53,15 @@ const SERVER_INFO = {
   protocolVersion: SUPPORTED_PROTOCOL_VERSIONS[0],
 };
 
+// Fold <data dir>/.env before the persist path is computed so a
+// .env-declared STANDALONE_PERSIST_PATH or AGENTMEMORY_DATA_DIR steers the
+// fallback store location. Fill-missing-only: real environment wins.
+hydrateProcessEnvFromFile();
+
+// Single source of truth with config.ts: STANDALONE_PERSIST_PATH override,
+// else <resolved data dir>/standalone.json.
 function getStandalonePersistPath(): string {
-  return (
-    process.env["STANDALONE_PERSIST_PATH"]?.trim() ||
-    join(homedir(), ".agentmemory", "standalone.json")
-  );
+  return resolvePersistPath();
 }
 
 const kv = new InMemoryKV(getStandalonePersistPath());

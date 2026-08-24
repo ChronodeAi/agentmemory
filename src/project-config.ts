@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { hydrateProcessEnvFromFile } from "./config.js";
+import { resolveDataDir } from "./data-dir.js";
 
 export type ProjectPrivacy = "standard" | "private" | "strict";
 export type CaptureProfile = "minimal" | "balanced" | "full";
@@ -214,6 +215,22 @@ export function normalizeGitRemote(remote: string): string | undefined {
 // checkout; the hashed canonical path keeps that identity stable instead of
 // failing every hook process that runs inside such a clone. The warning
 // fires once per process so per-event hooks stay quiet.
+
+/**
+ * Mask credentials before a raw git remote reaches stderr. Everything from
+ * the last "@" onward is kept (host/path), everything between the scheme
+ * and that "@" is replaced; remotes without "@" pass through unchanged.
+ *
+ * @param value - Raw `git remote get-url` output, in any git-supported form.
+ * @returns A log-safe rendering of the remote.
+ */
+export function redactRemoteForLog(value: string): string {
+  const at = value.lastIndexOf("@");
+  if (at === -1) return value;
+  const scheme = value.match(/^[a-z][a-z0-9+.-]*:\/\//i)?.[0] ?? "";
+  return `${scheme}***@${value.slice(at + 1)}`;
+}
+
 let warnedUnnormalizableRemote = false;
 
 export function inferProjectId(root: string): string {
@@ -225,7 +242,7 @@ export function inferProjectId(root: string): string {
     if (!warnedUnnormalizableRemote) {
       warnedUnnormalizableRemote = true;
       process.stderr.write(
-        `[agentmemory] Git remote "${remote}" cannot be normalized to a canonical project id; using local/${projectPathHash(root)} for this checkout\n`,
+        `[agentmemory] Git remote "${redactRemoteForLog(remote)}" cannot be normalized to a canonical project id; using local/${projectPathHash(root)} for this checkout\n`,
       );
     }
   }
@@ -259,12 +276,13 @@ function readConfigFile(path: string): ConfigLayer | undefined {
 }
 
 export function getUserProjectConfigPath(root: string): string {
-  return join(
-    userHome(),
-    ".agentmemory",
-    "projects",
-    `${projectPathHash(root)}.yaml`,
-  );
+  const hashed = `${projectPathHash(root)}.yaml`;
+  // The resolved data dir is the canonical override location; the
+  // ~/.agentmemory path is the pre-data-dir layout and keeps working as a
+  // fallback so existing overrides survive unchanged.
+  const dataDirOverride = join(resolveDataDir(), "projects", hashed);
+  if (existsSync(dataDirOverride)) return dataDirOverride;
+  return join(userHome(), ".agentmemory", "projects", hashed);
 }
 
 export function loadAgentmemoryEnvironment(): Record<string, string> {

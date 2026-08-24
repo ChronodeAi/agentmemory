@@ -102,16 +102,23 @@ export interface Origin {
 
 /**
  * Keep-or-mark rule for imported records: an origin already present on the
- * record is preserved, otherwise the record is marked as import-channel
+ * record is preserved, otherwise the record is marked with `channel`
  * provenance at `capturedAt`.
+ *
+ * @param existing - Origin already carried by the record, if any.
+ * @param capturedAt - Capture timestamp stamped onto new origins.
+ * @param detail - Optional free-form detail recorded alongside the channel.
+ * @param channel - Provenance channel for newly created origins; peer-synced
+ * records pass "shared", every other surface keeps the "import" default.
  */
 export function importOrigin(
   existing: Origin | undefined,
   capturedAt: string,
   detail?: string,
+  channel: Origin["channel"] = "import",
 ): Origin {
   if (existing) return existing;
-  return { channel: "import", capturedAt, ...(detail ? { detail } : {}) };
+  return { channel, capturedAt, ...(detail ? { detail } : {}) };
 }
 
 export interface RawObservation {

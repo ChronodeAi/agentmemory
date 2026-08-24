@@ -345,4 +345,48 @@ describe("session-stop consolidation lifecycle", () => {
     expect(consolidationCalls()).toHaveLength(1);
     expect(crystallizeCalls()).toHaveLength(1);
   });
+
+  it("releases the cooldown marker when the consolidation dispatch is rejected", async () => {
+    await kv.set(KV.sessions, "s-r1", sessionRow("s-r1"));
+    await kv.set(KV.sessions, "s-r2", sessionRow("s-r2"));
+    registerRuntime();
+    // First dispatch is rejected by the provider/engine; the retry lands.
+    let consolidateDispatches = 0;
+    (sdk as unknown as { fns: Map<string, (data: unknown) => Promise<unknown>> }).fns.set(
+      "mem::consolidate-pipeline",
+      async (payload) => {
+        consolidateDispatches += 1;
+        if (consolidateDispatches === 1) {
+          throw new Error("SIMULATED_PROVIDER_REJECTION");
+        }
+        calls.push({
+          functionId: "mem::consolidate-pipeline",
+          payload: payload as Record<string, unknown>,
+        });
+        return { success: true };
+      },
+    );
+
+    await stop({ sessionId: "s-r1" });
+    await flush();
+
+    expect(consolidateDispatches).toBe(1);
+    // The marker was written before the dispatch; the rejection handler
+    // must have cleared it best-effort.
+    expect(await marker()).toBeNull();
+
+    // The next stop inside the cooldown window retries consolidation
+    // instead of being debounced by a marker with no pipeline behind it.
+    await stop({ sessionId: "s-r2" });
+    await flush();
+
+    expect(consolidateDispatches).toBe(2);
+    expect(consolidationCalls()).toEqual([
+      {
+        functionId: "mem::consolidate-pipeline",
+        payload: { tier: "all", force: true, project: PROJECT },
+      },
+    ]);
+    expect(await marker()).not.toBeNull();
+  });
 });

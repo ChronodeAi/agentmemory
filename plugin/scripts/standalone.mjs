@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { n as generateId, t as KV } from "./schema-Dttua2Zo.mjs";
-import { i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, r as createProjectCapabilityToken } from "./auth-Evr8deOq.mjs";
+import { a as getStandalonePersistPath$1, i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, o as hydrateProcessEnvFromFile, r as createProjectCapabilityToken } from "./auth-DkiaFluQ.mjs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -1761,7 +1761,7 @@ function getAllTools() {
 }
 //#endregion
 //#region src/version.ts
-const VERSION = "0.9.30-chronode.1";
+const VERSION = "0.9.30-chronode.2";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
 //#endregion
@@ -2074,8 +2074,9 @@ const SERVER_INFO = {
 	version: VERSION,
 	protocolVersion: SUPPORTED_PROTOCOL_VERSIONS[0]
 };
+hydrateProcessEnvFromFile();
 function getStandalonePersistPath() {
-	return process.env["STANDALONE_PERSIST_PATH"]?.trim() || join(homedir(), ".agentmemory", "standalone.json");
+	return getStandalonePersistPath$1();
 }
 const kv = new InMemoryKV(getStandalonePersistPath());
 let modeAnnounced = false;

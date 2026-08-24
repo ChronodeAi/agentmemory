@@ -1,5 +1,5 @@
 import { readFile, stat } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join, resolve, sep } from "node:path";
 import type { ISdk } from "iii-sdk";
 import type {
   GraphEdge,
@@ -221,6 +221,22 @@ export function registerGraphImportFunction(sdk: ISdk, kv: StateKV): void {
         typeof data?.path === "string" ? data.path : undefined;
       const cwd = typeof data?.cwd === "string" ? data.cwd : process.cwd();
       const path = explicitPath ?? join(cwd, "graphify-out", "graph.json");
+      if (explicitPath !== undefined) {
+        // The explicit path is client-supplied, so constrain it to the
+        // graphify artifact inside the project checkout before any stat,
+        // read, or error echo can touch it.
+        const resolvedExplicit = resolve(explicitPath);
+        const resolvedCwd = resolve(cwd);
+        const insideCwd =
+          resolvedExplicit === resolvedCwd ||
+          resolvedExplicit.startsWith(resolvedCwd + sep);
+        if (basename(resolvedExplicit) !== "graph.json" || !insideCwd) {
+          return {
+            success: false,
+            error: "path must be a graph.json inside the project cwd",
+          };
+        }
+      }
       const project = scope.kind === "project" ? scope.project : undefined;
 
       try {
@@ -230,8 +246,10 @@ export function registerGraphImportFunction(sdk: ISdk, kv: StateKV): void {
         } catch {
           return {
             success: false,
-            error: `graph.json not found at ${path}. Run graphify first, or pass an explicit path.`,
-            path,
+            error: explicitPath
+              ? "graph.json not found at the requested location. Run graphify first, or pass an explicit path."
+              : `graph.json not found at ${path}. Run graphify first, or pass an explicit path.`,
+            ...(explicitPath ? {} : { path }),
           };
         }
         if (size > MAX_FILE_BYTES) {
