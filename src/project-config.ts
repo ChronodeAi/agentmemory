@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { hydrateProcessEnvFromFile } from "./config.js";
+import { resolveDataDir } from "./data-dir.js";
 
 export type ProjectPrivacy = "standard" | "private" | "strict";
 export type CaptureProfile = "minimal" | "balanced" | "full";
@@ -275,12 +276,13 @@ function readConfigFile(path: string): ConfigLayer | undefined {
 }
 
 export function getUserProjectConfigPath(root: string): string {
-  return join(
-    userHome(),
-    ".agentmemory",
-    "projects",
-    `${projectPathHash(root)}.yaml`,
-  );
+  const hashed = `${projectPathHash(root)}.yaml`;
+  // The resolved data dir is the canonical override location; the
+  // ~/.agentmemory path is the pre-data-dir layout and keeps working as a
+  // fallback so existing overrides survive unchanged.
+  const dataDirOverride = join(resolveDataDir(), "projects", hashed);
+  if (existsSync(dataDirOverride)) return dataDirOverride;
+  return join(userHome(), ".agentmemory", "projects", hashed);
 }
 
 export function loadAgentmemoryEnvironment(): Record<string, string> {

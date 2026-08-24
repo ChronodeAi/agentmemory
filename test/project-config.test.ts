@@ -8,12 +8,14 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { DATA_DIR_ENV } from "../src/data-dir.js";
 import {
   getUserProjectConfigPath,
   inferProjectId,
   isProjectPathExcluded,
   normalizeGitRemote,
   normalizedProjectPath,
+  projectPathHash,
   resolveProjectConfig,
 } from "../src/project-config.js";
 
@@ -206,5 +208,91 @@ describe("canonical project configuration", () => {
     expect(resolveProjectConfig(second).project_id).toBe(
       "github.com/example/second",
     );
+  });
+
+  it("reads user overrides from the data-dir projects dir when present", () => {
+    const root = gitProject();
+    const home = mkdtempSync(join(tmpdir(), "agentmemory-home-"));
+    roots.push(home);
+    const dataDir = join(home, "relocated-data");
+    const dataDirCopy = join(
+      dataDir,
+      "projects",
+      `${projectPathHash(root)}.yaml`,
+    );
+    process.env["HOME"] = home;
+    process.env[DATA_DIR_ENV] = dataDir;
+
+    // Nothing exists yet: the resolver still points at the legacy layout.
+    expect(getUserProjectConfigPath(root)).toBe(
+      join(home, ".agentmemory", "projects", `${projectPathHash(root)}.yaml`),
+    );
+
+    mkdirSync(dirname(dataDirCopy), { recursive: true });
+    writeFileSync(
+      dataDirCopy,
+      ["schema_version: 1", "project_id: datadir/project"].join("\n"),
+    );
+    expect(getUserProjectConfigPath(root)).toBe(dataDirCopy);
+
+    const config = resolveProjectConfig(root);
+    expect(config.override_path).toBe(dataDirCopy);
+    expect(config.project_id).toBe("datadir/project");
+  });
+
+  it("falls back to the legacy ~/.agentmemory override when the data-dir copy is absent", () => {
+    const root = gitProject();
+    const home = mkdtempSync(join(tmpdir(), "agentmemory-home-"));
+    roots.push(home);
+    process.env["HOME"] = home;
+    delete process.env[DATA_DIR_ENV];
+
+    const legacyPath = getUserProjectConfigPath(root);
+    expect(legacyPath).toBe(
+      join(home, ".agentmemory", "projects", `${projectPathHash(root)}.yaml`),
+    );
+    mkdirSync(dirname(legacyPath), { recursive: true });
+    writeFileSync(
+      legacyPath,
+      ["schema_version: 1", "project_id: legacy/project"].join("\n"),
+    );
+
+    const config = resolveProjectConfig(root);
+    expect(config.override_path).toBe(legacyPath);
+    expect(config.project_id).toBe("legacy/project");
+  });
+
+  it("prefers the data-dir override over a colliding legacy copy", () => {
+    const root = gitProject();
+    const home = mkdtempSync(join(tmpdir(), "agentmemory-home-"));
+    roots.push(home);
+    const dataDir = join(home, "relocated-data");
+    process.env["HOME"] = home;
+    process.env[DATA_DIR_ENV] = dataDir;
+    delete process.env["AGENTMEMORY_PROJECT_CONFIG"];
+
+    const dataDirCopy = join(
+      dataDir,
+      "projects",
+      `${projectPathHash(root)}.yaml`,
+    );
+    mkdirSync(dirname(dataDirCopy), { recursive: true });
+    writeFileSync(
+      dataDirCopy,
+      ["schema_version: 1", "project_id: datadir/wins"].join("\n"),
+    );
+    const legacyCopy = join(
+      home,
+      ".agentmemory",
+      "projects",
+      `${projectPathHash(root)}.yaml`,
+    );
+    mkdirSync(dirname(legacyCopy), { recursive: true });
+    writeFileSync(
+      legacyCopy,
+      ["schema_version: 1", "project_id: legacy/loses"].join("\n"),
+    );
+
+    expect(resolveProjectConfig(root).project_id).toBe("datadir/wins");
   });
 });
