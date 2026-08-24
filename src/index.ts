@@ -653,7 +653,7 @@ async function main() {
       : `Operational with ${startupSearchStatus.status} search index; health remains degraded until repair completes.`,
   );
   bootLog(
-    `REST API: 135 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
+    `REST API: 136 endpoints at http://localhost:${config.restPort}/agentmemory/*`,
   );
   bootLog(
     `MCP surface (opt-in via \`npx @agentmemory/mcp\`): ${getAllTools().length} tools · 5 resources · 3 prompts`,
