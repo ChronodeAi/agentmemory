@@ -33,10 +33,10 @@ test("generates the complete governed interface denominator", () => {
       { cwd: root, stdio: "pipe" },
     );
     const inventory = JSON.parse(readFileSync(output, "utf8"));
-    assert.equal(inventory.counts.http_routes, 135);
+    assert.equal(inventory.counts.http_routes, 136);
     assert.equal(inventory.counts.missing_auth_routes, 0);
     assert.equal(inventory.counts.mcp_transport_routes, 6);
-    assert.equal(inventory.counts.mcp_tools, 59);
+    assert.equal(inventory.counts.mcp_tools, 60);
     assert.equal(inventory.counts.mcp_resources, 5);
     assert.equal(inventory.counts.mcp_prompts, 3);
     assert.equal(inventory.counts.mcp_standalone_fallback_tools, 7);
