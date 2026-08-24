@@ -37,10 +37,21 @@ const READ_ONLY_LOCAL_FALLBACK_TOOLS = new Set([
   "memory_audit",
 ]);
 
+// Revisions this stdio server can speak. Hosts that require a newer
+// revision than a hardcoded default disconnect with -32000 on initialize,
+// so initialize echoes the client's requested revision when supported and
+// otherwise answers with the newest one we support.
+const SUPPORTED_PROTOCOL_VERSIONS = [
+  "2025-11-25",
+  "2025-06-18",
+  "2025-03-26",
+  "2024-11-05",
+];
+
 const SERVER_INFO = {
   name: "agentmemory",
   version: VERSION,
-  protocolVersion: "2024-11-05",
+  protocolVersion: SUPPORTED_PROTOCOL_VERSIONS[0],
 };
 
 function getStandalonePersistPath(): string {
@@ -621,15 +632,23 @@ async function finishShutdown(): Promise<never> {
 
 const transport = createStdioTransport(async (method, params) => {
   switch (method) {
-    case "initialize":
+    case "initialize": {
+      const requested = (params as { protocolVersion?: unknown } | undefined)
+        ?.protocolVersion;
+      const protocolVersion =
+        typeof requested === "string" &&
+        SUPPORTED_PROTOCOL_VERSIONS.includes(requested)
+          ? requested
+          : SERVER_INFO.protocolVersion;
       return {
-        protocolVersion: SERVER_INFO.protocolVersion,
+        protocolVersion,
         capabilities: { tools: { listChanged: false } },
         serverInfo: {
           name: SERVER_INFO.name,
           version: SERVER_INFO.version,
         },
       };
+    }
 
     case "notifications/initialized":
       return {};
