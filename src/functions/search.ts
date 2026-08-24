@@ -566,6 +566,12 @@ export async function reconcileCanonicalSearchIndex(kv: StateKV): Promise<{
   }
   await flush()
 
+  // The memory walk above covered every current KV.memories row without
+  // throwing, so the keyword index covers the corpus exactly as the
+  // equivalent point in a full rebuild does; live index maintenance in
+  // mem::remember can trust it instead of forcing another rebuild.
+  memoryIndexReady = true
+
   return {
     canonicalEntries: canonical.size,
     addedKeywordEntries,
