@@ -6,6 +6,22 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+### Fixed
+
+- **Graphify import path scoping** (security). An explicit path on `mem::graph::import-graphify` (`POST /agentmemory/graph/import-graphify`) could point anywhere the daemon can read. Explicit paths must now resolve inside the requested project cwd and keep the `graph.json` basename; violations return a generic error that never echoes the attempted path, and stat failures for explicit paths stay equally non-specific.
+- **Credential redaction in the identity-fallback warning** (security). The stderr warning for an unnormalizable git remote wrote the raw `git remote get-url` output, leaking embedded passwords; remotes are masked before logging (scheme and host/path preserved, credentials replaced).
+- **Project capability secret hardening** (security). Zero-touch provisioning creates the credential directory with mode 0700, refuses a symlink parked at the credential path instead of following it, keeps a pre-existing populated secret when only its permission tightening fails, and removes a freshly written secret whose securing chmod failed rather than leaving it readable.
+- **`--data-dir` honored during `.env` hydration** (correctness). The CLI hydrated `<data-dir>/.env` before folding the flag into the environment, so a flagged run silently read its `.env` from the default `~/.agentmemory`; the fold now happens first.
+- **Standalone MCP persist path follows the data dir** (correctness). The shim kept a duplicate resolver pinned to `~/.agentmemory`; it now delegates to the shared config resolver after folding `.env`, preserving the `STANDALONE_PERSIST_PATH` override while honoring `AGENTMEMORY_DATA_DIR`.
+- **Consolidation cooldown released on rejected dispatch** (correctness). A rejected `mem::consolidate-pipeline` / `mem::auto-crystallize` Void dispatch left the cooldown marker standing for the whole window with no pipeline behind it; rejection handlers clear the marker best-effort so the next eligible stop retries.
+- **Origin provenance on peer Memory upserts** (security). Mesh receive/pull wrote peer memories without provenance; records lacking an Origin now gain shared-channel provenance via the shared keep-or-mark factory, and peer-provided origins are preserved.
+- **Search-index readiness after startup reconciliation** (perf). Reconciliation walks the full memory corpus but never marked the index ready, forcing live saves onto full-scan fallbacks until an explicit rebuild; success now sets the same readiness flag a rebuild does.
+- **Per-project user overrides follow the data dir** (info). User project config overrides are read from `<data-dir>/projects/<hash>.yaml`, falling back to the legacy `~/.agentmemory/projects/<hash>.yaml` copy so existing overrides keep working.
+
+### Changed
+
+- `<data-dir>/.env` is parsed once per daemon process; edits require a daemon restart to take effect.
+
 ## [0.9.30-chronode.1] — 2026-08-24
 
 Upstream v0.9.29 sync wave, staged across five reviewed trains (#5–#9). Fork architecture of record unchanged: remote-derived canonical project identity, exclusive project scope, fail-closed governance, self-contained bundled hooks.
