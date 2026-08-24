@@ -60,6 +60,7 @@ import { renderSplash } from "./cli/splash.js";
 import { isFirstRun, readPrefs, resetPrefs, writePrefs } from "./cli/preferences.js";
 import { runOnboarding } from "./cli/onboarding.js";
 import { setBootVerbose } from "./logger.js";
+import { hydrateProcessEnvFromFile } from "./config.js";
 import { VERSION } from "./version.js";
 import { getAllTools, ESSENTIAL_TOOLS } from "./mcp/tools-registry.js";
 import { knownAgents } from "./cli/connect/index.js";
@@ -112,6 +113,12 @@ if (args.includes("--version") || args.includes("-V")) {
   process.stdout.write(`${VERSION}\n`);
   process.exit(0);
 }
+
+// Fold ~/.agentmemory/.env into process.env before anything reads config
+// from the environment (the iii version pin, --tools/--port/--instance
+// handling, engine boot). Fill-missing-only: a real process.env value —
+// including one set by a CLI flag below — always wins over the file.
+hydrateProcessEnvFromFile();
 
 // Pinned iii-engine version. The unpinned `install.iii.dev/iii/main/install.sh`
 // script tracks `latest`, which made every fresh agentmemory install pull

@@ -22,8 +22,20 @@ const ENV_FILE = join(DATA_DIR, ".env");
 
 let warnPremiumModelShown = false;
 
+// Parsed ~/.agentmemory/.env, memoized for the process lifetime. getMergedEnv()
+// runs on every config getter, so without this cache a single request would
+// readFileSync + reparse the file dozens of times. The file is boot-static, so
+// read it from disk once and reuse the result. Tests that mutate the file
+// between cases reset the module (clearing this via reload) or call
+// __resetEnvFileCache().
+let envFileCache: Record<string, string> | undefined;
+
 function loadEnvFile(): Record<string, string> {
-  if (!existsSync(ENV_FILE)) return {};
+  if (envFileCache) return envFileCache;
+  if (!existsSync(ENV_FILE)) {
+    envFileCache = {};
+    return envFileCache;
+  }
   const content = readFileSync(ENV_FILE, "utf-8");
   const vars: Record<string, string> = {};
   for (const line of content.split("\n")) {
@@ -43,7 +55,30 @@ function loadEnvFile(): Record<string, string> {
     }
     vars[key] = val;
   }
-  return vars;
+  envFileCache = vars;
+  return envFileCache;
+}
+
+// Test hook: clears the memoized .env so the next loadEnvFile() re-reads disk
+// within the same module instance. vi.resetModules() reloads this module and
+// resets the cache on its own; this exists for tests that mutate the file
+// without a module reload.
+export function __resetEnvFileCache(): void {
+  envFileCache = undefined;
+}
+
+// Hydrate ~/.agentmemory/.env into process.env at boot. loadEnvFile() is
+// otherwise only consumed via getMergedEnv(), which the many modules that read
+// raw process.env["X"] never call — so .env-only values were silently ignored
+// by them. Copy the file's vars into process.env, but only when the key is
+// currently unset so a real process.env value still wins (this preserves the
+// {...fileEnv, ...process.env} precedence getMergedEnv uses). This is the
+// single boot-time hydration for the whole precedence chain:
+//   real environment > ~/.agentmemory/.env > project manifest overrides > defaults
+export function hydrateProcessEnvFromFile(): void {
+  for (const [k, v] of Object.entries(loadEnvFile())) {
+    if (process.env[k] === undefined) process.env[k] = v;
+  }
 }
 
 function hasRealValue(v: string | undefined): v is string {
