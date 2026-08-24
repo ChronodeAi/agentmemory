@@ -497,6 +497,7 @@ export async function queryAudit(
     dateFrom?: string;
     dateTo?: string;
     limit?: number;
+    project?: string;
   },
 ): Promise<AuditEntry[]> {
   const all = await kv.list<AuditEntry>(KV.audit);
@@ -520,6 +521,13 @@ export async function queryAudit(
       throw new Error(`Invalid dateTo: ${filter.dateTo}`);
     }
     entries = entries.filter((e) => new Date(e.timestamp).getTime() <= to);
+  }
+  if (filter?.project) {
+    // Only entries that explicitly name the project match; unattributed
+    // audit records stay visible in global (administrative) queries only.
+    entries = entries.filter(
+      (e) => typeof e.details === "object" && e.details !== null && e.details["project"] === filter.project,
+    );
   }
 
   return entries.slice(0, filter?.limit || 100);

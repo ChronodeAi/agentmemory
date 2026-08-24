@@ -262,8 +262,23 @@ export const CORE_TOOLS: McpToolDef[] = [
   },
   {
     name: "memory_export",
-    description: "Export all memory data as JSON.",
-    inputSchema: { type: "object", properties: {} },
+    description: "Export memory data as JSON for one project (or all with admin global scope).",
+    inputSchema: {
+      type: "object",
+      properties: {
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description:
+            "Set to 'global' only for an explicit administrative cross-project export; otherwise provide project.",
+        },
+      },
+    },
   },
   {
     name: "memory_relations",
@@ -440,12 +455,24 @@ export const V040_TOOLS: McpToolDef[] = [
   },
   {
     name: "memory_audit",
-    description: "View the audit trail of memory operations.",
+    description:
+      "View the audit trail of memory operations for one project (or all with admin global scope).",
     inputSchema: {
       type: "object",
       properties: {
         operation: { type: "string", description: "Filter by operation type" },
         limit: { type: "number", description: "Max entries (default 50)" },
+        project: {
+          type: "string",
+          description:
+            "Canonical project ID. Required unless scope is explicitly global.",
+        },
+        scope: {
+          type: "string",
+          enum: ["global"],
+          description:
+            "Set to 'global' only for an explicit administrative cross-project query; otherwise provide project.",
+        },
       },
     },
   },

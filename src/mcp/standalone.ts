@@ -263,9 +263,11 @@ function validate(toolName: string, args: Record<string, unknown>): Validated {
       return v;
     }
     case "memory_export":
+      applyProjectScope(v, args);
       return v;
     case "memory_audit": {
       v.limit = parseLimit(args["limit"], 50);
+      applyProjectScope(v, args);
       return v;
     }
     default:
@@ -347,12 +349,22 @@ async function handleProxy(
       return textResponse(result);
     }
     case "memory_export": {
-      const result = await handle.call("/agentmemory/export", { method: "GET" });
+      const qs =
+        v.scope === "global"
+          ? "?scope=global"
+          : `?project=${encodeURIComponent(v.project ?? "")}`;
+      const result = await handle.call(`/agentmemory/export${qs}`, {
+        method: "GET",
+      });
       return textResponse(result, true);
     }
     case "memory_audit": {
+      const scopeQs =
+        v.scope === "global"
+          ? "&scope=global"
+          : `&project=${encodeURIComponent(v.project ?? "")}`;
       const result = await handle.call(
-        `/agentmemory/audit?limit=${v.limit}`,
+        `/agentmemory/audit?limit=${v.limit}${scopeQs}`,
         { method: "GET" },
       );
       return textResponse(result, true);
@@ -477,17 +489,42 @@ async function handleLocal(
     }
 
     case "memory_export": {
-      const memories = await kvInstance.list("mem:memories");
-      const sessions = await kvInstance.list("mem:sessions");
+      const allMemories = await kvInstance.list("mem:memories");
+      const allSessions = await kvInstance.list("mem:sessions");
+      // Local fallback honors the same project scope as the REST route.
+      const memories =
+        v.scope === "global"
+          ? allMemories
+          : (allMemories as Array<Record<string, unknown>>).filter(
+              (m) => m["project"] === v.project,
+            );
+      const sessions =
+        v.scope === "global"
+          ? allSessions
+          : (allSessions as Array<Record<string, unknown>>).filter(
+              (s) => s["project"] === v.project,
+            );
       return textResponse({ version: VERSION, memories, sessions }, true);
     }
 
     case "memory_audit": {
-      const entries = await kvInstance.list("mem:audit");
+      const allEntries = await kvInstance.list("mem:audit");
+      const entries =
+        v.scope === "global"
+          ? allEntries
+          : (allEntries as Array<Record<string, unknown>>).filter(
+              (e) =>
+                typeof e["details"] === "object" &&
+                e["details"] !== null &&
+                (e["details"] as Record<string, unknown>)["project"] ===
+                  v.project,
+            );
       const limit = v.limit ?? 50;
       return textResponse(
         {
-          entries: (entries as Array<Record<string, unknown>>).slice(0, limit),
+          entries: (
+            entries as Array<Record<string, unknown>>
+          ).slice(0, limit),
         },
         true,
       );

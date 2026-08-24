@@ -512,10 +512,20 @@ const CORE_TOOLS = [
 	},
 	{
 		name: "memory_export",
-		description: "Export all memory data as JSON.",
+		description: "Export memory data as JSON for one project (or all with admin global scope).",
 		inputSchema: {
 			type: "object",
-			properties: {}
+			properties: {
+				project: {
+					type: "string",
+					description: "Canonical project ID. Required unless scope is explicitly global."
+				},
+				scope: {
+					type: "string",
+					enum: ["global"],
+					description: "Set to 'global' only for an explicit administrative cross-project export; otherwise provide project."
+				}
+			}
 		}
 	},
 	{
@@ -702,7 +712,7 @@ const V040_TOOLS = [
 	},
 	{
 		name: "memory_audit",
-		description: "View the audit trail of memory operations.",
+		description: "View the audit trail of memory operations for one project (or all with admin global scope).",
 		inputSchema: {
 			type: "object",
 			properties: {
@@ -713,6 +723,15 @@ const V040_TOOLS = [
 				limit: {
 					type: "number",
 					description: "Max entries (default 50)"
+				},
+				project: {
+					type: "string",
+					description: "Canonical project ID. Required unless scope is explicitly global."
+				},
+				scope: {
+					type: "string",
+					enum: ["global"],
+					description: "Set to 'global' only for an explicit administrative cross-project query; otherwise provide project."
 				}
 			}
 		}
@@ -2181,9 +2200,12 @@ function validate(toolName, args) {
 			applyProjectScope(v, args);
 			return v;
 		}
-		case "memory_export": return v;
+		case "memory_export":
+			applyProjectScope(v, args);
+			return v;
 		case "memory_audit":
 			v.limit = parseLimit(args["limit"], 50);
+			applyProjectScope(v, args);
 			return v;
 		default: throw new Error(`Unknown tool: ${toolName}`);
 	}
@@ -2241,8 +2263,14 @@ async function handleProxy(v, handle) {
 				...v.scope === "global" ? { scope: "global" } : { project: v.project }
 			})
 		}));
-		case "memory_export": return textResponse(await handle.call("/agentmemory/export", { method: "GET" }), true);
-		case "memory_audit": return textResponse(await handle.call(`/agentmemory/audit?limit=${v.limit}`, { method: "GET" }), true);
+		case "memory_export": {
+			const qs = v.scope === "global" ? "?scope=global" : `?project=${encodeURIComponent(v.project ?? "")}`;
+			return textResponse(await handle.call(`/agentmemory/export${qs}`, { method: "GET" }), true);
+		}
+		case "memory_audit": {
+			const scopeQs = v.scope === "global" ? "&scope=global" : `&project=${encodeURIComponent(v.project ?? "")}`;
+			return textResponse(await handle.call(`/agentmemory/audit?limit=${v.limit}${scopeQs}`, { method: "GET" }), true);
+		}
 		default: throw new Error(`Unknown tool: ${v.tool}`);
 	}
 }
@@ -2323,13 +2351,18 @@ async function handleLocal(v, kvInstance) {
 				reason: v.reason
 			});
 		}
-		case "memory_export": return textResponse({
-			version: VERSION,
-			memories: await kvInstance.list("mem:memories"),
-			sessions: await kvInstance.list("mem:sessions")
-		}, true);
+		case "memory_export": {
+			const allMemories = await kvInstance.list("mem:memories");
+			const allSessions = await kvInstance.list("mem:sessions");
+			return textResponse({
+				version: VERSION,
+				memories: v.scope === "global" ? allMemories : allMemories.filter((m) => m["project"] === v.project),
+				sessions: v.scope === "global" ? allSessions : allSessions.filter((s) => s["project"] === v.project)
+			}, true);
+		}
 		case "memory_audit": {
-			const entries = await kvInstance.list("mem:audit");
+			const allEntries = await kvInstance.list("mem:audit");
+			const entries = v.scope === "global" ? allEntries : allEntries.filter((e) => typeof e["details"] === "object" && e["details"] !== null && e["details"]["project"] === v.project);
 			const limit = v.limit ?? 50;
 			return textResponse({ entries: entries.slice(0, limit) }, true);
 		}

@@ -495,7 +495,20 @@ export function registerMcpEndpoints(
           }
 
           case "memory_export": {
-            const result = await sdk.trigger({ function_id: "mem::export", payload: {} });
+            const exportScope = parseProjectScope(args);
+            if (!exportScope) {
+              return {
+                status_code: 400,
+                body: { error: "project required unless scope is global" },
+              };
+            }
+            const result = await sdk.trigger({
+              function_id: "mem::export",
+              payload:
+                exportScope.scope === "global"
+                  ? { scope: "global" as const }
+                  : { project: exportScope.project },
+            });
             return {
               status_code: 200,
               body: {
@@ -733,10 +746,20 @@ export function registerMcpEndpoints(
           }
 
           case "memory_audit": {
+            const auditScope = parseProjectScope(args);
+            if (!auditScope) {
+              return {
+                status_code: 400,
+                body: { error: "project required unless scope is global" },
+              };
+            }
             try {
               const result = await sdk.trigger({ function_id: "mem::audit-query", payload: {
                 operation: args.operation as string,
                 limit: typeof args.limit === "number" ? args.limit : 50,
+                ...(auditScope.scope === "global"
+                  ? {}
+                  : { project: auditScope.project }),
               } });
               return {
                 status_code: 200,

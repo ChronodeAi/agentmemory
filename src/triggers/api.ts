@@ -2302,6 +2302,23 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let exportScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        exportScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::export",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       // mem::export already supports maxSessions/offset internally,
       // but the HTTP endpoint hardcoded an empty payload — so /export on a
       // real corpus (40 sessions × 34K observations × 8K memories) hit the
@@ -2333,7 +2350,12 @@ export function registerApiTriggers(
       }
       const result = await sdk.trigger({
         function_id: "mem::export",
-        payload,
+        payload: {
+          ...payload,
+          ...(exportScope.kind === "global"
+            ? { scope: "global" as const }
+            : { project: exportScope.project }),
+        },
       });
       return { status_code: 200, body: result };
     },
@@ -3026,10 +3048,30 @@ export function registerApiTriggers(
     async (req: ApiRequest): Promise<Response> => {
       const authErr = checkAuth(req, secret);
       if (authErr) return authErr;
+      let auditScope: ReturnType<typeof requireProjectReadScope>;
+      try {
+        auditScope = requireProjectReadScope(
+          {
+            project: req.query_params?.["project"],
+            scope: req.query_params?.["scope"],
+          },
+          "api::audit",
+        );
+      } catch (error) {
+        return {
+          status_code: 400,
+          body: {
+            error: error instanceof Error ? error.message : String(error),
+          },
+        };
+      }
       const parsedLimit = parseOptionalInt(req.query_params?.["limit"]);
       const entries = await sdk.trigger({ function_id: "mem::audit-query", payload: {
         operation: req.query_params?.["operation"],
         limit: parsedLimit ?? 50,
+        ...(auditScope.kind === "global"
+          ? {}
+          : { project: auditScope.project }),
       } });
       return { status_code: 200, body: { entries, success: true } };
     },
