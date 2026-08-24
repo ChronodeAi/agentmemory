@@ -865,6 +865,14 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         // fan-outs above: tolerate synchronous throws and non-promise
         // returns from sdk.trigger, log async rejections without failing
         // the stop lifecycle.
+        const releaseConsolidationCooldown = (): void => {
+          // The marker was written before the dispatch, so a rejected
+          // (or never-started) pipeline would otherwise pin the cooldown
+          // for the whole window with no work behind it. Plain kv delete:
+          // the marker is debounce bookkeeping, not pipeline state, and
+          // needs no lock. Best-effort only — the next stop re-checks.
+          kv.delete(KV.config, CONSOLIDATION_MARKER_KEY).catch(() => {});
+        };
         const fireVoid = (
           function_id: string,
           payload: Record<string, unknown>,
@@ -875,14 +883,15 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
               payload,
               action: TriggerAction.Void(),
             });
-            Promise.resolve(dispatched).catch((err: unknown) =>
+            Promise.resolve(dispatched).catch((err: unknown) => {
               logger.warn(function_id + " trigger failed", {
                 sessionId: data.sessionId,
                 project: data.project,
                 pipelineRunId,
                 error: err instanceof Error ? err.message : String(err),
-              }),
-            );
+              });
+              releaseConsolidationCooldown();
+            });
           } catch (err) {
             logger.warn(function_id + " trigger failed", {
               sessionId: data.sessionId,
@@ -890,6 +899,7 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
               pipelineRunId,
               error: err instanceof Error ? err.message : String(err),
             });
+            releaseConsolidationCooldown();
           }
         };
         fireVoid("mem::consolidate-pipeline", {
