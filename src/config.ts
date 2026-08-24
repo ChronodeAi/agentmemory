@@ -476,6 +476,21 @@ export function getConsolidationDecayDays(): number {
   return safeParseInt(getMergedEnv()["CONSOLIDATION_DECAY_DAYS"], 30);
 }
 
+// Cooldown between corpus consolidations triggered by session stop. The Stop
+// hook fires per agent turn and posts /session/end, so without this every
+// turn would kick full-corpus LLM consolidation + crystallization. Debounced
+// to at most once per window via the consolidation:lastRun marker; set to 0
+// to disable the debounce (consolidate on every stop). Default 5 minutes.
+const CONSOLIDATION_COOLDOWN_DEFAULT_MS = 300000;
+
+export function getConsolidationCooldownMs(): number {
+  const raw = safeParseInt(
+    getMergedEnv()["AGENTMEMORY_CONSOLIDATION_COOLDOWN_MS"],
+    CONSOLIDATION_COOLDOWN_DEFAULT_MS,
+  );
+  return raw >= 0 ? raw : CONSOLIDATION_COOLDOWN_DEFAULT_MS;
+}
+
 export function isStandaloneMcp(): boolean {
   return getMergedEnv()["STANDALONE_MCP"] === "true";
 }

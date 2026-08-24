@@ -5,7 +5,9 @@ import { StateKV } from "../state/kv.js";
 import { isReflectEnabled } from "../functions/slots.js";
 import {
   getAgentId,
+  getConsolidationCooldownMs,
   getEnvVar,
+  isConsolidationEnabled,
   isGraphExtractionEnabled,
 } from "../config.js";
 import { logger } from "../logger.js";
@@ -26,6 +28,36 @@ import {
 } from "../health/background-pipeline.js";
 
 const MAX_BACKGROUND_PIPELINE_ATTEMPTS = 3;
+
+// Global marker recording when corpus consolidation last ran, used to debounce
+// the per-turn session-stop fan-out.
+const CONSOLIDATION_MARKER_KEY = "consolidation:lastRun";
+
+async function consolidationDueUnserialized(kv: StateKV): Promise<boolean> {
+  const cooldownMs = getConsolidationCooldownMs();
+  if (cooldownMs <= 0) return true; // debounce disabled
+  const now = Date.now();
+  const marker = await kv
+    .get<{ at?: number }>(KV.config, CONSOLIDATION_MARKER_KEY)
+    .catch(() => null);
+  const lastAt = typeof marker?.at === "number" ? marker.at : 0;
+  if (now - lastAt < cooldownMs) return false;
+  await kv.set(KV.config, CONSOLIDATION_MARKER_KEY, { at: now }).catch(() => {});
+  return true;
+}
+
+// Concurrent session-stop events would otherwise interleave the marker
+// read-check-write above and both pass the cooldown. Serialize the whole
+// check through an in-process chain so exactly one concurrent caller wins.
+let consolidationCheckChain: Promise<unknown> = Promise.resolve();
+
+function consolidationDue(kv: StateKV): Promise<boolean> {
+  const result = consolidationCheckChain.then(() =>
+    consolidationDueUnserialized(kv),
+  );
+  consolidationCheckChain = result.catch(() => false);
+  return result;
+}
 
 function successful(result: unknown): result is Record<string, unknown> & {
   success: true;
@@ -809,6 +841,63 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
         logger.warn("graph-extract trigger failed", {
           sessionId: data.sessionId,
           error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    // Crystals + lessons corpus consolidation. Fires only after the
+    // background pipeline reached a successful terminal state inside the
+    // background-pipeline lock — the resume machinery above owns which
+    // stages run, and superseded / already-processed / terminal-failed
+    // completions never reach this point or consume the cooldown.
+    //
+    // Debounce: /session/end is posted by the per-turn Stop hook, so this
+    // handler fires on every agent turn. mem::consolidate-pipeline +
+    // mem::auto-crystallize are full-corpus LLM work with no internal
+    // "nothing changed" guard, so firing them every turn is a cost/latency
+    // storm. Bound the global corpus consolidation to once per cooldown
+    // window; AGENTMEMORY_CONSOLIDATION_COOLDOWN_MS=0 disables the debounce.
+    if (isConsolidationEnabled()) {
+      const due = await consolidationDue(kv);
+      if (due) {
+        // Same dispatch discipline as the slot-reflect / graph-extract
+        // fan-outs above: tolerate synchronous throws and non-promise
+        // returns from sdk.trigger, log async rejections without failing
+        // the stop lifecycle.
+        const fireVoid = (
+          function_id: string,
+          payload: Record<string, unknown>,
+        ) => {
+          try {
+            const dispatched = sdk.trigger({
+              function_id,
+              payload,
+              action: TriggerAction.Void(),
+            });
+            Promise.resolve(dispatched).catch((err: unknown) =>
+              logger.warn(function_id + " trigger failed", {
+                sessionId: data.sessionId,
+                project: data.project,
+                pipelineRunId,
+                error: err instanceof Error ? err.message : String(err),
+              }),
+            );
+          } catch (err) {
+            logger.warn(function_id + " trigger failed", {
+              sessionId: data.sessionId,
+              project: data.project,
+              pipelineRunId,
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        };
+        fireVoid("mem::consolidate-pipeline", {
+          tier: "all",
+          force: true,
+          project: data.project,
+        });
+        fireVoid("mem::auto-crystallize", {
+          olderThanDays: 0,
+          project: data.project,
         });
       }
     }
