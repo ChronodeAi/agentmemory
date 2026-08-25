@@ -2,6 +2,7 @@ import { TriggerAction, type ISdk } from "iii-sdk";
 import type { CompressedObservation, HookPayload, Session } from "../types.js";
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
+import { rotateLiveStreamIfOversized } from "../state/live-stream-rotation.js";
 import { isReflectEnabled } from "../functions/slots.js";
 import {
   getAgentId,
@@ -998,6 +999,7 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
       const newCount = payload.new_value?.observationCount ?? 0;
       if (newCount <= oldCount) return { skipped: true };
 
+      rotateLiveStreamIfOversized();
       await sdk.trigger({
         function_id: "stream::send",
         payload: {
