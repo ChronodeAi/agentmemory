@@ -331,8 +331,13 @@ async function wireSelectedAgents(agents: string[]): Promise<void> {
         `Generated project capability credential at ${capability.path} (mode 0600).`,
       );
     }
-  } catch {
+  } catch (err) {
     // Doctor reports and repairs a missing credential; never block wiring.
+    // The failure is still logged: a silently unwired credential defeats
+    // the zero-touch guarantee this provisioning exists for.
+    process.stderr.write(
+      `[agentmemory] capability credential provisioning failed: ${err instanceof Error ? err.message : String(err)} — run 'agentmemory doctor'\n`,
+    );
   }
 
   for (const name of agents) {

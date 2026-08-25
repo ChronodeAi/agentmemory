@@ -55,7 +55,19 @@ export function ensureProjectCapabilitySecret(): CapabilityProvisionResult {
   if (existsSync(path)) {
     // lstat, not stat: a symlink parked at the credential path must be
     // refused before any read or write can follow it to another target.
-    if (lstatSync(path).isSymbolicLink()) {
+    let symlinked: boolean;
+    try {
+      symlinked = lstatSync(path).isSymbolicLink();
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+        // The file vanished between existsSync and lstat. Match the
+        // surrounding unreadable-file outcome instead of throwing raw;
+        // doctor surfaces the missing credential.
+        return { path, provisioned: false, reused: false };
+      }
+      throw err;
+    }
+    if (symlinked) {
       throw new Error(
         "project capability secret path is a symlink; refusing",
       );

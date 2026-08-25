@@ -128,9 +128,13 @@ export async function runConnect(args: string[]): Promise<void> {
           `Generated project capability credential at ${capability.path} (mode 0600).`,
         );
       }
-    } catch {
+    } catch (err) {
       // Provisioning must never block wiring; doctor reports a missing
-      // credential and can generate one later.
+      // credential and can generate one later. The failure is still logged:
+      // a silently unwired credential defeats the zero-touch guarantee.
+      process.stderr.write(
+        `[agentmemory] capability credential provisioning failed: ${err instanceof Error ? err.message : String(err)} — run 'agentmemory doctor'\n`,
+      );
     }
   }
 

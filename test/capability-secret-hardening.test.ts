@@ -12,9 +12,10 @@ import {
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-// chmod is the failure surface under test; every other fs call must hit the
-// real filesystem. The flag toggles the fault injection per test.
+// chmod and lstat are the failure surfaces under test; every other fs call
+// must hit the real filesystem. The flags toggle fault injection per test.
 const chmodFault = vi.hoisted(() => ({ fail: false }));
+const lstatFault = vi.hoisted(() => ({ failEnoent: false }));
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
@@ -27,6 +28,15 @@ vi.mock("node:fs", async (importOriginal) => {
       }
       return actual.chmodSync(path, mode);
     }) as typeof actual.chmodSync,
+    lstatSync: ((path: Parameters<typeof actual.lstatSync>[0]) => {
+      if (lstatFault.failEnoent) {
+        throw Object.assign(
+          new Error("ENOENT: no such file or directory, lstat"),
+          { code: "ENOENT" },
+        );
+      }
+      return actual.lstatSync(path);
+    }) as typeof actual.lstatSync,
   };
 });
 
@@ -47,6 +57,7 @@ describe("project capability secret hardening", () => {
     process.env["HOME"] = sandboxHome;
     delete process.env["AGENTMEMORY_PROJECT_CAPABILITY_SECRET_FILE"];
     chmodFault.fail = false;
+    lstatFault.failEnoent = false;
     stderrWrites.length = 0;
     vi.spyOn(process.stderr, "write").mockImplementation(((chunk: unknown) => {
       stderrWrites.push(String(chunk));
@@ -102,5 +113,18 @@ describe("project capability secret hardening", () => {
     expect(result).toEqual({ path, provisioned: false, reused: true });
     expect(readFileSync(path, "utf8")).toBe("user-chosen-secret\n");
     expect(stderrWrites.join("")).toContain("could not tighten permissions");
+  });
+
+  it("treats an ENOENT race on lstat as nothing reused instead of crashing", () => {
+    const path = projectCapabilitySecretFile();
+    mkdirSync(join(path, ".."), { recursive: true });
+    writeFileSync(path, "user-chosen-secret\n", { mode: 0o600 });
+    // existsSync saw the file; the file vanishes before lstat runs.
+    lstatFault.failEnoent = true;
+
+    const result = ensureProjectCapabilitySecret();
+    expect(result).toEqual({ path, provisioned: false, reused: false });
+    // No fresh credential was provisioned over the vanished path.
+    expect(readFileSync(path, "utf8")).toBe("user-chosen-secret\n");
   });
 });
