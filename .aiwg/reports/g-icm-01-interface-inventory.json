@@ -3,8 +3,8 @@
   "control_id": "G-ICM-01",
   "project_id": "github.com/chronodeai/agentmemory",
   "source_identity": {
-    "commit_sha": "2e9ff620d139fc3f86e39147939de564f8ba3fb8",
-    "commit_tree_sha": "c030198f34310c0291d18b2c9e0b9bb77319781e",
+    "commit_sha": "e241ebb778a9d32a7726ed80b6359fa474139307",
+    "commit_tree_sha": "bbc5df4d5bfc44e47227e3096455df47a4d64f92",
     "inventory_input_sha256": "fd4bf3dffd45c890813b20b16efa791cd6b72f055f65198e8489faffbbe55be8"
   },
   "public_route_allowlist": [
