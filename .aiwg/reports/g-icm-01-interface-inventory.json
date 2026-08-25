@@ -3,9 +3,9 @@
   "control_id": "G-ICM-01",
   "project_id": "github.com/chronodeai/agentmemory",
   "source_identity": {
-    "commit_sha": "260beb4a954eca7a71019b89f8e09df8c65c10bb",
-    "commit_tree_sha": "1b692f290d11ae470cb2009156266d6de039ebe7",
-    "inventory_input_sha256": "8091d93e47a45cd4cb2d4c38cab6448af9186743c84d73406ed2ea2a269fc51e"
+    "commit_sha": "b244872f43e6c98363d864305f5fcd594d9d1e31",
+    "commit_tree_sha": "4a0008a80fb82dc38ad719f30b452c969b09acb6",
+    "inventory_input_sha256": "3e1807639308f135d8310debd30c1836fc8b33b25e377199752884e9b051645c"
   },
   "public_route_allowlist": [
     "GET /agentmemory/livez"
