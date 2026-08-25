@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.30-chronode.4] — 2026-08-25
+
+Upstream sync: port of rohitg00/agentmemory `8c90741` — migration from the deprecated `@xenova/transformers` (silently broken on Node 22+) to `@huggingface/transformers` v4, the renamed continuation of the same Apache-2.0 codebase.
+
+### Changed
+
+- **Local embedding / CLIP / reranker runtime migrated to `@huggingface/transformers` ^4.2.0**. Import specifiers updated in `src/providers/embedding/local.ts`, `src/providers/embedding/clip.ts`, and `src/state/reranker.ts`; `onnxruntime-node`/`onnxruntime-web` are no longer declared directly — they ship transitively with v4. All pipeline call sites now pass `{ dtype: "q8" }` explicitly because v4 defaults to fp32 on Node (v2 defaulted to quantized), keeping model downloads ~3.5x smaller and inference fast. Missing-package errors surface a targeted install hint only for real `ERR_MODULE_NOT_FOUND`; network/model-load failures now propagate their actual message instead of being masked as "install the package".
+- **Model cache directory changed upstream**: local embeddings re-download once on first use after upgrading (the v4 package resolves its cache under a different default location than `@xenova/transformers` did). One-time cost per machine; subsequent loads hit the cache as before.
+- CI test matrix expanded from Node `[20, 22]` to `[20, 22, 24, 26]` across ubuntu/macos.
+- Removed `src/xenova.d.ts` (the package ships its own types); added regression tests pinning the `dtype: q8` pipeline contract and reranker positive path.
+
 ## [0.9.30-chronode.2] — 2026-08-24
 
 Adversarial-review fixes over the shipped sync wave.

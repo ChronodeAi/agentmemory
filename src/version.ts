@@ -1,4 +1,4 @@
-export const VERSION = "0.9.30-chronode.3";
+export const VERSION = "0.9.30-chronode.4";
 export const EXPORT_FORMAT_VERSION = "0.9.28" as const;
 export const API_CONTRACT_VERSION = 1;
 export const BACKEND_BUILD_ID =

@@ -12,17 +12,12 @@ async function loadPipeline(): Promise<any> {
   pipelineLoading = (async () => {
     try {
       const { pipeline: createPipeline } = await import(
-        "@xenova/transformers"
+        "@huggingface/transformers"
       );
-      const createTextClassificationPipeline = createPipeline as unknown as (
-        task: string,
-        model: string,
-        options: { quantized: boolean },
-      ) => Promise<unknown>;
-      pipeline = await createTextClassificationPipeline(
+      pipeline = await createPipeline(
         "text-classification",
         "Xenova/ms-marco-MiniLM-L-6-v2",
-        { quantized: true },
+        { dtype: "q8" },
       );
       return pipeline;
     } catch {
