@@ -36,7 +36,17 @@ export interface LiveStreamRotationOptions {
   filePath?: string;
   maxBytes?: number;
   env?: NodeJS.ProcessEnv;
+  nowMs?: number;
 }
+
+// Minimum interval between two rotations. Without it a rotation can thrash:
+// the engine keeps the full stream in memory, so its first save after a
+// rotation re-materializes the entire history into the fresh file — if that
+// still exceeds the cap (it does until the engine restarts or trims), every
+// subsequent publish would rename and rewrite ~cap bytes forever. One
+// rotation per cooldown window bounds disk without the storm.
+export const ROTATION_COOLDOWN_MS = 10 * 60_000;
+let lastRotationAtMs = 0;
 
 // Rotates the viewer live stream when its persisted file has outgrown
 // AGENTMEMORY_LIVE_STREAM_MAX_BYTES: the current file is renamed to
@@ -78,10 +88,14 @@ export function rotateLiveStreamIfOversized(
   }
   if (size <= maxBytes) return false;
 
+  const nowMs = options.nowMs ?? Date.now();
+  if (nowMs - lastRotationAtMs < ROTATION_COOLDOWN_MS) return false;
+
   try {
     const previousPath = `${filePath}.prev`;
     if (existsSync(previousPath)) rmSync(previousPath);
     renameSync(filePath, previousPath);
+    lastRotationAtMs = nowMs;
     return true;
   } catch (error) {
     logger.warn("live stream rotation failed; keeping oversized stream", {

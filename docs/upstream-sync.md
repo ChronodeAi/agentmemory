@@ -161,7 +161,7 @@ main sha.
    the same tree must hash identically):
 
    ```sh
-   npm ci && npm run build
+   npm ci --legacy-peer-deps --no-audit --no-fund && npm run build
    npm pack >/dev/null && cp agentmemory-*.tgz /tmp/pack-a.tgz && rm agentmemory-*.tgz
    npm pack >/dev/null && cp agentmemory-*.tgz /tmp/pack-b.tgz && rm agentmemory-*.tgz
    shasum -a 256 /tmp/pack-a.tgz /tmp/pack-b.tgz   # hashes must match
