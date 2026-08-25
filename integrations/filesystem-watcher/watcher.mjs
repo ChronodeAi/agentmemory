@@ -1,4 +1,4 @@
-import { watch, promises as fsp, readdirSync, statSync } from "node:fs";
+import { watch, promises as fsp, readdirSync, statSync, existsSync } from "node:fs";
 import { release } from "node:os";
 import { resolve, relative, join, extname, sep, basename } from "node:path";
 import { randomBytes } from "node:crypto";
@@ -344,6 +344,13 @@ export class FilesystemWatcher {
     const failures = [];
     for (const root of this.roots) {
       try {
+        // fs.watch on Node >= 23 reports a missing root through the async
+        // handle's 'error' event instead of throwing synchronously, so the
+        // attach below would silently succeed. Check existence up front to
+        // keep "could not watch any" deterministic across versions.
+        if (!existsSync(root)) {
+          throw new Error("root does not exist");
+        }
         if (this.watchMode === "poll") {
           this.startPolling(root);
           continue;

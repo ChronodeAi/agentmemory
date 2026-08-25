@@ -104,7 +104,8 @@ test("accepts only the declared Node profiles", () => {
   assert.equal(isAcceptedNode("v22.12.0"), true);
   assert.equal(isAcceptedNode("v24.15.9"), false);
   assert.equal(isAcceptedNode("v24.16.0"), true);
-  assert.equal(isAcceptedNode("v26.0.0"), false);
+  assert.equal(isAcceptedNode("v26.0.0"), true);
+  assert.equal(isAcceptedNode("v27.0.0"), false);
 });
 
 test("normalizes absolute Vitest paths to repository paths", () => {
@@ -221,7 +222,7 @@ test("rejects nonzero exit, missing files, and skipped tests", () => {
 
 test("keeps waived successful runs provisional and ineligible for qualification", () => {
   const receipt = passingReceipt();
-  receipt.environment.node = "v26.0.0";
+  receipt.environment.node = "v25.0.0";
   receipt.environment.qualified_node_profile = false;
   receipt.source_worktree_dirty = true;
   receipt.process.iii_sha_verified = false;

@@ -13,7 +13,8 @@ export function isAcceptedNode(version) {
   return (
     (major === 20 && minor >= 19) ||
     major === 22 ||
-    (major === 24 && minor >= 16)
+    (major === 24 && minor >= 16) ||
+    major === 26
   );
 }
 
