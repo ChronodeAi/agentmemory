@@ -1,4 +1,4 @@
-import { i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, o as hydrateProcessEnvFromFile, r as createProjectCapabilityToken, s as resolveDataDir } from "./auth-DkiaFluQ.mjs";
+import { i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, o as hydrateProcessEnvFromFile, r as createProjectCapabilityToken, s as resolveDataDir } from "./auth-DYDHBWPd.mjs";
 import { createRequire } from "node:module";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";

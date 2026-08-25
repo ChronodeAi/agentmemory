@@ -92,7 +92,8 @@ function getMergedEnv(overrides) {
 	};
 }
 function getStandalonePersistPath() {
-	return getMergedEnv()["STANDALONE_PERSIST_PATH"] || join(resolveDataDir(), "standalone.json");
+	const configured = getMergedEnv()["STANDALONE_PERSIST_PATH"]?.trim();
+	return configured ? configured : join(resolveDataDir(), "standalone.json");
 }
 randomBytes(32);
 const PROJECT_CAPABILITY_TOKEN_VERSION = "amcap1";
