@@ -500,10 +500,10 @@ export function isStandaloneMcp(): boolean {
 
 export function getStandalonePersistPath(): string {
   const env = getMergedEnv();
-  return (
-    env["STANDALONE_PERSIST_PATH"] ||
-    join(resolveDataDir(), "standalone.json")
-  );
+  // Trim before falling back: a whitespace-only value is not a path, and
+  // honoring it verbatim would persist state to a relative file named "   ".
+  const configured = env["STANDALONE_PERSIST_PATH"]?.trim();
+  return configured ? configured : join(resolveDataDir(), "standalone.json");
 }
 
 const VALID_PROVIDERS = new Set([

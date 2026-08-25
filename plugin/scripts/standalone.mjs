@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { n as generateId, t as KV } from "./schema-Dttua2Zo.mjs";
-import { a as getStandalonePersistPath$1, i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, o as hydrateProcessEnvFromFile, r as createProjectCapabilityToken } from "./auth-DkiaFluQ.mjs";
+import { a as getStandalonePersistPath$1, i as isStrictCapabilityMode, n as PROJECT_CAPABILITY_PROJECT_HEADER, o as hydrateProcessEnvFromFile, r as createProjectCapabilityToken } from "./auth-DYDHBWPd.mjs";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
@@ -1761,7 +1761,7 @@ function getAllTools() {
 }
 //#endregion
 //#region src/version.ts
-const VERSION = "0.9.30-chronode.2";
+const VERSION = "0.9.30-chronode.3";
 process.env["AGENTMEMORY_BUILD_ID"];
 process.env["AGENTMEMORY_VIEWER_BUILD_ID"];
 //#endregion

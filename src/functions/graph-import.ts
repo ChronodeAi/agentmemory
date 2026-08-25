@@ -217,20 +217,26 @@ export function registerGraphImportFunction(sdk: ISdk, kv: StateKV): void {
         data as { project?: unknown; scope?: unknown },
         "mem::graph::import-graphify",
       );
+      // The daemon's own working directory is the only trusted base for the
+      // computed default path. A caller-supplied cwd is ignored here — both
+      // cwd and path are client-controlled on the REST surface, so the route
+      // admin-gates them before they can reach this function, and this check
+      // anchors to a value the client cannot steer.
       const explicitPath =
         typeof data?.path === "string" ? data.path : undefined;
-      const cwd = typeof data?.cwd === "string" ? data.cwd : process.cwd();
-      const path = explicitPath ?? join(cwd, "graphify-out", "graph.json");
+      const baseDir = process.cwd();
+      const path = explicitPath ?? join(baseDir, "graphify-out", "graph.json");
       if (explicitPath !== undefined) {
-        // The explicit path is client-supplied, so constrain it to the
-        // graphify artifact inside the project checkout before any stat,
-        // read, or error echo can touch it.
+        // Defense in depth for authorized callers too: an explicit path must
+        // stay a graph.json under the daemon's checkout, so no stat, read,
+        // or error echo can reach an arbitrary location (including through a
+        // relocated symlink directory).
         const resolvedExplicit = resolve(explicitPath);
-        const resolvedCwd = resolve(cwd);
-        const insideCwd =
-          resolvedExplicit === resolvedCwd ||
-          resolvedExplicit.startsWith(resolvedCwd + sep);
-        if (basename(resolvedExplicit) !== "graph.json" || !insideCwd) {
+        const resolvedBase = resolve(baseDir);
+        const insideBase =
+          resolvedExplicit === resolvedBase ||
+          resolvedExplicit.startsWith(resolvedBase + sep);
+        if (basename(resolvedExplicit) !== "graph.json" || !insideBase) {
           return {
             success: false,
             error: "path must be a graph.json inside the project cwd",

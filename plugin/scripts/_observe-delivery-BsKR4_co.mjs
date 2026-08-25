@@ -1,4 +1,4 @@
-import { n as projectAuthHeaders } from "./_auth-1Z57rc-e.mjs";
+import { n as projectAuthHeaders } from "./_auth-CBScPKV6.mjs";
 //#region src/hooks/_observe-delivery.ts
 const MAX_ATTEMPTS = 2;
 const REQUEST_TIMEOUT_MS = 250;

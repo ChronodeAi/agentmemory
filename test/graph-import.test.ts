@@ -140,6 +140,7 @@ describe("parseGraphifyGraph", () => {
 
 describe("mem::graph::import-graphify", () => {
   let tmp: string;
+  let originalCwd: string;
   let kv: ReturnType<typeof mockKV>;
   let sdk: ReturnType<typeof mockSdk>;
 
@@ -150,16 +151,24 @@ describe("mem::graph::import-graphify", () => {
     kv = mockKV();
     sdk = mockSdk();
     registerGraphImportFunction(sdk as never, kv as never);
+    // The engine computes its default path from its own process.cwd(); run
+    // against a sandbox checkout instead of the vitest process directory.
+    originalCwd = process.cwd();
+    process.chdir(tmp);
+    // Canonicalize like the engine's anchor on symlinked parents
+    // (macOS /var -> /private/var).
+    tmp = process.cwd();
   });
 
   afterEach(() => {
+    process.chdir(originalCwd);
     rmSync(tmp, { recursive: true, force: true });
   });
 
   it("imports nodes and edges into the memory graph", async () => {
     const result = (await (sdk as any).trigger({
       function_id: "mem::graph::import-graphify",
-      payload: { cwd: tmp, project: PROJECT },
+      payload: { project: PROJECT },
     })) as {
       success: boolean;
       newNodes: number;
@@ -182,11 +191,11 @@ describe("mem::graph::import-graphify", () => {
   it("re-import is idempotent: second run merges instead of duplicating", async () => {
     await (sdk as any).trigger({
       function_id: "mem::graph::import-graphify",
-      payload: { cwd: tmp, project: PROJECT },
+      payload: { project: PROJECT },
     });
     const second = (await (sdk as any).trigger({
       function_id: "mem::graph::import-graphify",
-      payload: { cwd: tmp, project: PROJECT },
+      payload: { project: PROJECT },
     })) as { success: boolean; newNodes: number; newEdges: number };
 
     expect(second.success).toBe(true);
@@ -209,20 +218,21 @@ describe("mem::graph::import-graphify", () => {
   });
 
   it("fails cleanly with a pointer when graph.json is absent", async () => {
+    rmSync(join(tmp, "graphify-out", "graph.json"));
     const result = (await (sdk as any).trigger({
       function_id: "mem::graph::import-graphify",
-      payload: { cwd: join(tmp, "nowhere"), project: PROJECT },
+      payload: { project: PROJECT },
     })) as { success: boolean; error: string };
     expect(result.success).toBe(false);
     expect(result.error).toContain("Run graphify first");
   });
 
-  it("accepts an explicit path inside the project cwd", async () => {
+  it("accepts an explicit path inside the daemon cwd", async () => {
     const alt = join(tmp, "graph.json");
     writeFileSync(alt, JSON.stringify(FIXTURE));
     const result = (await (sdk as any).trigger({
       function_id: "mem::graph::import-graphify",
-      payload: { path: alt, cwd: tmp, project: PROJECT },
+      payload: { path: alt, project: PROJECT },
     })) as { success: boolean; nodesImported: number };
     expect(result.success).toBe(true);
     expect(result.nodesImported).toBe(4);
@@ -232,7 +242,7 @@ describe("mem::graph::import-graphify", () => {
     writeFileSync(join(tmp, "graphify-out", "graph.json"), "{not json");
     const result = (await (sdk as any).trigger({
       function_id: "mem::graph::import-graphify",
-      payload: { cwd: tmp, project: PROJECT },
+      payload: { project: PROJECT },
     })) as { success: boolean };
     expect(result.success).toBe(false);
     expect(await kv.list(KV.graphNodes)).toHaveLength(0);
@@ -242,7 +252,7 @@ describe("mem::graph::import-graphify", () => {
     await expect(
       (sdk as any).trigger({
         function_id: "mem::graph::import-graphify",
-        payload: { cwd: tmp },
+        payload: {},
       }),
     ).rejects.toThrow("project is required");
   });

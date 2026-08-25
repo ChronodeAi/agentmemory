@@ -91,6 +91,11 @@ import {
 const ALL_TOOLS_COUNT = getAllTools().length;
 const CORE_TOOLS_COUNT = getAllTools().filter((t) => ESSENTIAL_TOOLS.has(t.name)).length;
 
+// Default pinned iii-engine version. Declared before boot sequencing so the
+// --help text can name it without reaching the hydrated-environment const
+// below (help exits before hydration by design).
+const III_PIN_DEFAULT = "0.11.2";
+
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const args = process.argv.slice(2);
 const IS_WINDOWS = platform() === "win32";
@@ -127,80 +132,9 @@ const dataDirFlagValue = readDataDirFlag(args);
 if (dataDirFlagValue !== undefined && dataDirFlagValue.trim().length > 0) {
   process.env["AGENTMEMORY_DATA_DIR"] = dataDirFlagValue.trim();
 }
-// Upstream adopts a legacy cwd ./data store automatically; this fork does
-// not. When state would silently land somewhere different from an existing
-// local ./data store, tell the operator how to opt in explicitly.
-warnOnLegacyDataDir();
 
-// Fold ~/.agentmemory/.env into process.env before anything reads config
-// from the environment (the iii version pin, --tools/--port/--instance
-// handling, engine boot). Fill-missing-only: a real process.env value —
-// including one set by a CLI flag above — always wins over the file.
-hydrateProcessEnvFromFile();
-
-// Pinned iii-engine version. The unpinned `install.iii.dev/iii/main/install.sh`
-// script tracks `latest`, which made every fresh agentmemory install pull
-// engine 0.11.6 — and 0.11.6 introduces a new sandbox-everything-via-
-// `iii worker add` worker model that agentmemory hasn't been refactored
-// for yet (we still use the pre-sandbox worker registration model). The
-// architectural mismatch surfaces as EPIPE reconnect loops and empty
-// search results after save. Pin to v0.11.2 — the last engine that runs
-// agentmemory's current worker model cleanly — until the refactor lands.
-// Override env var AGENTMEMORY_III_VERSION lets users on the sandbox
-// model already point at a newer engine without us cutting a release.
-const IIPINNED_VERSION =
-  process.env["AGENTMEMORY_III_VERSION"] || "0.11.2";
-
-// Map Node platform/arch → the asset name iii-hq/iii ships under
-// https://github.com/iii-hq/iii/releases/download/iii/v<version>/<asset>
-function iiiReleaseAsset(): string | null {
-  const p = platform();
-  const a = process.arch;
-  if (p === "darwin" && a === "arm64")
-    return "iii-aarch64-apple-darwin.tar.gz";
-  if (p === "darwin" && a === "x64")
-    return "iii-x86_64-apple-darwin.tar.gz";
-  if (p === "linux" && a === "x64")
-    return "iii-x86_64-unknown-linux-gnu.tar.gz";
-  if (p === "linux" && a === "arm64")
-    return "iii-aarch64-unknown-linux-gnu.tar.gz";
-  if (p === "linux" && a === "arm")
-    return "iii-armv7-unknown-linux-gnueabihf.tar.gz";
-  if (p === "win32" && a === "x64")
-    return "iii-x86_64-pc-windows-msvc.zip";
-  if (p === "win32" && a === "arm64")
-    return "iii-aarch64-pc-windows-msvc.zip";
-  return null;
-}
-
-function iiiReleaseUrl(): string | null {
-  const asset = iiiReleaseAsset();
-  if (!asset) return null;
-  // Tag name is monorepo-prefixed: `iii/v0.11.2`. Slash is URL-encoded
-  // by GitHub when serving the download path, hence `iii/v...` not `iii%2Fv...`.
-  return `https://github.com/iii-hq/iii/releases/download/iii/v${IIPINNED_VERSION}/${asset}`;
-}
-
-function vlog(msg: string): void {
-  if (IS_VERBOSE) p.log.info(`[verbose] ${msg}`);
-}
-
-function wrapList(items: readonly string[], indent: number, width = 78): string {
-  const lines: string[] = [];
-  let line = "";
-  for (const item of items) {
-    const joined = line ? `${line}, ${item}` : item;
-    if (line && indent + joined.length > width) {
-      lines.push(`${line},`);
-      line = item;
-    } else {
-      line = joined;
-    }
-  }
-  lines.push(line);
-  return lines.join(`\n${" ".repeat(indent)}`);
-}
-
+// --help / -h early exit. Print + exit before any side effect beyond the
+// flag fold above: no legacy-dir warning, no .env hydration, no engine boot.
 if (args.includes("--help") || args.includes("-h")) {
   console.log(`
 agentmemory — persistent memory for AI coding agents
@@ -257,7 +191,7 @@ Environment:
                                Honored by status, doctor, and MCP shim commands.
   AGENTMEMORY_USE_DOCKER=1     Prefer the bundled docker-compose path over the
                                native iii-engine binary on first run.
-  AGENTMEMORY_III_VERSION      Override pinned iii-engine version (default ${IIPINNED_VERSION}).
+  AGENTMEMORY_III_VERSION      Override pinned iii-engine version (default ${III_PIN_DEFAULT}).
   AGENTMEMORY_FOLLOWUP_WINDOW_SECONDS
                                Window (seconds) for the smart-search follow-up diagnostic
                                (default 30). Long values overcount, short values undercount.
@@ -273,6 +207,83 @@ Quick start:
 `);
   process.exit(0);
 }
+
+// Fold ~/.agentmemory/.env into process.env before anything reads config
+// from the environment (the iii version pin, --tools/--port/--instance
+// handling, engine boot). Fill-missing-only: a real process.env value —
+// including one set by a CLI flag above — always wins over the file.
+hydrateProcessEnvFromFile();
+
+// Upstream adopts a legacy cwd ./data store automatically; this fork does
+// not. When state would silently land somewhere different from an existing
+// local ./data store, tell the operator how to opt in explicitly. Runs after
+// hydration so an AGENTMEMORY_DATA_DIR declared only in <data-dir>/.env is
+// already folded into the environment and suppresses the spurious warning.
+warnOnLegacyDataDir();
+
+// Pinned iii-engine version. The unpinned `install.iii.dev/iii/main/install.sh`
+// script tracks `latest`, which made every fresh agentmemory install pull
+// engine 0.11.6 — and 0.11.6 introduces a new sandbox-everything-via-
+// `iii worker add` worker model that agentmemory hasn't been refactored
+// for yet (we still use the pre-sandbox worker registration model). The
+// architectural mismatch surfaces as EPIPE reconnect loops and empty
+// search results after save. Pin to v0.11.2 — the last engine that runs
+// agentmemory's current worker model cleanly — until the refactor lands.
+// Override env var AGENTMEMORY_III_VERSION lets users on the sandbox
+// model already point at a newer engine without us cutting a release.
+const IIPINNED_VERSION =
+  process.env["AGENTMEMORY_III_VERSION"] || III_PIN_DEFAULT;
+
+// Map Node platform/arch → the asset name iii-hq/iii ships under
+// https://github.com/iii-hq/iii/releases/download/iii/v<version>/<asset>
+function iiiReleaseAsset(): string | null {
+  const p = platform();
+  const a = process.arch;
+  if (p === "darwin" && a === "arm64")
+    return "iii-aarch64-apple-darwin.tar.gz";
+  if (p === "darwin" && a === "x64")
+    return "iii-x86_64-apple-darwin.tar.gz";
+  if (p === "linux" && a === "x64")
+    return "iii-x86_64-unknown-linux-gnu.tar.gz";
+  if (p === "linux" && a === "arm64")
+    return "iii-aarch64-unknown-linux-gnu.tar.gz";
+  if (p === "linux" && a === "arm")
+    return "iii-armv7-unknown-linux-gnueabihf.tar.gz";
+  if (p === "win32" && a === "x64")
+    return "iii-x86_64-pc-windows-msvc.zip";
+  if (p === "win32" && a === "arm64")
+    return "iii-aarch64-pc-windows-msvc.zip";
+  return null;
+}
+
+function iiiReleaseUrl(): string | null {
+  const asset = iiiReleaseAsset();
+  if (!asset) return null;
+  // Tag name is monorepo-prefixed: `iii/v0.11.2`. Slash is URL-encoded
+  // by GitHub when serving the download path, hence `iii/v...` not `iii%2Fv...`.
+  return `https://github.com/iii-hq/iii/releases/download/iii/v${IIPINNED_VERSION}/${asset}`;
+}
+
+function vlog(msg: string): void {
+  if (IS_VERBOSE) p.log.info(`[verbose] ${msg}`);
+}
+
+function wrapList(items: readonly string[], indent: number, width = 78): string {
+  const lines: string[] = [];
+  let line = "";
+  for (const item of items) {
+    const joined = line ? `${line}, ${item}` : item;
+    if (line && indent + joined.length > width) {
+      lines.push(`${line},`);
+      line = item;
+    } else {
+      line = joined;
+    }
+  }
+  lines.push(line);
+  return lines.join(`\n${" ".repeat(indent)}`);
+}
+
 
 const toolsIdx = args.indexOf("--tools");
 if (toolsIdx !== -1 && args[toolsIdx + 1]) {

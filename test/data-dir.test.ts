@@ -1,4 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
+import { pathToFileURL } from "node:url";
 import {
   mkdirSync,
   mkdtempSync,
@@ -6,7 +9,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import {
   DATA_DIR_ENV,
   defaultDataDir,
@@ -20,6 +23,8 @@ import {
 
 const ORIGINAL_HOME = process.env["HOME"];
 const ORIGINAL_USERPROFILE = process.env["USERPROFILE"];
+
+const repoRoot = resolve(import.meta.dirname, "..");
 
 let sandboxHome: string;
 let sandboxCwd: string;
@@ -251,6 +256,48 @@ describe("config integration", () => {
     return await import("../src/config.js");
   }
 
+  it("a .env-declared AGENTMEMORY_DATA_DIR suppresses the legacy warning after hydration", async () => {
+    // Boot-order regression guard: warnOnLegacyDataDir must run AFTER
+    // hydrateProcessEnvFromFile(), so a value declared only in
+    // ~/.agentmemory/.env is already folded into the environment and the
+    // resolver sees an explicit data dir instead of the default.
+    const relocated = join(sandboxHome, "relocated");
+    const envDir = join(sandboxHome, ".agentmemory");
+    mkdirSync(relocated, { recursive: true });
+    mkdirSync(envDir, { recursive: true });
+    writeFileSync(join(envDir, ".env"), `${DATA_DIR_ENV}=${relocated}\n`);
+    const legacyCwd = mkdtempSync(join(tmpdir(), "agentmemory-legacy-cwd-"));
+    try {
+      mkdirSync(join(legacyCwd, "data"), { recursive: true });
+      writeFileSync(join(legacyCwd, "data", "iii-config.yaml"), "");
+
+      const before: string[] = [];
+      expect(
+        warnOnLegacyDataDir({
+          cwd: legacyCwd,
+          write: (message) => before.push(message),
+        }),
+      ).toBe(true);
+
+      const cfg = await freshConfig();
+      cfg.hydrateProcessEnvFromFile();
+      try {
+        const after: string[] = [];
+        expect(
+          warnOnLegacyDataDir({
+            cwd: legacyCwd,
+            write: (message) => after.push(message),
+          }),
+        ).toBe(false);
+        expect(after).toHaveLength(0);
+      } finally {
+        delete process.env[DATA_DIR_ENV];
+      }
+    } finally {
+      rmSync(legacyCwd, { recursive: true, force: true });
+    }
+  });
+
   it("loadConfig().dataDir follows AGENTMEMORY_DATA_DIR over the default", async () => {
     const cfg = await freshConfig();
     expect(cfg.loadConfig().dataDir).toBe(join(homedir(), ".agentmemory"));
@@ -299,6 +346,15 @@ describe("config integration", () => {
     expect(cfg.getStandalonePersistPath()).toBe(join(sandboxHome, "custom.json"));
   });
 
+  it("a whitespace-only STANDALONE_PERSIST_PATH falls back to the data-dir path", async () => {
+    process.env[DATA_DIR_ENV] = join(sandboxHome, "relocated");
+    process.env["STANDALONE_PERSIST_PATH"] = "   ";
+    const cfg = await freshConfig();
+    expect(cfg.getStandalonePersistPath()).toBe(
+      join(join(sandboxHome, "relocated"), "standalone.json"),
+    );
+  });
+
   it("hydrates from the flag-folded data dir when AGENTMEMORY_DATA_DIR is set before boot", async () => {
     // Mirrors the CLI boot order: the --data-dir flag is folded into
     // process.env first, then hydrateProcessEnvFromFile() reads
@@ -328,5 +384,50 @@ describe("config integration", () => {
     cfg.hydrateProcessEnvFromFile();
     expect(process.env["AM_FLAGFOLD_PROBE"]).toBe("from-second");
     delete process.env["AM_FLAGFOLD_PROBE"];
+  });
+});
+
+describe("--help boot ordering", () => {
+  let sandboxHome: string;
+  let legacyCwd: string;
+
+  beforeEach(() => {
+    sandboxHome = mkdtempSync(join(tmpdir(), "agentmemory-help-home-"));
+    legacyCwd = mkdtempSync(join(tmpdir(), "agentmemory-help-cwd-"));
+    // A legacy store plus a default home: with the pre-fix order (warning
+    // before the --help exit) this exact tree produced stderr noise on
+    // every `--help` run.
+    mkdirSync(join(legacyCwd, "data"), { recursive: true });
+    writeFileSync(join(legacyCwd, "data", "state_store.db"), "");
+  });
+
+  afterEach(() => {
+    rmSync(sandboxHome, { recursive: true, force: true });
+    rmSync(legacyCwd, { recursive: true, force: true });
+    delete process.env[DATA_DIR_ENV];
+  });
+
+  it("prints usage without a legacy-dir warning side effect", () => {
+    const childEnv: NodeJS.ProcessEnv = { ...process.env };
+    delete childEnv[DATA_DIR_ENV];
+    childEnv["HOME"] = sandboxHome;
+    childEnv["USERPROFILE"] = sandboxHome;
+    // The child runs from the legacy-store cwd, so both the tsx hook and
+    // the CLI entry must be passed as absolute specifiers.
+    const requireFromRepo = createRequire(join(repoRoot, "package.json"));
+    const result = spawnSync(
+      process.execPath,
+      [
+        "--import",
+        pathToFileURL(requireFromRepo.resolve("tsx")).href,
+        join(repoRoot, "src", "cli.ts"),
+        "--help",
+      ],
+      { cwd: legacyCwd, encoding: "utf8", env: childEnv },
+    );
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain("Usage: agentmemory");
+    expect(result.stderr).not.toContain("legacy ./data store");
+    expect(result.stderr).not.toContain("--data-dir");
   });
 });

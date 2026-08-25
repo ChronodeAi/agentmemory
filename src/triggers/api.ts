@@ -2765,6 +2765,34 @@ export function registerApiTriggers(
       if (authErr) return authErr;
       const project = asNonEmptyString(req.body?.project);
       const requestsGlobal = req.body?.scope === "global";
+      const explicitPath =
+        typeof req.body?.path === "string" ? req.body.path : undefined;
+      const explicitCwd =
+        typeof req.body?.cwd === "string" ? req.body.cwd : undefined;
+      // A caller-supplied path/cwd steers which file the daemon reads, and
+      // the engine anchors its containment checks to its own process.cwd()
+      // rather than any client value. Requests that carry either field are
+      // therefore administrative, gated exactly like global-scope
+      // governance/export; capability callers import the default
+      // <daemon-cwd>/graphify-out/graph.json (which fails honestly when it
+      // is absent).
+      if ((explicitPath !== undefined || explicitCwd !== undefined) && !requestsGlobal) {
+        const adminDecision = authorizeAdministrativeRequest(
+          req.headers,
+          adminSecret,
+        );
+        if (!adminDecision.authorized) {
+          return {
+            status_code: adminDecision.statusCode,
+            body: {
+              error:
+                adminDecision.error === "authentication_unavailable"
+                  ? "global_authentication_unavailable"
+                  : "global_unauthorized",
+            },
+          };
+        }
+      }
       if (!project && !requestsGlobal) {
         return {
           status_code: 400,
@@ -2775,8 +2803,8 @@ export function registerApiTriggers(
         const rawResult = await sdk.trigger({
           function_id: "mem::graph::import-graphify",
           payload: {
-            ...(typeof req.body?.path === "string" && { path: req.body.path }),
-            ...(typeof req.body?.cwd === "string" && { cwd: req.body.cwd }),
+            ...(explicitPath !== undefined && { path: explicitPath }),
+            ...(explicitCwd !== undefined && { cwd: explicitCwd }),
             ...(project ? { project } : {}),
             ...(requestsGlobal ? { scope: req.body?.scope } : {}),
           },
