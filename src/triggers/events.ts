@@ -28,20 +28,33 @@ import {
 const MAX_BACKGROUND_PIPELINE_ATTEMPTS = 3;
 
 // Global marker recording when corpus consolidation last ran, used to debounce
-// the per-turn session-stop fan-out.
+// the per-turn session-stop fan-out. `token` names the dispatch that owns the
+// current claim: each Void dispatch rewrites the marker with its own token
+// right before firing, and a rejection handler deletes the marker only when
+// it still carries that exact token (compare-and-delete). A stale rejection
+// from an older cycle therefore cannot erase a newer cycle's debounce, and a
+// rejected dispatch cannot release the cooldown while its sibling dispatch
+// still holds a newer claim.
 const CONSOLIDATION_MARKER_KEY = "consolidation:lastRun";
 
-async function consolidationDueUnserialized(kv: StateKV): Promise<boolean> {
+type ConsolidationCooldownClaim = { at: number; token: string };
+
+async function consolidationDueUnserialized(
+  kv: StateKV,
+): Promise<ConsolidationCooldownClaim | null> {
   const cooldownMs = getConsolidationCooldownMs();
-  if (cooldownMs <= 0) return true; // debounce disabled
+  if (cooldownMs <= 0) return { at: Date.now(), token: "" }; // debounce disabled
   const now = Date.now();
   const marker = await kv
     .get<{ at?: number }>(KV.config, CONSOLIDATION_MARKER_KEY)
     .catch(() => null);
   const lastAt = typeof marker?.at === "number" ? marker.at : 0;
-  if (now - lastAt < cooldownMs) return false;
-  await kv.set(KV.config, CONSOLIDATION_MARKER_KEY, { at: now }).catch(() => {});
-  return true;
+  if (now - lastAt < cooldownMs) return null;
+  const token = generateId("ccm");
+  await kv
+    .set(KV.config, CONSOLIDATION_MARKER_KEY, { at: now, token })
+    .catch(() => {});
+  return { at: now, token };
 }
 
 // Concurrent session-stop events would otherwise interleave the marker
@@ -49,11 +62,13 @@ async function consolidationDueUnserialized(kv: StateKV): Promise<boolean> {
 // check through an in-process chain so exactly one concurrent caller wins.
 let consolidationCheckChain: Promise<unknown> = Promise.resolve();
 
-function consolidationDue(kv: StateKV): Promise<boolean> {
+function consolidationDue(
+  kv: StateKV,
+): Promise<ConsolidationCooldownClaim | null> {
   const result = consolidationCheckChain.then(() =>
     consolidationDueUnserialized(kv),
   );
-  consolidationCheckChain = result.catch(() => false);
+  consolidationCheckChain = result.catch(() => null);
   return result;
 }
 
@@ -859,24 +874,46 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
     // storm. Bound the global corpus consolidation to once per cooldown
     // window; AGENTMEMORY_CONSOLIDATION_COOLDOWN_MS=0 disables the debounce.
     if (isConsolidationEnabled()) {
-      const due = await consolidationDue(kv);
-      if (due) {
+      const claim = await consolidationDue(kv);
+      if (claim) {
         // Same dispatch discipline as the slot-reflect / graph-extract
         // fan-outs above: tolerate synchronous throws and non-promise
         // returns from sdk.trigger, log async rejections without failing
         // the stop lifecycle.
-        const releaseConsolidationCooldown = (): void => {
-          // The marker was written before the dispatch, so a rejected
-          // (or never-started) pipeline would otherwise pin the cooldown
-          // for the whole window with no work behind it. Plain kv delete:
-          // the marker is debounce bookkeeping, not pipeline state, and
-          // needs no lock. Best-effort only — the next stop re-checks.
-          kv.delete(KV.config, CONSOLIDATION_MARKER_KEY).catch(() => {});
-        };
-        const fireVoid = (
+        //
+        // Each dispatch claims the cooldown marker with its own token right
+        // before firing; on rejection it re-reads the marker and deletes it
+        // ONLY when it still carries that token. A rejected dispatch thus
+        // releases the window only while nothing newer stands behind the
+        // marker: a crystallize rejection cannot clear the claim under a
+        // still-running consolidate-pipeline, and a late rejection from an
+        // older cycle cannot erase a newer cycle's fresh marker. Plain async
+        // kv ops — no locks around dispatch, marker writes stay lock-free.
+        const fireVoid = async (
           function_id: string,
           payload: Record<string, unknown>,
-        ) => {
+        ): Promise<void> => {
+          const token = generateId("ccm");
+          await kv
+            .set(KV.config, CONSOLIDATION_MARKER_KEY, {
+              at: claim.at,
+              token,
+            })
+            .catch(() => {});
+          const releaseOnRejection = (): void => {
+            void (async () => {
+              const marker = await kv
+                .get<{ at?: number; token?: string }>(
+                  KV.config,
+                  CONSOLIDATION_MARKER_KEY,
+                )
+                .catch(() => null);
+              if (!marker || marker.token !== token) return;
+              await kv
+                .delete(KV.config, CONSOLIDATION_MARKER_KEY)
+                .catch(() => {});
+            })();
+          };
           try {
             const dispatched = sdk.trigger({
               function_id,
@@ -890,7 +927,7 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
                 pipelineRunId,
                 error: err instanceof Error ? err.message : String(err),
               });
-              releaseConsolidationCooldown();
+              releaseOnRejection();
             });
           } catch (err) {
             logger.warn(function_id + " trigger failed", {
@@ -899,16 +936,19 @@ export function registerEventTriggers(sdk: ISdk, kv: StateKV): void {
               pipelineRunId,
               error: err instanceof Error ? err.message : String(err),
             });
-            releaseConsolidationCooldown();
+            releaseOnRejection();
           }
         };
-        fireVoid("mem::consolidate-pipeline", {
-          tier: "all",
-          force: true,
+        // Crystallize fires first so the heavier consolidate-pipeline holds
+        // the newest claim for most of the cycle: its rejection then finds a
+        // token mismatch and leaves the debounce standing.
+        await fireVoid("mem::auto-crystallize", {
+          olderThanDays: 0,
           project: data.project,
         });
-        fireVoid("mem::auto-crystallize", {
-          olderThanDays: 0,
+        await fireVoid("mem::consolidate-pipeline", {
+          tier: "all",
+          force: true,
           project: data.project,
         });
       }

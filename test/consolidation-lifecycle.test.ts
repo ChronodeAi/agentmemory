@@ -389,4 +389,95 @@ describe("session-stop consolidation lifecycle", () => {
     ]);
     expect(await marker()).not.toBeNull();
   });
+
+  it("keeps the marker when crystallize is rejected but the pipeline holds a newer claim", async () => {
+    await kv.set(KV.sessions, "s-x1", sessionRow("s-x1"));
+    await kv.set(KV.sessions, "s-x2", sessionRow("s-x2"));
+    registerRuntime();
+    // Crystallize is rejected every time; the pipeline succeeds. The
+    // pipeline fires after crystallize and therefore owns the newest
+    // claim on the marker.
+    let crystallizeDispatches = 0;
+    (sdk as unknown as { fns: Map<string, (data: unknown) => Promise<unknown>> }).fns.set(
+      "mem::auto-crystallize",
+      async () => {
+        crystallizeDispatches += 1;
+        throw new Error("SIMULATED_CRYSTALLIZE_REJECTION");
+      },
+    );
+
+    await stop({ sessionId: "s-x1" });
+    await flush();
+
+    expect(crystallizeDispatches).toBe(1);
+    expect(consolidationCalls()).toHaveLength(1);
+    const survivor = await marker();
+    expect(typeof survivor?.at).toBe("number");
+    expect(typeof survivor?.token).toBe("string");
+
+    // The running pipeline must stay protected: a stop inside the cooldown
+    // window is still debounced even though crystallize was rejected.
+    await stop({ sessionId: "s-x2" });
+    await flush();
+    expect(crystallizeDispatches).toBe(1);
+    expect(consolidationCalls()).toHaveLength(1);
+  });
+
+  it("a stale rejection cannot erase a newer cycle's marker", async () => {
+    await kv.set(KV.sessions, "s-t1", sessionRow("s-t1"));
+    await kv.set(KV.sessions, "s-t2", sessionRow("s-t2"));
+    await kv.set(KV.sessions, "s-t3", sessionRow("s-t3"));
+    registerRuntime();
+    // First pipeline dispatch hangs until the test releases it, simulating
+    // a rejection that lands long after newer cycles have claimed the mark.
+    let pipelineDispatches = 0;
+    let rejectFirstDispatch!: (err: Error) => void;
+    const gated = new Promise<never>((_resolve, reject) => {
+      rejectFirstDispatch = reject;
+    });
+    (sdk as unknown as { fns: Map<string, (data: unknown) => Promise<unknown>> }).fns.set(
+      "mem::consolidate-pipeline",
+      async (payload) => {
+        pipelineDispatches += 1;
+        if (pipelineDispatches === 1) return gated;
+        calls.push({
+          functionId: "mem::consolidate-pipeline",
+          payload: payload as Record<string, unknown>,
+        });
+        return { success: true };
+      },
+    );
+
+    // Cycle 1: crystallize succeeds, pipeline dispatch #1 stays pending.
+    await stop({ sessionId: "s-t1" });
+    await flush();
+    expect(pipelineDispatches).toBe(1);
+    expect(await marker()).not.toBeNull();
+
+    // Cycle 2 becomes eligible only after the window elapses; it writes a
+    // fresh marker and completes successfully.
+    const stale = (await marker())!;
+    await kv.set(KV.config, "consolidation:lastRun", {
+      at: (stale.at ?? Date.now()) - 300_001,
+      token: "superseded-cycle-1-claim",
+    });
+    await stop({ sessionId: "s-t2" });
+    await flush();
+    expect(pipelineDispatches).toBe(2);
+    const fresh = await marker();
+    expect(fresh).not.toBeNull();
+    expect(fresh?.token).not.toBe("superseded-cycle-1-claim");
+
+    // The cycle-1 rejection finally lands: its compare-and-delete finds a
+    // foreign token and leaves the newer debounce standing.
+    rejectFirstDispatch(new Error("SIMULATED_LATE_REJECTION"));
+    await flush();
+    expect(await marker()).toEqual(fresh);
+
+    // A further stop inside the window stays debounced by that survivor.
+    await stop({ sessionId: "s-t3" });
+    await flush();
+    expect(pipelineDispatches).toBe(2);
+    expect(crystallizeCalls()).toHaveLength(2);
+  });
 });
