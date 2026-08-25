@@ -21,8 +21,11 @@ export function resolveLiveStreamMaxBytes(
 }
 
 export function viewerLiveStreamPath(dataDir: string = resolveDataDir()): string {
+  // The stream store lives under <data-dir>/data/stream_store — the same
+  // layout iii-runtime-config materializes and health resources inventory.
   return join(
     dataDir,
+    "data",
     "stream_store",
     `stream%3A${STREAM.name}%3A${STREAM.viewerGroup}.bin`,
   );

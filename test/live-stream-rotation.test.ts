@@ -63,14 +63,16 @@ describe("resolveLiveStreamMaxBytes", () => {
 });
 
 describe("viewerLiveStreamPath", () => {
-  it("mirrors the iii-stream file-backed adapter layout", () => {
-    expect(viewerLiveStreamPath("/data")).toBe(join("/data", "stream_store", VIEWER_STREAM_NAME));
+  it("mirrors the iii-stream file-backed adapter layout under <data-dir>/data", () => {
+    expect(viewerLiveStreamPath("/root")).toBe(
+      join("/root", "data", "stream_store", VIEWER_STREAM_NAME),
+    );
   });
 });
 
 describe("rotateLiveStreamIfOversized", () => {
   function seedStream(dataDir: string, bytes: number): string {
-    const store = join(dataDir, "stream_store");
+    const store = join(dataDir, "data", "stream_store");
     mkdirSync(store, { recursive: true });
     const filePath = join(store, VIEWER_STREAM_NAME);
     writeFileSync(filePath, Buffer.alloc(bytes, 0x61));
