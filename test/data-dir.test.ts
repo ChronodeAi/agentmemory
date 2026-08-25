@@ -346,6 +346,15 @@ describe("config integration", () => {
     expect(cfg.getStandalonePersistPath()).toBe(join(sandboxHome, "custom.json"));
   });
 
+  it("a whitespace-only STANDALONE_PERSIST_PATH falls back to the data-dir path", async () => {
+    process.env[DATA_DIR_ENV] = join(sandboxHome, "relocated");
+    process.env["STANDALONE_PERSIST_PATH"] = "   ";
+    const cfg = await freshConfig();
+    expect(cfg.getStandalonePersistPath()).toBe(
+      join(join(sandboxHome, "relocated"), "standalone.json"),
+    );
+  });
+
   it("hydrates from the flag-folded data dir when AGENTMEMORY_DATA_DIR is set before boot", async () => {
     // Mirrors the CLI boot order: the --data-dir flag is folded into
     // process.env first, then hydrateProcessEnvFromFile() reads
