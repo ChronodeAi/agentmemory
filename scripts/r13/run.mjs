@@ -432,6 +432,7 @@ async function runOnce(index) {
   let testProcess;
   let peakRss = 0;
   let peakConcurrentWorkers = 0;
+  let overLimitWorkerStreak = 0;
   let timedOut = false;
   let rssBreached = false;
   let telemetryFailure;
@@ -446,10 +447,21 @@ async function runOnce(index) {
         testProcess?.pid,
       ]);
       rss = metrics.rssBytes;
-      peakConcurrentWorkers = Math.max(
-        peakConcurrentWorkers,
-        metrics.workerCount,
-      );
+      // Sequential forks hand off between files: an exiting worker can still
+      // be visible in one sample while the next file's worker starts (native
+      // modules like onnxruntime delay teardown). Only overlap sustained
+      // across consecutive samples indicates real parallel file execution.
+      if (metrics.workerCount > 1) {
+        overLimitWorkerStreak += 1;
+      } else {
+        overLimitWorkerStreak = 0;
+      }
+      if (overLimitWorkerStreak >= 2) {
+        peakConcurrentWorkers = Math.max(
+          peakConcurrentWorkers,
+          metrics.workerCount,
+        );
+      }
     } catch (error) {
       telemetryFailure = error instanceof Error ? error.message : String(error);
       void terminate(testProcess);

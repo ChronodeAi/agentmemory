@@ -3,9 +3,9 @@
   "control_id": "G-ICM-01",
   "project_id": "github.com/chronodeai/agentmemory",
   "source_identity": {
-    "commit_sha": "023433b12303e2b98e4e709c02425493b3e6df48",
-    "commit_tree_sha": "f87647c615d93a42014f3a4b28603412b0bf7e11",
-    "inventory_input_sha256": "291b5a4f9644ce81144bf8cc6190e786a834315172a759d24a44a22c5f013855"
+    "commit_sha": "e241ebb778a9d32a7726ed80b6359fa474139307",
+    "commit_tree_sha": "bbc5df4d5bfc44e47227e3096455df47a4d64f92",
+    "inventory_input_sha256": "fd4bf3dffd45c890813b20b16efa791cd6b72f055f65198e8489faffbbe55be8"
   },
   "public_route_allowlist": [
     "GET /agentmemory/livez"
@@ -2169,7 +2169,7 @@
     },
     {
       "name": "ClipEmbeddingProvider",
-      "source": "src/providers/embedding/clip.ts:24"
+      "source": "src/providers/embedding/clip.ts:13"
     },
     {
       "name": "CohereEmbeddingProvider",
@@ -2185,7 +2185,7 @@
     },
     {
       "name": "LocalEmbeddingProvider",
-      "source": "src/providers/embedding/local.ts:13"
+      "source": "src/providers/embedding/local.ts:8"
     },
     {
       "name": "MinimaxProvider",
@@ -10379,7 +10379,7 @@
     {
       "surface_id": "PROVIDER:ClipEmbeddingProvider",
       "type": "provider-adapter",
-      "source": "src/providers/embedding/clip.ts:24",
+      "source": "src/providers/embedding/clip.ts:13",
       "auth_control": "processing-policy",
       "control_ids": [
         "ICM-10"
@@ -10467,7 +10467,7 @@
     {
       "surface_id": "PROVIDER:LocalEmbeddingProvider",
       "type": "provider-adapter",
-      "source": "src/providers/embedding/local.ts:13",
+      "source": "src/providers/embedding/local.ts:8",
       "auth_control": "processing-policy",
       "control_ids": [
         "ICM-10"
