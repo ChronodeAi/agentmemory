@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.30-chronode.5] — 2026-08-25
+
+Backlog-closure release: live-stream disk bounding, deployment watchdog v2, and a written upstream-sync process.
+
+### Added
+
+- **Viewer live-stream size cap with rotation** (`fix/stream`). The iii-stream file adapter persists the viewer live stream (`mem-live`/`viewer`) as one append-only `.bin` that grew unbounded — 130 MB observed on the long-running deployment. Every publish path into that stream (`mem::observe` raw and compressed viewer events, `mem::compress`, and the session-activity trigger) now checks the persisted file first and, past `AGENTMEMORY_LIVE_STREAM_MAX_BYTES` (default `33554432`; `0` opts out), rotates it once to `<path>.prev` (overwriting the previous generation) so the engine's next append starts fresh. Rotation is best-effort by contract: failures cost at most one warn line and never block or fail an observation. The engine opens its store by path per append (verified: no long-lived fd), so no restart is required for rotation to take effect.
+- **Upstream sync playbook** (`docs/upstream-sync.md`) capturing the staged-train process proven on this deployment: pinned-refspec ref refreshes (plain `git fetch origin` does not move `origin/main` here), four-bucket classification of `<deployed-sha>..upstream/main` (pull-first bugfixes / decompose-and-port / re-port-through-bundle-pipeline / skip-unused-host-adapters), the non-negotiable gates (hook bundles as committed build outputs, the `ci/r13-test-manifest.json` recompute algorithm, evidence inventory refresh, skills gen/check, tool-count consistency surfaces), the full pre-push verification battery including canonical R13 under dummy secrets with `RUN_HF_SMOKE=1`, direct-to-main PR policy (stacked-base deletion auto-closes stacked PRs), and the local deploy recipe including the `lib/node_modules` anchor-`package.json` pitfall for `npm install <tgz> --omit=dev`.
+- **Sync position helper** (`scripts/sync/upstream-status.sh`): prints the deployed release dir, local main sha, upstream/main sha, ahead/behind of both versus the deployed sha, and the 17 newest upstream commit subjects.
+
+### Deployment (not repo code)
+
+- Watchdog v2 (`~/.agentmemory/bin/watchdog.sh`): alongside the existing livez check it now curls the viewer health surface (`http://127.0.0.1:3113/health`); when livez answers but the viewer does not, one `"viewer down"` line lands in `~/Library/Logs/Agentmemory/watchdog.log` instead of kickstarting healthy engine state; a livez failure that issues a kickstart logs `"engine restarted at <date>"`. The launchd stderr spool is bounded: past 52428800 bytes it keeps the newest 20000 lines via tail-then-mv.
+
 ## [0.9.30-chronode.4] — 2026-08-25
 
 Upstream sync: port of rohitg00/agentmemory `8c90741` — migration from the deprecated `@xenova/transformers` (silently broken on Node 22+) to `@huggingface/transformers` v4, the renamed continuation of the same Apache-2.0 codebase.
