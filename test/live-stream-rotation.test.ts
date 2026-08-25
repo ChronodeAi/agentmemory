@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach } from "vitest";
 import {
   existsSync,
   mkdirSync,
@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_LIVE_STREAM_MAX_BYTES,
+  ROTATION_COOLDOWN_MS,
   resolveLiveStreamMaxBytes,
   rotateLiveStreamIfOversized,
   viewerLiveStreamPath,
@@ -71,6 +72,12 @@ describe("viewerLiveStreamPath", () => {
 });
 
 describe("rotateLiveStreamIfOversized", () => {
+  let clock = 1_700_000_000_000;
+
+  beforeEach(() => {
+    clock += ROTATION_COOLDOWN_MS * 2;
+  });
+
   function seedStream(dataDir: string, bytes: number): string {
     const store = join(dataDir, "data", "stream_store");
     mkdirSync(store, { recursive: true });
@@ -83,7 +90,7 @@ describe("rotateLiveStreamIfOversized", () => {
     const dataDir = tempDataDir();
     const filePath = seedStream(dataDir, 64);
 
-    const rotated = rotateLiveStreamIfOversized({ dataDir, maxBytes: 32 });
+    const rotated = rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock });
 
     expect(rotated).toBe(true);
     expect(existsSync(filePath)).toBe(false);
@@ -94,7 +101,7 @@ describe("rotateLiveStreamIfOversized", () => {
   it("starts fresh so the next append recreates the stream file", () => {
     const dataDir = tempDataDir();
     const filePath = seedStream(dataDir, 64);
-    rotateLiveStreamIfOversized({ dataDir, maxBytes: 32 });
+    rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock });
 
     writeFileSync(filePath, Buffer.alloc(8, 0x62));
 
@@ -106,7 +113,7 @@ describe("rotateLiveStreamIfOversized", () => {
     const dataDir = tempDataDir();
     const filePath = seedStream(dataDir, 16);
 
-    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32 })).toBe(false);
+    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock })).toBe(false);
     expect(existsSync(filePath)).toBe(true);
     expect(existsSync(`${filePath}.prev`)).toBe(false);
   });
@@ -116,14 +123,14 @@ describe("rotateLiveStreamIfOversized", () => {
     const filePath = seedStream(dataDir, 64);
     writeFileSync(`${filePath}.prev`, Buffer.alloc(4, 0x01));
 
-    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32 })).toBe(true);
+    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock })).toBe(true);
     expect(readFileSync(`${filePath}.prev`).length).toBe(64);
   });
 
   it("is a no-op when no stream file exists yet", () => {
     const dataDir = tempDataDir();
 
-    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32 })).toBe(false);
+    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock })).toBe(false);
   });
 
   it("swallows rotation errors and keeps the oversized file", () => {
@@ -134,7 +141,7 @@ describe("rotateLiveStreamIfOversized", () => {
     mkdirSync(`${filePath}.prev`);
     writeFileSync(join(`${filePath}.prev`, "occupied"), "x");
 
-    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32 })).toBe(false);
+    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock })).toBe(false);
     expect(existsSync(filePath)).toBe(true);
   });
 
@@ -144,6 +151,7 @@ describe("rotateLiveStreamIfOversized", () => {
 
     const rotated = rotateLiveStreamIfOversized({
       dataDir,
+      nowMs: clock,
       env: { AGENTMEMORY_LIVE_STREAM_MAX_BYTES: "16" },
     });
 
@@ -155,7 +163,34 @@ describe("rotateLiveStreamIfOversized", () => {
     const dataDir = tempDataDir();
     const filePath = seedStream(dataDir, 64);
 
-    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 0 })).toBe(false);
+    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 0, nowMs: clock })).toBe(false);
     expect(existsSync(`${filePath}.prev`)).toBe(false);
+  });
+
+  it("suppresses a second rotation within the cooldown window", () => {
+    const dataDir = tempDataDir();
+    const filePath = seedStream(dataDir, 64);
+
+    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock })).toBe(true);
+    writeFileSync(filePath, Buffer.alloc(64, 0x63));
+
+    expect(
+      rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock + ROTATION_COOLDOWN_MS - 1 }),
+    ).toBe(false);
+    expect(existsSync(`${filePath}.prev`)).toBe(true);
+  });
+
+  it("rotates again once the cooldown window has passed", () => {
+    const dataDir = tempDataDir();
+    const filePath = seedStream(dataDir, 64);
+
+    expect(rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock })).toBe(true);
+    writeFileSync(filePath, Buffer.alloc(64, 0x63));
+
+    expect(
+      rotateLiveStreamIfOversized({ dataDir, maxBytes: 32, nowMs: clock + ROTATION_COOLDOWN_MS }),
+    ).toBe(true);
+    expect(existsSync(filePath)).toBe(false);
+    expect(readFileSync(`${filePath}.prev`).length).toBe(64);
   });
 });
