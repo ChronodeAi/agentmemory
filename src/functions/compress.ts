@@ -9,6 +9,7 @@ import type {
 } from "../types.js";
 import { KV, STREAM } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
+import { rotateLiveStreamIfOversized } from "../state/live-stream-rotation.js";
 import {
   COMPRESSION_SYSTEM,
   buildCompressionPrompt,
@@ -210,6 +211,7 @@ export function registerCompressFunction(
           scheduleIndexSave();
         }
 
+        rotateLiveStreamIfOversized();
         const streamResults = await Promise.allSettled([
           sdk.trigger({
             function_id: "stream::set",

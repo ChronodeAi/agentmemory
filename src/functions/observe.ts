@@ -17,6 +17,7 @@ const TOOL_HOOKS = new Set([
 ]);
 import { KV, STREAM, generateId } from "../state/schema.js";
 import { StateKV } from "../state/kv.js";
+import { rotateLiveStreamIfOversized } from "../state/live-stream-rotation.js";
 import { stripPrivateData } from "./privacy.js";
 import { DedupMap } from "./dedup.js";
 import { withKeyedLock } from "../state/keyed-mutex.js";
@@ -570,6 +571,7 @@ export function registerObserveFunction(
           },
         });
 
+        rotateLiveStreamIfOversized();
         await sdk.trigger({
           function_id: "stream::send",
           payload: {
@@ -687,6 +689,7 @@ export function registerObserveFunction(
               data: { type: "compressed", observation: synthetic },
             },
           });
+          rotateLiveStreamIfOversized();
           await sdk.trigger({
             function_id: "stream::set",
             payload: {

@@ -3,9 +3,9 @@
   "control_id": "G-ICM-01",
   "project_id": "github.com/chronodeai/agentmemory",
   "source_identity": {
-    "commit_sha": "e241ebb778a9d32a7726ed80b6359fa474139307",
-    "commit_tree_sha": "bbc5df4d5bfc44e47227e3096455df47a4d64f92",
-    "inventory_input_sha256": "fd4bf3dffd45c890813b20b16efa791cd6b72f055f65198e8489faffbbe55be8"
+    "commit_sha": "facabd34882d1e66a5ec3d4821eecde235fed1b1",
+    "commit_tree_sha": "b58a99a88f05e094b42be7c52e72784d87cc4e6d",
+    "inventory_input_sha256": "2e776824dd49040af5451aab80bbbe2e2f0dcab5aab982653711558baa74625b"
   },
   "public_route_allowlist": [
     "GET /agentmemory/livez"
@@ -2270,12 +2270,12 @@
       "source": "src/functions/compress-file.ts:148"
     },
     {
-      "surface_id": "PROVIDER:ATTEMPT:src/functions/compress.ts:111:describeImage",
+      "surface_id": "PROVIDER:ATTEMPT:src/functions/compress.ts:112:describeImage",
       "purpose": "vision",
       "kind": "invocation",
       "method": "describeImage",
       "receiver": "provider",
-      "source": "src/functions/compress.ts:111"
+      "source": "src/functions/compress.ts:112"
     },
     {
       "surface_id": "PROVIDER:ATTEMPT:src/functions/consolidate.ts:176:compress",
@@ -10819,12 +10819,12 @@
       ]
     },
     {
-      "surface_id": "PROVIDER:ATTEMPT:src/functions/compress.ts:111:describeImage",
+      "surface_id": "PROVIDER:ATTEMPT:src/functions/compress.ts:112:describeImage",
       "purpose": "vision",
       "kind": "invocation",
       "method": "describeImage",
       "receiver": "provider",
-      "source": "src/functions/compress.ts:111",
+      "source": "src/functions/compress.ts:112",
       "type": "provider-attempt",
       "auth_control": "processing-policy",
       "control_ids": [
