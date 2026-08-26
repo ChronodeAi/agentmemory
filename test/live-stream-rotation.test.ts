@@ -1,18 +1,22 @@
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
 import {
   existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { logger } from "../src/logger.js";
 import {
   DEFAULT_LIVE_STREAM_MAX_BYTES,
+  DEFAULT_LIVE_STREAM_PREV_TTL_DAYS,
   ROTATION_COOLDOWN_MS,
   resolveLiveStreamMaxBytes,
+  resolveLiveStreamPrevTtlDays,
   rotateLiveStreamIfOversized,
   viewerLiveStreamPath,
 } from "../src/state/live-stream-rotation.js";
@@ -29,11 +33,37 @@ function tempDataDir(): string {
 afterEach(() => {
   for (const done of cleanup) done();
   cleanup = [];
+  vi.restoreAllMocks();
 });
 
 describe("DEFAULT_LIVE_STREAM_MAX_BYTES", () => {
   it("caps the viewer stream at 32 MiB", () => {
     expect(DEFAULT_LIVE_STREAM_MAX_BYTES).toBe(33554432);
+  });
+});
+
+describe("resolveLiveStreamPrevTtlDays", () => {
+  it("defaults to 30 days when unset", () => {
+    expect(DEFAULT_LIVE_STREAM_PREV_TTL_DAYS).toBe(30);
+    expect(resolveLiveStreamPrevTtlDays({})).toBe(DEFAULT_LIVE_STREAM_PREV_TTL_DAYS);
+  });
+
+  it("honors a positive override and truncates fractions", () => {
+    expect(resolveLiveStreamPrevTtlDays({ AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "7" })).toBe(7);
+    expect(resolveLiveStreamPrevTtlDays({ AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "1.9" })).toBe(1);
+  });
+
+  it("treats zero as an opt-out that keeps every generation", () => {
+    expect(resolveLiveStreamPrevTtlDays({ AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "0" })).toBe(0);
+  });
+
+  it("falls back to the default for invalid values", () => {
+    expect(resolveLiveStreamPrevTtlDays({ AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "soon" })).toBe(
+      DEFAULT_LIVE_STREAM_PREV_TTL_DAYS,
+    );
+    expect(resolveLiveStreamPrevTtlDays({ AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "-5" })).toBe(
+      DEFAULT_LIVE_STREAM_PREV_TTL_DAYS,
+    );
   });
 });
 
@@ -84,6 +114,15 @@ describe("rotateLiveStreamIfOversized", () => {
     const filePath = join(store, VIEWER_STREAM_NAME);
     writeFileSync(filePath, Buffer.alloc(bytes, 0x61));
     return filePath;
+  }
+
+  // Seeds a stale generation at <path>.prev with a backdated mtime so the
+  // injected nowMs clock decides its TTL age deterministically.
+  function seedPrevious(filePath: string, bytes: number, ageDays: number): void {
+    const previousPath = `${filePath}.prev`;
+    writeFileSync(previousPath, Buffer.alloc(bytes, 0x01));
+    const stamped = new Date(clock - ageDays * 24 * 60 * 60 * 1000);
+    utimesSync(previousPath, stamped, stamped);
   }
 
   it("rotates once to .prev when the injected cap is tiny", () => {
@@ -192,5 +231,79 @@ describe("rotateLiveStreamIfOversized", () => {
     ).toBe(true);
     expect(existsSync(filePath)).toBe(false);
     expect(readFileSync(`${filePath}.prev`).length).toBe(64);
+  });
+
+  it("removes an expired .prev before renaming current into place", () => {
+    const dataDir = tempDataDir();
+    const filePath = seedStream(dataDir, 64);
+    seedPrevious(filePath, 4, 40); // older than the 30-day TTL
+
+    const rotated = rotateLiveStreamIfOversized({
+      dataDir,
+      maxBytes: 32,
+      nowMs: clock,
+      env: { AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "30" },
+    });
+
+    expect(rotated).toBe(true);
+    const previous = readFileSync(`${filePath}.prev`);
+    expect(previous.length).toBe(64); // former current content, not the stale marker
+  });
+
+  it("leaves a fresh .prev alone until the rename replaces it", () => {
+    const dataDir = tempDataDir();
+    const filePath = seedStream(dataDir, 64);
+    seedPrevious(filePath, 4, 1); // well inside the TTL window
+
+    const rotated = rotateLiveStreamIfOversized({
+      dataDir,
+      maxBytes: 32,
+      nowMs: clock,
+      env: { AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "30" },
+    });
+
+    expect(rotated).toBe(true);
+    expect(readFileSync(`${filePath}.prev`).length).toBe(64);
+  });
+
+  it("still rotates from scratch when no .prev exists yet", () => {
+    const dataDir = tempDataDir();
+    const filePath = seedStream(dataDir, 64);
+
+    expect(existsSync(`${filePath}.prev`)).toBe(false);
+    expect(
+      rotateLiveStreamIfOversized({
+        dataDir,
+        maxBytes: 32,
+        nowMs: clock,
+        env: { AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "30" },
+      }),
+    ).toBe(true);
+    expect(readFileSync(`${filePath}.prev`).length).toBe(64);
+  });
+
+  it("warns and keeps the oversized stream when an expired .prev cannot be removed", () => {
+    const dataDir = tempDataDir();
+    const filePath = seedStream(dataDir, 64);
+    // A non-empty directory at <path>.prev defeats rmSync without recursive.
+    mkdirSync(`${filePath}.prev`);
+    writeFileSync(join(`${filePath}.prev`, "occupied"), "x");
+    const stamped = new Date(clock - 40 * 24 * 60 * 60 * 1000);
+    utimesSync(`${filePath}.prev`, stamped, stamped);
+    const warnSpy = vi.spyOn(logger, "warn").mockImplementation(() => {});
+
+    expect(
+      rotateLiveStreamIfOversized({
+        dataDir,
+        maxBytes: 32,
+        nowMs: clock,
+        env: { AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS: "30" },
+      }),
+    ).toBe(false);
+
+    expect(warnSpy.mock.calls.some(([message]) => String(message).includes("could not be removed"))).toBe(
+      true,
+    );
+    expect(existsSync(filePath)).toBe(true);
   });
 });

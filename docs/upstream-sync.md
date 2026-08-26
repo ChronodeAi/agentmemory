@@ -231,3 +231,19 @@ main sha.
 
 7. Update the tier-1 decision record (`decisions` table via `dsh-sor.sh`) so
    the deployment is queryable truth, not session folklore.
+
+8. **Prune release dirs after soak.** Once the new release has soaked (health
+   endpoint and hook round-trip green), delete old release directories under
+   `releases/` keeping the 3 newest plus any directory the `current` symlink
+   references:
+
+   ```sh
+   cd "$HOME/Library/Application Support/Agentmemory/releases" || exit 1
+   KEEP_CURRENT="$(basename "$(readlink ../current)")"
+   ls -t | grep -v -x -e "$KEEP_CURRENT" | tail -n +4 | while IFS= read -r dir; do
+     rm -rf "$dir"
+   done
+   ```
+
+   Without this, one directory per train accumulates indefinitely (23 were
+   on disk before the rule existed).

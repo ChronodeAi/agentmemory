@@ -6,6 +6,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.9.30-chronode.6] — 2026-08-26
+
+Checkup-and-ledger closure release: TTL-bounded `.prev` retention, watchdog RSS sampling, and tier-1 ledger closure of the sync-wave follow-ups.
+
+### Added
+
+- **Expired `.prev` reclamation before live-stream rotation** (`src/state/live-stream-rotation.ts`). Before renaming an oversized current stream onto `<path>.prev`, an existing generation whose mtime is older than `AGENTMEMORY_LIVE_STREAM_PREV_TTL_DAYS` days is unlinked best-effort — one warn line on failure — so its bytes are reclaimed while the oversized current file still exists. The TTL defaults to `30`; unparsable and negative values fall back to the default via `parseInt`, and `0` opts out entirely. Fresh generations stay untouched until the rename replaces them atomically. Tests cover expired-removed-before-rename, fresh-preserved, rotation with no `.prev` present, and the stuck-generation warn path.
+- **Release-dir pruning rule** in the deploy recipe (`docs/upstream-sync.md` §5 step 8): after a fresh release soaks, keep the 3 newest dirs under `releases/` plus whatever `current` references, delete the rest — one directory per train had accumulated indefinitely (23 on disk before the rule).
+
+### Deployment (not repo code)
+
+- **Watchdog RSS sampling** (`~/.agentmemory/bin/watchdog.sh`): every run now appends `<ISO-8601 UTC> rss_kb=<kb>` for the PID in `~/.agentmemory/iii.pid` to `~/Library/Logs/Agentmemory/watchdog.log`, giving the restart history a memory-growth series alongside the viewer-down and engine-restarted lines.
+
+### Ledger
+
+- Six tier-1 `decisions` rows recorded under project `chronodeai/agentmemory`: the embedding-dimension premise closed as resolved (newest vector shard decodes to 2560-dim float32 ×145 samples, `.env` pins `OPENAI_EMBEDDING_DIMENSIONS=2560` against omlx `:8002`, which honors the Matryoshka `dimensions` param at 2560 and 1024); unbounded `.prev` retention superseded by this train's TTL fix; the release-pruning policy; the `/lesson` adoption gap recorded visibility-only (tool-driven pipeline, no auto-create upstream); the weekly `scripts/sync/upstream-status.sh` habit; and the auth-failure log pass.
+- **Auth-failure log pass** (read-only): `legacy_authentication_disabled`, `401`, and `project_binding_mismatch` occur zero times across `~/Library/Logs/Agentmemory/*.log` and `/tmp/am-worker-9032348.log`, in both pre-sync (< 2026-08-24T21:02:26Z, activation of `0.9.30-chronode.1`) and post-sync buckets; only near-misses exist (legacy data-dir notices, one empty OTel WebSocket error line), with a retained-logs-only caveat in the ledger row.
+
 ## [0.9.30-chronode.5] — 2026-08-25
 
 Backlog-closure release: live-stream disk bounding, deployment watchdog v2, and a written upstream-sync process.
