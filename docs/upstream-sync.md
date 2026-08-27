@@ -173,14 +173,16 @@ main sha.
 
    ```sh
    REL="$HOME/Library/Application Support/Agentmemory/releases/merge-<sha12>"
-   mkdir -p "$REL/lib/node_modules/@agentmemory/agentmemory" "$REL/bin"
-   cd "$REL/lib/node_modules/@agentmemory/agentmemory"
-   # Anchor package.json pitfall: `npm install ./x.tgz` walks UP looking for
-   # the nearest package.json and can unpack into a parent directory. An
-   # empty dir has none, so seed one first (or install while already inside
-   # the package dir like prior releases did).
-   echo '{"name":"anchor","private":true,"version":"0.0.0"}' > package.json
-   npm install "$TGZ" --omit=dev
+   mkdir -p "$REL/lib/node_modules/@agentmemory" "$REL/bin"
+   cd "$REL/lib/node_modules/@agentmemory"
+   # Unpack the tgz directly into place, THEN install prod deps INSIDE the
+   # package dir. Installing the tgz via `npm install` (even from a seeded
+   # anchor package.json) nests the package an extra node_modules level and
+   # leaves the CLI's imports unresolvable (ERR_MODULE_NOT_FOUND @clack/prompts).
+   tar -xzf "$TGZ"
+   mv package agentmemory
+   cd agentmemory
+   npm install --omit=dev --no-audit --no-fund
    ```
 
    Result must mirror the previous release: the package contents land in
